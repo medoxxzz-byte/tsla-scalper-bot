@@ -356,11 +356,26 @@ def format_telegram_v3_3(data: dict) -> str:
     if atr_val and atr_val not in ("—", ""):
         message += f"\n📏 <b>ATR:</b> ${atr_val}"
 
+    # Entry Zone calculation (ATR-based)
+    entry_zone_str = ""
+    try:
+        price_f = float(price)
+        atr_f = float(atr_val) if atr_val and atr_val not in ('—', '') else 0.50
+        # Zone = ~50% of ATR, min 10¢, max 35¢
+        zone_half = max(0.10, min(0.35, round(atr_f * 0.5, 2)))
+        zone_low = round(price_f - zone_half, 2)
+        zone_high = round(price_f + zone_half, 2)
+        zone_cents = int(zone_half * 100)
+        entry_zone_str = f"📍 <b>Entry Zone:</b> <code>${zone_low:.2f}</code> — <code>${zone_high:.2f}</code> (±{zone_cents}¢)\n⏰ <i>Valid for ~2-3 min — If price moved past zone → SKIP</i>"
+    except (ValueError, TypeError):
+        entry_zone_str = ""
+
     message += f"""
 
 💎 <b>━━ TRADE PLAN ━━</b>
 
 🎯 Entry: <code>${price}</code>
+{entry_zone_str}
 🛑 SL: <code>${safe_get(data, 'stop_loss')}</code> (-{safe_get(data, 'sl_cents')}¢)
 ✅ TP1: <code>${safe_get(data, 'target_1')}</code> (+{safe_get(data, 'tp1_cents')}¢)
 ✅ TP2: <code>${safe_get(data, 'target_2')}</code> (+{safe_get(data, 'tp2_cents')}¢)
@@ -414,6 +429,7 @@ def format_discord_v3_3(data: dict) -> dict:
                 {"name": "📦 Volume", "value": vol_text, "inline": False},
                 {"name": "📊 OBV", "value": format_obv_section(data), "inline": True},
                 {"name": "🎯 Entry", "value": f"${price}", "inline": True},
+                {"name": "📍 Entry Zone", "value": f"See Telegram for zone", "inline": True},
                 {"name": "🛑 SL", "value": f"${safe_get(data, 'stop_loss')} (-{safe_get(data, 'sl_cents')}¢)", "inline": True},
                 {"name": "✅ TP1/TP2", "value": f"${safe_get(data, 'target_1')} / ${safe_get(data, 'target_2')}", "inline": True},
                 {"name": "📋 Contracts", "value": safe_get(data, "suggested_contracts"), "inline": True},
@@ -472,7 +488,7 @@ def home():
     tracker.check_new_day()
     return jsonify({
         "status": "running",
-        "service": "TSLA Scalper V3.3 (Enhanced Data Quality)",
+        "service": "TSLA Scalper V3.3.1 (Enhanced Data Quality + Entry Zone)",
         "daily": tracker.summary(),
         "timestamp": datetime.now(timezone.utc).isoformat()
     })
@@ -610,7 +626,7 @@ def reset():
 
 if __name__ == "__main__":
     logger.info("=" * 60)
-    logger.info("TSLA Scalper V3.3 (Enhanced Data Quality) — Starting...")
+    logger.info("TSLA Scalper V3.3.1 (Enhanced Data Quality + Entry Zone) — Starting...")
     logger.info(f"Portfolio: $3,000 | Max Risk/Trade: 5-10%")
     logger.info(f"Daily Trade Limit: {MAX_DAILY_TRADES}")
     logger.info(f"Daily Loss Limit: ${MAX_DAILY_LOSS}")

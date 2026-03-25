@@ -1,30 +1,37 @@
 #!/usr/bin/env python3
 """
 ══════════════════════════════════════════════════════════════════════════════
-Smart Trading Alert Bot — V3.3 TSLA SCALPER (Enhanced Data Quality)
+Smart Trading Alert Bot — V4.0 Phase 1 (Reversal Detection + Smart Filters)
 Webhook Server
 ══════════════════════════════════════════════════════════════════════════════
-V3.3 Changes:
-  - RSI always displayed as numeric value + description (never N/A)
-  - Volume shown as actual number + comparison to average
-  - OBV with clear multi-timeframe status
-  - All indicators: numeric + descriptive
-  - Smart fallback for missing/NaN data fields
-  - Improved message formatting for instant decision-making
+Phase 1 Features:
+  ✅ Arabic alert messages (concise, fast-read)
+  ✅ Reversal Detection alerts (separate format)
+  ✅ Volume hard filter (blocks < 0.5x)
+  ✅ 60-second cooldown (prevents duplicates)
+  ✅ Empty data filter (blocks incomplete alerts)
+  ✅ Signal verdict: ادخل / انتبه / تجاوز
+  ✅ Rejection reason for weak/blocked alerts
+  ✅ Accumulation/Distribution + Institutional activity
+  ✅ Keep-alive ping (prevents Render cold starts)
+  ✅ Max 10 alerts/day limit
 
-Customized for:
-  - TSLA Options Scalping
-  - 5-15 trades/day (quality over quantity)
-  - $0.30-$0.60 targets
-  - $3,000 portfolio with strict risk management
-  - Anti-averaging warnings
-  - Daily P&L tracking
+Phase 2 (later):
+  ⏸ Bollinger Bands / VWAP Bands / Stochastic
+  ⏸ Hourly market analysis digest
+
+Usage:
+    1. Set environment variables: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+    2. Run: python3 webhook_server_v4_phase1.py
+    3. Set TradingView webhook URL to: http://YOUR_SERVER:5000/webhook
 ══════════════════════════════════════════════════════════════════════════════
 """
 
 import os
 import json
+import time
 import logging
+import threading
 from datetime import datetime, timezone, timedelta
 
 try:
@@ -50,16 +57,22 @@ except ImportError:
 # ──────────────────────────────────────────────────────────────────────────────
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID_HERE")
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID_HERE")
 
 SERVER_HOST = os.environ.get("SERVER_HOST", "0.0.0.0")
-SERVER_PORT = int(os.environ.get("PORT", os.environ.get("SERVER_PORT", "5000")))
+SERVER_PORT = int(os.environ.get("SERVER_PORT", "5000"))
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 
-# Risk limits
-MAX_DAILY_LOSS = float(os.environ.get("MAX_DAILY_LOSS", "300"))
-MAX_DAILY_TRADES = int(os.environ.get("MAX_DAILY_TRADES", "35"))
+# V4.0 Phase 1 Settings
+COOLDOWN_SECONDS = 60          # Minimum seconds between alerts
+MIN_VOLUME_RATIO = 0.5         # Block alerts below this volume ratio
+MAX_DAILY_ALERTS = 10          # Max alerts per day
+KEEP_ALIVE_INTERVAL = 600      # Ping self every 10 minutes
+
+# Risk Management (from trader profile)
+MAX_RISK_PER_TRADE = 50        # $50 max
+MAX_DAILY_LOSS = 150           # $150 max
+PORTFOLIO_SIZE = 1000          # $1000
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Logging
@@ -69,7 +82,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("tsla_scalper_v3_3.log"),
+        logging.FileHandler("alert_bot_v4.log"),
         logging.StreamHandler()
     ]
 )
@@ -82,372 +95,394 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Daily Tracker
+# State Management
 # ──────────────────────────────────────────────────────────────────────────────
 
-class DailyTracker:
-    """Tracks daily alerts and enforces limits."""
+alert_history = []
+MAX_HISTORY = 50
 
-    def __init__(self):
-        self.reset()
+# Cooldown tracking
+last_alert_time = 0
+last_alert_price = ""
+last_alert_signal = ""
 
-    def reset(self):
-        self.date = datetime.now().strftime("%Y-%m-%d")
-        self.alerts = []
-        self.call_count = 0
-        self.put_count = 0
+# Daily tracking
+daily_alerts = []
+daily_date = ""
 
-    def check_new_day(self):
-        today = datetime.now().strftime("%Y-%m-%d")
-        if today != self.date:
-            logger.info(f"New trading day: {today}. Resetting tracker.")
-            self.reset()
-
-    def add_alert(self, data):
-        self.check_new_day()
-        signal = data.get("signal", "?")
-        entry = {
-            "time": datetime.now().strftime("%I:%M:%S %p"),
-            "signal": signal,
-            "grade": data.get("grade", "?"),
-            "price": data.get("price", "?"),
-            "score": data.get("score", "?"),
-            "rsi_1m": data.get("rsi_1m", "?"),
-            "volume_actual": data.get("volume_actual", "?"),
-        }
-        self.alerts.append(entry)
-        if signal == "CALL":
-            self.call_count += 1
-        elif signal == "PUT":
-            self.put_count += 1
-
-    @property
-    def total(self):
-        return len(self.alerts)
-
-    @property
-    def limit_reached(self):
-        return self.total >= MAX_DAILY_TRADES
-
-    def summary(self):
-        return {
-            "date": self.date,
-            "total": self.total,
-            "calls": self.call_count,
-            "puts": self.put_count,
-            "limit": MAX_DAILY_TRADES,
-            "remaining": max(0, MAX_DAILY_TRADES - self.total),
-        }
+# Blocked alerts tracking (for stats)
+blocked_today = []
 
 
-tracker = DailyTracker()
+def get_today():
+    """Get today's date in ET timezone."""
+    et_offset = timedelta(hours=-4)  # EDT
+    now_et = datetime.now(timezone.utc) + et_offset
+    return now_et.strftime("%Y-%m-%d")
+
+
+def reset_daily_if_needed():
+    """Reset daily counters if new day."""
+    global daily_alerts, daily_date, blocked_today
+    today = get_today()
+    if daily_date != today:
+        daily_date = today
+        daily_alerts = []
+        blocked_today = []
+        logger.info(f"New trading day: {today} — counters reset")
+
+
+def add_to_history(data, verdict):
+    """Store alert in history."""
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "signal": data.get("signal", "?"),
+        "signal_type": data.get("signal_type", "TREND"),
+        "grade": data.get("grade", "?"),
+        "price": data.get("price", "?"),
+        "score": data.get("score", data.get("reversal_score", "?")),
+        "volume_ratio": data.get("volume_ratio", "?"),
+        "verdict": verdict
+    }
+    alert_history.insert(0, entry)
+    if len(alert_history) > MAX_HISTORY:
+        alert_history.pop()
+    daily_alerts.append(entry)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Helper Functions — Smart Data Extraction (V3.3)
+# Helper Functions
 # ──────────────────────────────────────────────────────────────────────────────
 
 def safe_get(data, key, default="—"):
-    """Get value from data, return default if missing, empty, or 'nan'."""
+    """Get value safely, treating empty/null/placeholder values as missing."""
     val = data.get(key, "")
-    if val is None or str(val).strip() == "" or str(val).strip().lower() in ("n/a", "na", "nan", "none", "?"):
+    if val is None or str(val).strip() == "" or str(val).strip() == "—":
         return default
-    return str(val).strip()
+    s = str(val).strip()
+    if s.lower() in ("n/a", "na", "nan", "none", "undefined", "null"):
+        return default
+    return s
 
 
-def get_rsi_description(rsi_str):
-    """Generate RSI description from numeric value."""
+def parse_volume_ratio(data):
+    """Extract numeric volume ratio from string like '1.37x'."""
     try:
-        rsi = float(rsi_str)
-        if rsi >= 70:
-            return "Overbought"
-        elif rsi >= 60:
-            return "Strong Bullish"
-        elif rsi >= 55:
-            return "Bullish"
-        elif rsi >= 45:
-            return "Neutral"
-        elif rsi >= 40:
-            return "Bearish"
-        elif rsi >= 30:
-            return "Strong Bearish"
-        else:
-            return "Oversold"
+        vr = safe_get(data, "volume_ratio", "0")
+        return float(vr.replace("x", "").strip())
     except (ValueError, TypeError):
-        return "—"
+        return 0.0
 
 
-def format_rsi_line(data, tf_key, desc_key, tf_label):
-    """Format a single RSI line with value + description."""
-    rsi_val = safe_get(data, tf_key, "—")
-    rsi_desc = safe_get(data, desc_key, "")
+def parse_score(data):
+    """Extract numeric score from string like '15/16'."""
+    try:
+        score_str = safe_get(data, "score", "0")
+        return int(score_str.split("/")[0])
+    except (ValueError, TypeError):
+        return 0
 
-    # If description not provided by Pine Script, calculate it
-    if rsi_desc in ("—", ""):
-        rsi_desc = get_rsi_description(rsi_val)
 
-    if rsi_val != "—":
-        return f"{tf_label}: <code>{rsi_val}</code> ({rsi_desc})"
+def parse_reversal_score(data):
+    """Extract numeric reversal score from string like '9/10'."""
+    try:
+        score_str = safe_get(data, "reversal_score", "0")
+        return int(score_str.split("/")[0])
+    except (ValueError, TypeError):
+        return 0
+
+
+def get_verdict(data):
+    """
+    Determine signal verdict: ادخل / انتبه / تجاوز
+    
+    Logic:
+    - TREND: Grade A+/A + Volume ≥ 1.0x → ادخل
+    - TREND: Grade A+/A/B+ + Volume ≥ 0.5x → انتبه
+    - REVERSAL: Score ≥ 9 + Volume ≥ 1.0x → ادخل
+    - REVERSAL: Score ≥ 8 + Volume ≥ 0.5x → انتبه
+    - Everything else → تجاوز
+    """
+    signal_type = safe_get(data, "signal_type", "TREND")
+    vol_ratio = parse_volume_ratio(data)
+
+    if signal_type == "REVERSAL":
+        rev_score = parse_reversal_score(data)
+        if rev_score >= 9 and vol_ratio >= 1.0:
+            return "ادخل", "ENTER"
+        elif rev_score >= 8 and vol_ratio >= 0.5:
+            return "انتبه", "WATCH"
+        else:
+            return "تجاوز", "SKIP"
     else:
-        return f"{tf_label}: —"
+        grade = safe_get(data, "grade", "C")
+        if grade in ("A+", "A") and vol_ratio >= 1.0:
+            return "ادخل", "ENTER"
+        elif grade in ("A+", "A", "B+") and vol_ratio >= 0.5:
+            return "انتبه", "WATCH"
+        else:
+            return "تجاوز", "SKIP"
 
 
-def format_volume_section(data):
-    """Format volume section with actual value + average + description."""
+def get_rejection_reasons(data):
+    """Get concise reasons why a signal might be weak."""
+    reasons = []
+    vol_ratio = parse_volume_ratio(data)
+    signal = safe_get(data, "signal", "")
+    macd_hist = safe_get(data, "macd_hist", "0")
+
+    # Volume weakness
+    if vol_ratio < 0.5:
+        reasons.append(f"سيولة ضعيفة ({vol_ratio:.1f}x)")
+    elif vol_ratio < 0.8:
+        reasons.append(f"سيولة أقل من المتوسط ({vol_ratio:.1f}x)")
+
+    # MACD contradiction
+    try:
+        macd_val = float(macd_hist)
+        if signal == "CALL" and macd_val < -0.01:
+            reasons.append("MACD سلبي")
+        elif signal == "PUT" and macd_val > 0.01:
+            reasons.append("MACD إيجابي")
+    except (ValueError, TypeError):
+        pass
+
+    # RSI extreme
+    try:
+        rsi = float(safe_get(data, "rsi_1m", "50"))
+        if signal == "CALL" and rsi >= 75:
+            reasons.append(f"تشبع شراء ({rsi:.0f})")
+        elif signal == "PUT" and rsi <= 25:
+            reasons.append(f"تشبع بيع ({rsi:.0f})")
+    except (ValueError, TypeError):
+        pass
+
+    # OBV contradiction
+    obv_1m = safe_get(data, "obv_1m", "")
+    if signal == "CALL" and obv_1m == "Falling":
+        reasons.append("OBV هابط")
+    elif signal == "PUT" and obv_1m == "Rising":
+        reasons.append("OBV صاعد")
+
+    return reasons
+
+
+def get_liquidity_analysis(data):
+    """Analyze liquidity: تجميع / تصريف / حيادي."""
+    accum_dist = safe_get(data, "accum_dist", "Neutral")
+    if accum_dist == "Accumulation":
+        return "تجميع 📈"
+    elif accum_dist == "Distribution":
+        return "تصريف 📉"
+    else:
+        return "حيادي ➡️"
+
+
+def get_volume_label(vol_ratio):
+    """Get Arabic volume description."""
+    if vol_ratio >= 2.0:
+        return "ارتفاع قوي 🔥"
+    elif vol_ratio >= 1.3:
+        return "فوق المتوسط ✅"
+    elif vol_ratio >= 0.8:
+        return "متوسط ⚡"
+    elif vol_ratio >= 0.5:
+        return "أقل من المتوسط ⚠️"
+    else:
+        return "ضعيف جداً 🚫"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Message Formatters — Arabic (V4.0 Phase 1)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def format_trend_alert(data):
+    """Format trend signal in Arabic — concise and fast-read."""
+    signal = safe_get(data, "signal", "?")
+    grade = safe_get(data, "grade", "?")
+    price = safe_get(data, "price", "?")
+    score = safe_get(data, "score", "?")
+
+    verdict_ar, verdict_en = get_verdict(data)
+    reasons = get_rejection_reasons(data)
+    liquidity = get_liquidity_analysis(data)
+
+    vol_ratio = parse_volume_ratio(data)
     vol_actual = safe_get(data, "volume_actual", "—")
     vol_avg = safe_get(data, "volume_avg", "—")
-    vol_ratio = safe_get(data, "volume_ratio", "—")
-    vol_desc = safe_get(data, "volume_desc", "")
-    vol_surge = safe_get(data, "volume_surge", "NO")
+    vol_label = get_volume_label(vol_ratio)
 
-    # Build volume description if not provided
-    if vol_desc in ("—", ""):
-        try:
-            ratio_num = float(vol_ratio.replace("x", ""))
-            if ratio_num >= 2.0:
-                vol_desc = "High Surge"
-            elif ratio_num >= 1.3:
-                vol_desc = "Above Avg"
-            elif ratio_num >= 0.8:
-                vol_desc = "Average"
-            else:
-                vol_desc = "Below Avg"
-        except (ValueError, TypeError):
-            vol_desc = "—"
-
-    # Surge indicator
-    surge_icon = " ⚡" if vol_surge == "YES" else ""
-
-    lines = []
-    if vol_actual != "—" and vol_avg != "—":
-        lines.append(f"📦 <b>Volume:</b> <code>{vol_actual}</code> (Avg: {vol_avg}){surge_icon}")
-    elif vol_actual != "—":
-        lines.append(f"📦 <b>Volume:</b> <code>{vol_actual}</code>{surge_icon}")
-    elif vol_ratio != "—":
-        lines.append(f"📦 <b>Volume:</b> {vol_ratio}{surge_icon}")
+    # Verdict emoji
+    if verdict_en == "ENTER":
+        verdict_icon = "💚"
+    elif verdict_en == "WATCH":
+        verdict_icon = "🟡"
     else:
-        lines.append(f"📦 <b>Volume:</b> —")
+        verdict_icon = "🔴"
 
-    if vol_ratio != "—" and vol_desc != "—":
-        lines.append(f"📊 <b>Vol Ratio:</b> <code>{vol_ratio}</code> — {vol_desc}")
+    # Signal direction
+    sig_icon = "🟢" if signal == "CALL" else "🔴"
+    direction = "CALL شراء" if signal == "CALL" else "PUT بيع"
 
-    return "\n".join(lines)
+    # Grade emoji
+    grade_icon = "🔥" if grade == "A+" else "⚡" if grade == "A" else "📊" if grade == "B+" else "📋"
 
-
-def format_obv_section(data):
-    """Format OBV section with multi-timeframe status."""
-    obv_1m = safe_get(data, "obv_status", "—")
-    obv_5m = safe_get(data, "obv_5m", "")
-    obv_15m = safe_get(data, "obv_15m", "")
-
-    parts = [f"1m: {obv_1m}"]
-    if obv_5m and obv_5m not in ("—", ""):
-        parts.append(f"5m: {obv_5m}")
-    if obv_15m and obv_15m not in ("—", ""):
-        parts.append(f"15m: {obv_15m}")
-
-    return " | ".join(parts)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Telegram Message Formatter — V3.3 Enhanced
-# ──────────────────────────────────────────────────────────────────────────────
-
-def format_telegram_v3_3(data: dict) -> str:
-    """Premium formatted message with full numeric data for instant decisions."""
-
-    signal = data.get("signal", "?")
-    grade  = data.get("grade", "?")
-    price  = safe_get(data, "price")
-    session = safe_get(data, "session")
-    wave   = safe_get(data, "wave")
-
-    # Grade styling
-    grade_styles = {
-        "A+": ("🔥🔥🔥", "A+ PERFECT SETUP", "Maximum"),
-        "A":  ("⚡⚡", "A STRONG SETUP", "Very High"),
-        "B+": ("💪", "B+ GOOD SETUP", "High"),
-        "B":  ("📊", "B DECENT SETUP", "Moderate"),
-    }
-    g_emoji, g_text, confidence = grade_styles.get(grade, ("📊", f"{grade} SETUP", "Standard"))
-
-    # Direction
-    if signal == "CALL":
-        sig_emoji = "🟢"
-        direction = "CALL ↑ (Buy Calls)"
-        arrow = "📈"
-    elif signal == "PUT":
-        sig_emoji = "🔴"
-        direction = "PUT ↓ (Buy Puts)"
-        arrow = "📉"
-    else:
-        sig_emoji = "⚪"
-        direction = signal
-        arrow = "📊"
-
-    # RSI lines (all timeframes with descriptions)
-    rsi_1m_line = format_rsi_line(data, "rsi_1m", "rsi_1m_desc", "1m")
-    rsi_5m_line = format_rsi_line(data, "rsi_5m", "rsi_5m_desc", "5m")
-    rsi_15m_line = format_rsi_line(data, "rsi_15m", "rsi_15m_desc", "15m")
-
-    # Volume section
-    volume_section = format_volume_section(data)
-
-    # OBV section
-    obv_section = format_obv_section(data)
+    # RSI values
+    rsi_1m = safe_get(data, "rsi_1m", "—")
+    rsi_5m = safe_get(data, "rsi_5m", "—")
+    rsi_15m = safe_get(data, "rsi_15m", "—")
 
     # MACD
-    macd_status = safe_get(data, "macd_status")
-    macd_hist = safe_get(data, "macd_hist", "")
-    macd_line = f"{macd_status}"
-    if macd_hist and macd_hist not in ("—", ""):
-        macd_line += f" (Hist: {macd_hist})"
+    macd = safe_get(data, "macd_status", "—")
+    macd_hist = safe_get(data, "macd_hist", "—")
 
-    # Candle
-    candle = safe_get(data, "candle")
+    # Institutional
+    institutional = safe_get(data, "institutional", "—")
 
-    # ATR
-    atr_val = safe_get(data, "atr", "")
+    # Timestamp
+    et_offset = timedelta(hours=-4)
+    now_et = datetime.now(timezone.utc) + et_offset
+    timestamp = now_et.strftime("%I:%M %p")
 
-    # Momentum
-    momentum = safe_get(data, "momentum", "")
+    msg = f"""{verdict_icon} <b>{verdict_ar}</b> — {grade_icon} {grade}
+{sig_icon} <b>{direction}</b> | TSLA @ <code>${price}</code>
+━━━━━━━━━━━━━━━━━━━━━
 
-    # Trade number today
-    trade_num = tracker.total
-    remaining = max(0, MAX_DAILY_TRADES - trade_num)
+📊 <b>التقييم:</b> {score}
+📈 <b>MACD:</b> {macd} ({macd_hist})
+📉 <b>RSI:</b> 1m:{rsi_1m} | 5m:{rsi_5m} | 15m:{rsi_15m}
 
-    timestamp = datetime.now().strftime("%I:%M:%S %p ET")
+💧 <b>السيولة:</b> {vol_actual} / {vol_avg} ({vol_ratio:.1f}x) — {vol_label}
+📊 <b>التدفق:</b> {liquidity}
+🏦 <b>النشاط:</b> {institutional}
 
-    message = f"""{g_emoji} <b>{g_text}</b> {g_emoji}
+🎯 <b>الدخول:</b> <code>${price}</code>
+🛑 <b>وقف:</b> <code>${safe_get(data, 'stop_loss')}</code>
+✅ <b>هدف 1:</b> <code>${safe_get(data, 'target_1')}</code>
+✅ <b>هدف 2:</b> <code>${safe_get(data, 'target_2')}</code>
+💰 <b>المخاطرة:</b> {safe_get(data, 'max_risk')} | عقد واحد"""
 
-{sig_emoji} <b>{direction}</b>
-🌊 <b>Wave:</b> {wave}
-━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Add rejection reasons if any
+    if reasons:
+        msg += "\n\n⚠️ <b>تنبيه:</b> " + " | ".join(reasons)
 
-🏷 <b>TSLA</b> @ <code>${price}</code>
-🕐 {timestamp} | {session}
-🎯 Score: <b>{safe_get(data, 'score')}</b> | Confidence: {confidence}
-📊 Trade #{trade_num} today ({remaining} remaining)
+    msg += f"""
 
-{arrow} <b>━━ TREND ANALYSIS ━━</b>
+━━━━━━━━━━━━━━━━━━━━━
+🕐 {timestamp} ET | تنبيه #{len(daily_alerts) + 1} اليوم
+⚠️ <i>تأكد من إغلاق الشمعة قبل الدخول</i>"""
 
-📊 <b>15m:</b> {safe_get(data, 'trend_15m')}
-📊 <b>5m:</b> {safe_get(data, 'trend_5m')}
-
-{arrow} <b>━━ INDICATORS ━━</b>
-
-📍 <b>VWAP:</b> {safe_get(data, 'vwap_status')} (${safe_get(data, 'vwap_price')}) [{safe_get(data, 'vwap_distance')}]
-📐 <b>EMA:</b> {safe_get(data, 'ema_status').replace('<', '&lt;').replace('>', '&gt;')}
-📈 <b>MACD:</b> {macd_line}
-
-📉 <b>RSI:</b>
-   {rsi_1m_line}
-   {rsi_5m_line}
-   {rsi_15m_line}
-
-📊 <b>OBV:</b> {obv_section}
-{volume_section}
-🕯 <b>Candle:</b> {candle}"""
-
-    # Add momentum if available
-    if momentum and momentum not in ("—", ""):
-        message += f"\n⚡ <b>Momentum (5-bar):</b> {momentum}"
-
-    # Add ATR if available
-    if atr_val and atr_val not in ("—", ""):
-        message += f"\n📏 <b>ATR:</b> ${atr_val}"
-
-    # Entry Zone calculation (ATR-based)
-    entry_zone_str = ""
-    try:
-        price_f = float(price)
-        atr_f = float(atr_val) if atr_val and atr_val not in ('—', '') else 0.50
-        # Zone = ~50% of ATR, min 10¢, max 35¢
-        zone_half = max(0.10, min(0.35, round(atr_f * 0.5, 2)))
-        zone_low = round(price_f - zone_half, 2)
-        zone_high = round(price_f + zone_half, 2)
-        zone_cents = int(zone_half * 100)
-        entry_zone_str = f"📍 <b>Entry Zone:</b> <code>${zone_low:.2f}</code> — <code>${zone_high:.2f}</code> (±{zone_cents}¢)\n⏰ <i>Valid for ~2-3 min — If price moved past zone → SKIP</i>"
-    except (ValueError, TypeError):
-        entry_zone_str = ""
-
-    message += f"""
-
-💎 <b>━━ TRADE PLAN ━━</b>
-
-🎯 Entry: <code>${price}</code>
-{entry_zone_str}
-🛑 SL: <code>${safe_get(data, 'stop_loss')}</code> (-{safe_get(data, 'sl_cents')}¢)
-✅ TP1: <code>${safe_get(data, 'target_1')}</code> (+{safe_get(data, 'tp1_cents')}¢)
-✅ TP2: <code>${safe_get(data, 'target_2')}</code> (+{safe_get(data, 'tp2_cents')}¢)
-
-💰 <b>━━ RISK ━━</b>
-
-📏 Max per trade: <b>{safe_get(data, 'max_risk')}</b>
-📋 Contracts: <b>{safe_get(data, 'suggested_contracts')}</b>
-🚫 Daily loss limit: ${safe_get(data, 'max_daily_loss', '300')}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━
-🚫 <b>NO AVERAGING — NO ADDING</b> 🚫
-⚠️ <i>One entry, one exit. If SL hit, move on.</i>
-━━━━━━━━━━━━━━━━━━━━━━━━━"""
-
-    return message.strip()
+    return msg
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Discord Formatter — V3.3
-# ──────────────────────────────────────────────────────────────────────────────
+def format_reversal_alert(data):
+    """Format reversal signal in Arabic — distinctive format."""
+    signal = safe_get(data, "signal", "?")
+    price = safe_get(data, "price", "?")
+    pattern = safe_get(data, "reversal_pattern", "?")
+    rev_score = safe_get(data, "reversal_score", "?")
 
-def format_discord_v3_3(data: dict) -> dict:
-    signal = data.get("signal", "?")
-    grade = data.get("grade", "?")
-    price = safe_get(data, "price")
-    color = 0x00FF00 if signal == "CALL" else 0xFF0000
+    verdict_ar, verdict_en = get_verdict(data)
+    liquidity = get_liquidity_analysis(data)
 
-    # RSI formatted
-    rsi_text = (
-        f"1m: {safe_get(data, 'rsi_1m')} ({safe_get(data, 'rsi_1m_desc', get_rsi_description(safe_get(data, 'rsi_1m')))})\n"
-        f"5m: {safe_get(data, 'rsi_5m')} ({safe_get(data, 'rsi_5m_desc', get_rsi_description(safe_get(data, 'rsi_5m')))})\n"
-        f"15m: {safe_get(data, 'rsi_15m')} ({safe_get(data, 'rsi_15m_desc', get_rsi_description(safe_get(data, 'rsi_15m')))})"
-    )
+    vol_ratio = parse_volume_ratio(data)
+    vol_actual = safe_get(data, "volume_actual", "—")
+    vol_avg = safe_get(data, "volume_avg", "—")
+    vol_label = get_volume_label(vol_ratio)
 
-    # Volume formatted
-    vol_text = f"{safe_get(data, 'volume_actual')} (Avg: {safe_get(data, 'volume_avg')})\nRatio: {safe_get(data, 'volume_ratio')} — {safe_get(data, 'volume_desc')}"
+    # Verdict emoji
+    if verdict_en == "ENTER":
+        verdict_icon = "💚"
+    elif verdict_en == "WATCH":
+        verdict_icon = "🟡"
+    else:
+        verdict_icon = "🔴"
 
-    embed = {
-        "embeds": [{
-            "title": f"{'📈' if signal == 'CALL' else '📉'} {grade} {signal} — TSLA @ ${price}",
-            "color": color,
-            "fields": [
-                {"name": "🌊 Wave", "value": safe_get(data, "wave"), "inline": True},
-                {"name": "🎯 Score", "value": safe_get(data, "score"), "inline": True},
-                {"name": "📍 Session", "value": safe_get(data, "session"), "inline": True},
-                {"name": "📍 VWAP", "value": f"{safe_get(data, 'vwap_status')} (${safe_get(data, 'vwap_price')})", "inline": True},
-                {"name": "📐 EMA", "value": safe_get(data, "ema_status"), "inline": True},
-                {"name": "📈 MACD", "value": safe_get(data, "macd_status"), "inline": True},
-                {"name": "📉 RSI", "value": rsi_text, "inline": False},
-                {"name": "📦 Volume", "value": vol_text, "inline": False},
-                {"name": "📊 OBV", "value": format_obv_section(data), "inline": True},
-                {"name": "🎯 Entry", "value": f"${price}", "inline": True},
-                {"name": "📍 Entry Zone", "value": f"See Telegram for zone", "inline": True},
-                {"name": "🛑 SL", "value": f"${safe_get(data, 'stop_loss')} (-{safe_get(data, 'sl_cents')}¢)", "inline": True},
-                {"name": "✅ TP1/TP2", "value": f"${safe_get(data, 'target_1')} / ${safe_get(data, 'target_2')}", "inline": True},
-                {"name": "📋 Contracts", "value": safe_get(data, "suggested_contracts"), "inline": True},
-                {"name": "💰 Max Risk", "value": safe_get(data, "max_risk"), "inline": True},
-                {"name": "📊 Trade #", "value": str(tracker.total), "inline": True},
-            ],
-            "footer": {"text": "🚫 NO AVERAGING — One entry, one exit. If SL hit, move on."},
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }]
-    }
-    return embed
+    sig_icon = "🟢" if signal == "CALL" else "🔴"
+    direction = "CALL شراء" if signal == "CALL" else "PUT بيع"
+
+    # Resistance/Support info
+    if signal == "PUT":
+        level = safe_get(data, "resistance_level", "—")
+        level_type = safe_get(data, "resistance_type", "—")
+        zone_label = "المقاومة"
+        zone_icon = "🔴"
+    else:
+        level = safe_get(data, "support_level", "—")
+        level_type = safe_get(data, "support_type", "—")
+        zone_label = "الدعم"
+        zone_icon = "🟢"
+
+    # Pattern translation
+    pattern_ar = {
+        "Rejection Wick": "ذيل رفض",
+        "Failed Breakout": "كسر كاذب",
+        "Lower High": "قمة أقل",
+        "Hammer at Support": "مطرقة عند الدعم",
+        "Failed Breakdown": "كسر كاذب للدعم",
+        "Higher Low": "قاع أعلى"
+    }.get(pattern, pattern)
+
+    # Level type translation
+    level_type_ar = {
+        "Rolling High": "أعلى سعر الساعة",
+        "Prev Day High": "أعلى سعر أمس",
+        "VWAP Upper": "فوق VWAP",
+        "Rolling Low": "أقل سعر الساعة",
+        "Prev Day Low": "أقل سعر أمس",
+        "VWAP Lower": "تحت VWAP"
+    }.get(level_type, level_type)
+
+    # RSI
+    rsi_1m = safe_get(data, "rsi_1m", "—")
+    rsi_5m = safe_get(data, "rsi_5m", "—")
+
+    # Institutional
+    institutional = safe_get(data, "institutional", "—")
+
+    et_offset = timedelta(hours=-4)
+    now_et = datetime.now(timezone.utc) + et_offset
+    timestamp = now_et.strftime("%I:%M %p")
+
+    msg = f"""{verdict_icon} <b>{verdict_ar}</b> — 🔄 انعكاس
+{sig_icon} <b>{direction}</b> | TSLA @ <code>${price}</code>
+━━━━━━━━━━━━━━━━━━━━━
+
+⚡ <b>النمط:</b> {pattern_ar}
+📊 <b>التقييم:</b> {rev_score}
+{zone_icon} <b>{zone_label}:</b> ${level} ({level_type_ar})
+
+📉 <b>RSI:</b> 1m:{rsi_1m} | 5m:{rsi_5m}
+💧 <b>السيولة:</b> {vol_actual} / {vol_avg} ({vol_ratio:.1f}x) — {vol_label}
+📊 <b>التدفق:</b> {liquidity}
+🏦 <b>النشاط:</b> {institutional}
+
+🎯 <b>الدخول:</b> <code>${price}</code>
+🛑 <b>وقف:</b> <code>${safe_get(data, 'stop_loss')}</code>
+✅ <b>هدف 1:</b> <code>${safe_get(data, 'target_1')}</code>
+✅ <b>هدف 2:</b> <code>${safe_get(data, 'target_2')}</code>
+💰 <b>المخاطرة:</b> {safe_get(data, 'max_risk')} | عقد واحد
+
+━━━━━━━━━━━━━━━━━━━━━
+🕐 {timestamp} ET | تنبيه #{len(daily_alerts) + 1} اليوم
+⚠️ <i>إشارة انعكاس — شمعة التأكيد ظهرت</i>"""
+
+    return msg
+
+
+def format_blocked_notification(data, reason):
+    """Format a short notification for blocked alerts (optional — for debugging)."""
+    signal = safe_get(data, "signal", "?")
+    price = safe_get(data, "price", "?")
+    return f"🚫 محجوب: {signal} @ ${price} — {reason}"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Senders
+# Telegram Sender
 # ──────────────────────────────────────────────────────────────────────────────
 
-def send_telegram(message: str) -> bool:
+def send_telegram(message):
+    """Send formatted message to Telegram."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -458,25 +493,145 @@ def send_telegram(message: str) -> bool:
     try:
         resp = http_requests.post(url, json=payload, timeout=10)
         if resp.status_code == 200:
-            logger.info("Telegram: sent")
+            logger.info("Telegram: message sent successfully")
             return True
         else:
             logger.error(f"Telegram error: {resp.status_code} — {resp.text}")
             return False
     except Exception as e:
-        logger.error(f"Telegram failed: {e}")
+        logger.error(f"Telegram send failed: {e}")
         return False
 
 
-def send_discord(embed: dict) -> bool:
-    if not DISCORD_WEBHOOK_URL:
-        return False
+# ──────────────────────────────────────────────────────────────────────────────
+# Filters (V4.0 Phase 1)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def check_data_quality(data):
+    """Check if alert has sufficient data (blocks empty/incomplete alerts)."""
+    signal = safe_get(data, "signal", "")
+    price = safe_get(data, "price", "")
+
+    # Must have signal and price
+    if not signal or signal in ("", "—", "?", "UNKNOWN"):
+        return False, "بيانات ناقصة (لا يوجد إشارة)"
+    if not price or price in ("", "—", "?"):
+        return False, "بيانات ناقصة (لا يوجد سعر)"
+
+    # For TREND signals, check essential fields
+    signal_type = safe_get(data, "signal_type", "TREND")
+    if signal_type == "TREND":
+        rsi = safe_get(data, "rsi_1m", "")
+        score = safe_get(data, "score", "")
+        if rsi in ("", "—", "?") and score in ("", "—", "?"):
+            return False, "بيانات ناقصة (لا يوجد RSI أو تقييم)"
+
+    return True, ""
+
+
+def check_volume(data):
+    """Check if volume meets minimum threshold."""
+    vol_ratio = parse_volume_ratio(data)
+    if vol_ratio > 0 and vol_ratio < MIN_VOLUME_RATIO:
+        return False, f"سيولة ضعيفة ({vol_ratio:.2f}x < {MIN_VOLUME_RATIO}x)"
+    return True, ""
+
+
+def check_cooldown(data):
+    """Check if enough time passed since last alert (prevents duplicates)."""
+    global last_alert_time, last_alert_price, last_alert_signal
+
+    now = time.time()
+    elapsed = now - last_alert_time
+
+    if elapsed < COOLDOWN_SECONDS:
+        current_price = safe_get(data, "price", "")
+        current_signal = safe_get(data, "signal", "")
+
+        # Exact duplicate (same price + signal within cooldown)
+        if current_price == last_alert_price and current_signal == last_alert_signal:
+            return False, f"مكرر (نفس السعر {current_price} بفارق {elapsed:.0f}ث)"
+
+        # Too fast even if different price (within 30 seconds)
+        if elapsed < 30:
+            return False, f"سريع جداً ({elapsed:.0f}ث < 30ث)"
+
+        # Different signal type is OK even within cooldown
+        if current_signal != last_alert_signal:
+            return True, ""
+
+        return False, f"cooldown ({elapsed:.0f}ث < {COOLDOWN_SECONDS}ث)"
+
+    return True, ""
+
+
+def check_daily_limit():
+    """Check if daily alert limit reached."""
+    reset_daily_if_needed()
+    if len(daily_alerts) >= MAX_DAILY_ALERTS:
+        return False, f"وصلت الحد اليومي ({MAX_DAILY_ALERTS} تنبيهات)"
+    return True, ""
+
+
+def check_rsi_extreme(data):
+    """Warn (but don't block) if RSI is extreme for the signal direction."""
+    signal = safe_get(data, "signal", "")
     try:
-        resp = http_requests.post(DISCORD_WEBHOOK_URL, json=embed, timeout=10)
-        return resp.status_code in [200, 204]
-    except Exception as e:
-        logger.error(f"Discord failed: {e}")
-        return False
+        rsi_1m = float(safe_get(data, "rsi_1m", "50"))
+        if signal == "CALL" and rsi_1m >= 80:
+            return False, f"RSI تشبع شراء شديد ({rsi_1m:.0f}) — خطر انعكاس"
+        elif signal == "PUT" and rsi_1m <= 20:
+            return False, f"RSI تشبع بيع شديد ({rsi_1m:.0f}) — خطر ارتداد"
+    except (ValueError, TypeError):
+        pass
+    return True, ""
+
+
+def apply_filters(data):
+    """Apply all filters in order. Returns (pass, reason)."""
+    # 1. Data quality (blocks empty/incomplete)
+    ok, reason = check_data_quality(data)
+    if not ok:
+        return False, reason
+
+    # 2. Volume filter (blocks weak volume)
+    ok, reason = check_volume(data)
+    if not ok:
+        return False, reason
+
+    # 3. RSI extreme filter (blocks dangerous entries)
+    ok, reason = check_rsi_extreme(data)
+    if not ok:
+        return False, reason
+
+    # 4. Cooldown (blocks duplicates/rapid-fire)
+    ok, reason = check_cooldown(data)
+    if not ok:
+        return False, reason
+
+    # 5. Daily limit
+    ok, reason = check_daily_limit()
+    if not ok:
+        return False, reason
+
+    return True, ""
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Keep-Alive (Background Thread)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def keep_alive_worker():
+    """Ping self to prevent Render cold starts."""
+    render_url = os.environ.get("RENDER_EXTERNAL_URL", "")
+    while True:
+        time.sleep(KEEP_ALIVE_INTERVAL)
+        if render_url:
+            try:
+                resp = http_requests.get(f"{render_url}/", timeout=10)
+                logger.info(f"Keep-alive ping: {resp.status_code}")
+            except Exception as e:
+                logger.warning(f"Keep-alive failed: {e}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -485,139 +640,263 @@ def send_discord(embed: dict) -> bool:
 
 @app.route("/", methods=["GET"])
 def home():
-    tracker.check_new_day()
+    """Health check endpoint."""
+    reset_daily_if_needed()
     return jsonify({
         "status": "running",
-        "service": "TSLA Scalper V3.3.1 (Enhanced Data Quality + Entry Zone)",
-        "daily": tracker.summary(),
+        "service": "Smart Trading Alert Bot V4.0 — Phase 1",
+        "version": "4.0-P1",
+        "features": [
+            "reversal_detection",
+            "confirmation_candle",
+            "arabic_messages",
+            "volume_filter",
+            "rsi_extreme_filter",
+            "cooldown_60s",
+            "empty_data_filter",
+            "keep_alive"
+        ],
+        "alerts_today": len(daily_alerts),
+        "blocked_today": len(blocked_today),
+        "remaining": MAX_DAILY_ALERTS - len(daily_alerts),
+        "last_alert": alert_history[0] if alert_history else None,
         "timestamp": datetime.now(timezone.utc).isoformat()
     })
 
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    # Auth
+    """Main webhook endpoint for TradingView alerts."""
+    global last_alert_time, last_alert_price, last_alert_signal
+
+    # Optional auth
     if WEBHOOK_SECRET:
-        if request.headers.get("X-Webhook-Secret", "") != WEBHOOK_SECRET:
+        auth = request.headers.get("X-Webhook-Secret", "")
+        if auth != WEBHOOK_SECRET:
+            logger.warning("Unauthorized webhook attempt")
             return jsonify({"error": "Unauthorized"}), 401
 
-    # Check daily limit
-    tracker.check_new_day()
-    if tracker.limit_reached:
-        logger.warning(f"Daily limit reached ({MAX_DAILY_TRADES}). Ignoring alert.")
-        send_telegram(f"⚠️ <b>Daily limit reached ({MAX_DAILY_TRADES} trades)</b>\n\nNo more alerts today. Review your trades and rest.")
-        return jsonify({"status": "limit_reached", "max": MAX_DAILY_TRADES}), 200
-
-    # Parse
+    # Parse data
     try:
         if request.is_json:
             data = request.get_json()
         else:
-            data = json.loads(request.data.decode("utf-8"))
+            raw = request.data.decode("utf-8")
+            data = json.loads(raw)
     except Exception as e:
         logger.error(f"Parse error: {e}")
-        return jsonify({"error": "parse_failed"}), 400
+        return jsonify({"error": "Parse error"}), 400
 
-    logger.info(f"Alert: {data.get('signal')} {data.get('grade')} TSLA @ ${data.get('price')} ({data.get('score')})")
-    logger.info(f"Full data keys: {list(data.keys())}")
+    signal = safe_get(data, "signal", "?")
+    signal_type = safe_get(data, "signal_type", "TREND")
+    price = safe_get(data, "price", "?")
+    vol_ratio = parse_volume_ratio(data)
 
-    # Track
-    tracker.add_alert(data)
+    logger.info(f"Received: {signal_type} {signal} @ ${price} | Vol:{vol_ratio:.2f}x")
 
-    # Format and send
-    tg_msg = format_telegram_v3_3(data)
+    # Apply filters
+    passed, rejection_reason = apply_filters(data)
+
+    if not passed:
+        logger.info(f"BLOCKED: {rejection_reason}")
+        blocked_today.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "signal": signal,
+            "signal_type": signal_type,
+            "price": price,
+            "reason": rejection_reason
+        })
+        return jsonify({
+            "status": "blocked",
+            "reason": rejection_reason,
+            "signal": signal,
+            "price": price
+        }), 200
+
+    # Determine verdict
+    verdict_ar, verdict_en = get_verdict(data)
+
+    # Format message based on signal type
+    if signal_type == "REVERSAL":
+        tg_msg = format_reversal_alert(data)
+    else:
+        tg_msg = format_trend_alert(data)
+
+    # Send to Telegram
     tg_ok = send_telegram(tg_msg)
 
-    dc_ok = False
-    if DISCORD_WEBHOOK_URL:
-        dc_ok = send_discord(format_discord_v3_3(data))
+    # Update cooldown state
+    last_alert_time = time.time()
+    last_alert_price = price
+    last_alert_signal = signal
+
+    # Save to history
+    add_to_history(data, verdict_ar)
+
+    logger.info(f"SENT: {signal_type} {signal} @ ${price} — {verdict_ar} (#{len(daily_alerts)} today)")
 
     return jsonify({
-        "status": "sent",
-        "telegram": "ok" if tg_ok else "failed",
-        "discord": "ok" if dc_ok else "n/a",
-        "trade_number": tracker.total
+        "status": "processed",
+        "telegram": "sent" if tg_ok else "failed",
+        "signal": signal,
+        "signal_type": signal_type,
+        "verdict": verdict_ar,
+        "alert_number": len(daily_alerts)
     }), 200
 
 
 @app.route("/test", methods=["GET"])
-def test():
-    """Send V3.3 test alert with full data to verify formatting."""
-    test_data = {
+def test_alert():
+    """Send test alerts (trend + reversal) to verify everything works."""
+    # Test trend alert
+    test_trend = {
+        "signal_type": "TREND",
         "signal": "CALL",
-        "grade": "A+",
+        "grade": "A",
         "symbol": "TSLA",
-        "price": "245.50",
-        "session": "Morning Momentum",
-        "wave": "Bullish Wave (Strong)",
-        "trend_15m": "Bullish CONFIRMED",
-        "trend_5m": "Bullish CONFIRMED",
-        "vwap_status": "Above VWAP",
-        "vwap_price": "243.20",
-        "vwap_distance": "+0.94%",
-        "ema_status": "EMA9 above EMA21 (all TFs)",
+        "price": "390.50",
+        "session": "Opening Power",
         "macd_status": "Fresh Bull Cross",
         "macd_hist": "0.0523",
         "rsi_1m": "62.5",
         "rsi_1m_desc": "Strong Bullish",
         "rsi_5m": "60.1",
-        "rsi_5m_desc": "Strong Bullish",
         "rsi_15m": "58.3",
-        "rsi_15m_desc": "Bullish",
-        "obv_status": "Rising (Bullish)",
+        "obv_1m": "Rising",
         "obv_5m": "Rising",
         "obv_15m": "Rising",
-        "volume_actual": "1.3M",
-        "volume_avg": "890K",
-        "volume_ratio": "1.46x",
+        "volume_actual": "25.3K",
+        "volume_avg": "18.5K",
+        "volume_ratio": "1.37x",
         "volume_desc": "Above Avg",
         "volume_surge": "YES",
-        "candle": "Strong Bullish (body>65%)",
-        "momentum": "+1.25",
+        "momentum": "+1.85",
         "atr": "0.87",
-        "score": "16/16",
-        "stop_loss": "245.20",
-        "target_1": "245.80",
-        "target_2": "246.10",
-        "sl_cents": "30",
-        "tp1_cents": "30",
-        "tp2_cents": "60",
-        "max_risk": "$150",
-        "suggested_contracts": "1-2",
-        "portfolio": "3000",
-        "max_daily_loss": "300"
+        "score": "15/16",
+        "stop_loss": "390.20",
+        "target_1": "390.80",
+        "target_2": "391.10",
+        "max_risk": "$50",
+        "suggested_contracts": "1",
+        "accum_dist": "Accumulation",
+        "institutional": "High Activity",
+        "vol_trend": "Increasing"
     }
 
-    tracker.add_alert(test_data)
-    tg_msg = format_telegram_v3_3(test_data)
-    tg_ok = send_telegram(tg_msg)
+    # Test reversal alert
+    test_reversal = {
+        "signal_type": "REVERSAL",
+        "signal": "PUT",
+        "grade": "REV",
+        "symbol": "TSLA",
+        "price": "395.80",
+        "session": "Morning Momentum",
+        "reversal_pattern": "Rejection Wick",
+        "reversal_score": "9/10",
+        "resistance_level": "396.20",
+        "resistance_type": "Rolling High",
+        "rsi_1m": "72.5",
+        "rsi_5m": "68.3",
+        "macd_hist": "-0.0312",
+        "volume_ratio": "1.15x",
+        "volume_actual": "22.1K",
+        "volume_avg": "18.5K",
+        "obv_1m": "Falling",
+        "accum_dist": "Distribution",
+        "institutional": "High Activity",
+        "stop_loss": "396.10",
+        "target_1": "395.50",
+        "target_2": "395.20",
+        "atr": "0.92",
+        "max_risk": "$50"
+    }
 
-    return jsonify({"status": "test_sent", "telegram": "ok" if tg_ok else "failed"}), 200
+    tg_ok1 = send_telegram(format_trend_alert(test_trend))
+    time.sleep(2)
+    tg_ok2 = send_telegram(format_reversal_alert(test_reversal))
 
-
-@app.route("/daily", methods=["GET"])
-def daily():
-    """View daily summary."""
-    tracker.check_new_day()
-    return jsonify(tracker.summary())
+    return jsonify({
+        "status": "test_sent",
+        "trend_alert": "sent" if tg_ok1 else "failed",
+        "reversal_alert": "sent" if tg_ok2 else "failed"
+    }), 200
 
 
 @app.route("/history", methods=["GET"])
 def history():
-    """View today's alerts."""
-    tracker.check_new_day()
+    """View recent alert history."""
     return jsonify({
-        "date": tracker.date,
-        "total": tracker.total,
-        "alerts": tracker.alerts
+        "total": len(alert_history),
+        "today_sent": len(daily_alerts),
+        "today_blocked": len(blocked_today),
+        "alerts": alert_history[:20]
     })
 
 
-@app.route("/reset", methods=["POST"])
+@app.route("/stats", methods=["GET"])
+def stats():
+    """View detailed alert statistics."""
+    reset_daily_if_needed()
+    calls = sum(1 for a in daily_alerts if a["signal"] == "CALL")
+    puts = sum(1 for a in daily_alerts if a["signal"] == "PUT")
+    entered = sum(1 for a in daily_alerts if a["verdict"] == "ادخل")
+    watched = sum(1 for a in daily_alerts if a["verdict"] == "انتبه")
+    skipped = sum(1 for a in daily_alerts if a["verdict"] == "تجاوز")
+    reversals = sum(1 for a in daily_alerts if a["signal_type"] == "REVERSAL")
+
+    # Blocked reasons summary
+    block_reasons = {}
+    for b in blocked_today:
+        r = b.get("reason", "unknown")
+        # Simplify reason for grouping
+        if "مكرر" in r or "cooldown" in r or "سريع" in r:
+            key = "مكرر/cooldown"
+        elif "سيولة" in r:
+            key = "سيولة ضعيفة"
+        elif "بيانات" in r:
+            key = "بيانات ناقصة"
+        elif "RSI" in r:
+            key = "RSI متطرف"
+        elif "الحد اليومي" in r:
+            key = "حد يومي"
+        else:
+            key = r
+        block_reasons[key] = block_reasons.get(key, 0) + 1
+
+    return jsonify({
+        "date": daily_date,
+        "sent": {
+            "total": len(daily_alerts),
+            "calls": calls,
+            "puts": puts,
+            "reversals": reversals,
+            "verdicts": {
+                "ادخل": entered,
+                "انتبه": watched,
+                "تجاوز": skipped
+            }
+        },
+        "blocked": {
+            "total": len(blocked_today),
+            "reasons": block_reasons
+        },
+        "remaining": MAX_DAILY_ALERTS - len(daily_alerts),
+        "filters": {
+            "min_volume": f"{MIN_VOLUME_RATIO}x",
+            "cooldown": f"{COOLDOWN_SECONDS}s",
+            "max_daily": MAX_DAILY_ALERTS
+        }
+    })
+
+
+@app.route("/reset", methods=["GET"])
 def reset():
-    """Manually reset daily tracker."""
-    tracker.reset()
-    return jsonify({"status": "reset", "message": "Daily tracker cleared"})
+    """Reset daily counters."""
+    global daily_alerts, daily_date, blocked_today
+    daily_alerts = []
+    blocked_today = []
+    daily_date = get_today()
+    return jsonify({"status": "reset", "date": daily_date})
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -626,18 +905,24 @@ def reset():
 
 if __name__ == "__main__":
     logger.info("=" * 60)
-    logger.info("TSLA Scalper V3.3.1 (Enhanced Data Quality + Entry Zone) — Starting...")
-    logger.info(f"Portfolio: $3,000 | Max Risk/Trade: 5-10%")
-    logger.info(f"Daily Trade Limit: {MAX_DAILY_TRADES}")
-    logger.info(f"Daily Loss Limit: ${MAX_DAILY_LOSS}")
+    logger.info("Smart Trading Alert Bot V4.0 Phase 1 — Starting...")
     logger.info(f"Server: {SERVER_HOST}:{SERVER_PORT}")
+    logger.info(f"Telegram: {'Configured' if TELEGRAM_BOT_TOKEN != 'YOUR_BOT_TOKEN_HERE' else 'NOT SET'}")
+    logger.info(f"Filters: Volume>{MIN_VOLUME_RATIO}x | Cooldown:{COOLDOWN_SECONDS}s | Max:{MAX_DAILY_ALERTS}/day | RSI extreme block")
     logger.info("=" * 60)
+
+    # Start keep-alive background thread
+    keep_alive_thread = threading.Thread(target=keep_alive_worker, daemon=True)
+    keep_alive_thread.start()
+    logger.info("Keep-alive thread started (every 10 min)")
+
     logger.info("Endpoints:")
-    logger.info(f"  POST /webhook  — TradingView alerts")
-    logger.info(f"  GET  /test     — Send test alert (V3.3)")
-    logger.info(f"  GET  /daily    — Daily summary")
-    logger.info(f"  GET  /history  — Today's alerts")
-    logger.info(f"  POST /reset    — Reset daily counter")
+    logger.info("  Health:   /")
+    logger.info("  Webhook:  /webhook")
+    logger.info("  Test:     /test")
+    logger.info("  History:  /history")
+    logger.info("  Stats:    /stats")
+    logger.info("  Reset:    /reset")
     logger.info("=" * 60)
 
     app.run(host=SERVER_HOST, port=SERVER_PORT, debug=False)

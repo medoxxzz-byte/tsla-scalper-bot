@@ -33,3 +33,4 @@ Receives alerts from TradingView via Webhook and sends formatted notifications t
 - `GET /daily` — Daily summary
 - `GET /history` — Today's alerts
 - `POST /reset` — Reset daily counter
+# Phase 2 - V4.1 - Sat Mar 28 00:55:58 EDT 2026

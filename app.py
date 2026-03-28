@@ -937,7 +937,13 @@ def webhook():
 
     logger.info(f"Received: {signal_type} {signal} @ ${price} | Vol:{vol_ratio:.2f}x | Session:{get_session()}")
 
-    passed, rejection_reason = apply_filters(data)
+    try:
+        passed, rejection_reason = apply_filters(data)
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        logger.error(f"apply_filters error: {e}\n{tb}")
+        return jsonify({"status": "error", "error": str(e), "traceback": tb}), 200
 
     if not passed:
         logger.info(f"BLOCKED: {rejection_reason}")

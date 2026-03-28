@@ -765,7 +765,7 @@ def check_cooldown(data):
     return True, ""
 
 
-def check_daily_limit():
+def check_daily_limit(data=None):
     reset_daily_if_needed()
     if len(daily_alerts) >= MAX_DAILY_ALERTS:
         return False, f"وصلت الحد اليومي ({MAX_DAILY_ALERTS} تنبيهات)"

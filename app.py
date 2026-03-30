@@ -1080,10 +1080,16 @@ def stats():
 @app.route("/reset", methods=["GET"])
 def reset():
     global daily_alerts, daily_date, blocked_today
-    daily_alerts  = []
-    blocked_today = []
-    daily_date    = get_today()
-    return jsonify({"status": "reset", "date": daily_date})
+    global last_call_time, last_put_time, last_alert_price, last_alert_signal, last_alert_time
+    daily_alerts       = []
+    blocked_today      = []
+    daily_date         = get_today()
+    last_call_time     = 0
+    last_put_time      = 0
+    last_alert_price   = None
+    last_alert_signal  = None
+    last_alert_time    = 0
+    return jsonify({"status": "reset", "date": daily_date, "cooldowns": "cleared"})
 
 
 # ──────────────────────────────────────────────────────────────────────────────

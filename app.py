@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 Smart Trading Alert Bot - V5.1 Mosquito Strategy Server
-Webhook Server for TSLA Mosquito V5.0 Pine Script
+Webhook Server for TSLA Mosquito V5.1 Pine Script
 Features:
   - Supports TRADE_V5 signals with Grading (A+/B/C) and Warnings
+  - Multi-Timeframe Alignment: Scout / Attack / Elite / Conflict
   - Pulls real-time best Options contract from Yahoo Finance
   - Calculates Entry, Take Profit (40%), Stop Loss (50%)
   - Alternative contract when 0DTE or bad spread
@@ -74,7 +75,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("alert_bot_v50.log"),
+        logging.FileHandler("alert_bot_v51.log"),
         logging.StreamHandler()
     ]
 )
@@ -144,11 +145,8 @@ def safe_get(data, key, default="--"):
 
 def get_best_option(symbol, signal_type, current_price):
     """
-    Fetches the best option contract from Yahoo Finance based on Mosquito Strategy.
+    Fetches the best option contract from Yahoo Finance.
     Returns (primary, alternative) where alternative may be None.
-    Alternative appears only when:
-      - Primary is 0DTE, OR
-      - Primary has bad spread (>15%)
     """
     try:
         ticker = yf.Ticker(symbol)
@@ -157,7 +155,6 @@ def get_best_option(symbol, signal_type, current_price):
         if not expirations:
             return None, None
 
-        # Get the closest expiration
         target_expiry = expirations[0]
         opt_chain = ticker.option_chain(target_expiry)
 
@@ -174,7 +171,6 @@ def get_best_option(symbol, signal_type, current_price):
 
         best = candidates.iloc[0]
 
-        # Calculate entry, TP, SL
         entry_price = float(best['lastPrice'])
         ask_price = float(best['ask']) if not pd.isna(best['ask']) else 0.0
         bid_price = float(best['bid']) if not pd.isna(best['bid']) else 0.0
@@ -205,7 +201,7 @@ def get_best_option(symbol, signal_type, current_price):
             "is_0dte": is_0dte
         }
 
-        # ── Determine if alternative is needed ──
+        # Determine if alternative is needed
         spread = ask_price - bid_price
         spread_pct = (spread / bid_price) if bid_price > 0 else 0
         bad_spread = spread_pct > 0.15
@@ -213,7 +209,6 @@ def get_best_option(symbol, signal_type, current_price):
 
         alt_data = None
         if needs_alt and len(expirations) > 1:
-            # Find expiry 2-7 days out
             alt_expiry = None
             today_date = datetime.strptime(get_today(), "%Y-%m-%d")
             for exp in expirations[1:]:
@@ -258,6 +253,41 @@ def get_best_option(symbol, signal_type, current_price):
         return None, None
 
 # ──────────────────────────────────────────────────────────────────────────────
+# MTF Alignment Helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+ALIGN_CONFIG = {
+    "Elite": {
+        "icon": "★★★",
+        "label_ar": "توافق كامل",
+        "desc_ar": "1m + 5m + 15m متوافقة",
+        "color_icon": "🟣"
+    },
+    "Attack": {
+        "icon": "★★",
+        "label_ar": "توافق جيد",
+        "desc_ar": "1m + 5m متوافقة",
+        "color_icon": "🔵"
+    },
+    "Scout": {
+        "icon": "★",
+        "label_ar": "إشارة أولية",
+        "desc_ar": "1m فقط -- مراقبة",
+        "color_icon": "🟡"
+    },
+    "Conflict": {
+        "icon": "✕",
+        "label_ar": "تعارض",
+        "desc_ar": "الفريمات الأعلى تعارض",
+        "color_icon": "🔴"
+    }
+}
+
+def get_align_info(align_level):
+    """Return alignment config dict, defaulting to Scout if unknown."""
+    return ALIGN_CONFIG.get(align_level, ALIGN_CONFIG["Scout"])
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Message Formatters
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -273,7 +303,7 @@ def format_expiry_ar(expiry_str):
         return expiry_str
 
 def format_v5_trade_alert(data, primary_opt=None, alt_opt=None):
-    """Format V5.0 Mosquito trade signal with compact option lines."""
+    """Format V5.1 Mosquito trade signal with MTF alignment + compact option lines."""
     signal  = safe_get(data, "signal", "?")
     price   = safe_get(data, "price", "?")
     grade   = safe_get(data, "grade", "C")
@@ -281,6 +311,9 @@ def format_v5_trade_alert(data, primary_opt=None, alt_opt=None):
     cond    = safe_get(data, "cond", "--")
     session = safe_get(data, "session", "--")
     warning = safe_get(data, "warning", "None")
+    align   = safe_get(data, "align", "Scout")
+    bias_5m  = safe_get(data, "bias_5m", "--")
+    bias_15m = safe_get(data, "bias_15m", "--")
 
     # Decision Logic
     decision = "ادخل بقوة" if grade == "A+" else "ادخل بحذر" if grade == "B" else "تجاوز"
@@ -294,13 +327,41 @@ def format_v5_trade_alert(data, primary_opt=None, alt_opt=None):
 
     warning_text = f"\n⚠️ <b>تحذير:</b> {warning}" if warning != "None" else ""
 
+    # MTF Alignment section
+    align_info = get_align_info(align)
+
+    # Build 5m/15m status icons
+    def tf_icon(bias_val, signal_dir):
+        """Green check if aligned, red X if opposed, yellow dash if neutral."""
+        if signal_dir == "CALL":
+            if bias_val == "Bull":
+                return "✅"
+            elif bias_val == "Bear":
+                return "❌"
+            else:
+                return "➖"
+        else:  # PUT
+            if bias_val == "Bear":
+                return "✅"
+            elif bias_val == "Bull":
+                return "❌"
+            else:
+                return "➖"
+
+    icon_5m = tf_icon(bias_5m, signal)
+    icon_15m = tf_icon(bias_15m, signal)
+
     msg = (
-        f"{decision_icon} <b>{decision}</b> -- Mosquito V5.0\n"
+        f"{decision_icon} <b>{decision}</b> -- Mosquito V5.1\n"
         f"{sig_icon} <b>{direction}</b> | TSLA @ <code>${price}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📊 <b>التقييم:</b> {grade} Setup\n"
         f"📈 <b>الاتجاه:</b> {bias}\n"
         f"🔍 <b>حالة السوق:</b> {cond}{warning_text}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{align_info['color_icon']} <b>توافق الفريمات:</b> {align_info['icon']} <b>{align}</b>\n"
+        f"   1m: ✅ | 5m: {icon_5m} {bias_5m} | 15m: {icon_15m} {bias_15m}\n"
+        f"   📝 {align_info['desc_ar']}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
     )
 
@@ -315,7 +376,7 @@ def format_v5_trade_alert(data, primary_opt=None, alt_opt=None):
             f" | SL ${primary_opt['sl']:.2f}\n"
         )
 
-        # 0DTE warning: show when grade is B/C or market is Choppy
+        # 0DTE warning
         if is_0dte and (grade in ("B", "C") or "Choppy" in cond):
             msg += "⚠️ 0DTE عالي الخطورة\n"
 
@@ -347,7 +408,7 @@ def format_v5_trade_alert(data, primary_opt=None, alt_opt=None):
 
 
 def format_v5_liquidity_report(data):
-    """Format V5.0 Liquidity Report."""
+    """Format V5.1 Liquidity Report."""
     time_min = safe_get(data, "time_min", "?")
     vol_avg  = safe_get(data, "vol_avg", "?")
     atr      = safe_get(data, "atr", "?")
@@ -457,7 +518,7 @@ def home():
     reset_daily_if_needed()
     return jsonify({
         "status":        "running",
-        "service":       "Smart Trading Alert Bot -- Mosquito V5.1",
+        "service":       "Smart Trading Alert Bot -- Mosquito V5.1 MTF",
         "version":       "5.1",
         "alerts_today":  len(daily_alerts),
         "blocked_today": len(blocked_today),
@@ -485,8 +546,9 @@ def webhook():
     signal     = safe_get(data, "signal", "?")
     price      = safe_get(data, "price", "?")
     msg_type   = safe_get(data, "type", "TRADE")
+    align      = safe_get(data, "align", "Scout")
 
-    logger.info(f"Received: {signal} | Type: {msg_type} | Price: ${price}")
+    logger.info(f"Received: {signal} | Type: {msg_type} | Price: ${price} | Align: {align}")
 
     if price not in ("?", "--"):
         market_state["last_price"]   = price
@@ -541,91 +603,107 @@ def webhook():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "signal":    signal,
         "price":     price,
-        "grade":     safe_get(data, "grade", "C")
+        "grade":     safe_get(data, "grade", "C"),
+        "align":     align
     }
     alert_history.insert(0, entry)
     if len(alert_history) > MAX_HISTORY:
         alert_history.pop()
     daily_alerts.append(entry)
 
-    logger.info(f"SENT: {signal} @ ${price} (#{len(daily_alerts)} today)")
+    logger.info(f"SENT: {signal} @ ${price} | {align} (#{len(daily_alerts)} today)")
 
-    return jsonify({"status": "processed", "telegram": "sent" if tg_ok else "failed"}), 200
+    return jsonify({"status": "processed", "telegram": "sent" if tg_ok else "failed", "align": align}), 200
 
-@app.route("/test_v5", methods=["GET"])
-def test_v5_alert():
-    """Test V5.1 signal with primary + alternative contracts."""
+# ──────────────────────────────────────────────────────────────────────────────
+# Test Endpoints
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route("/test_elite", methods=["GET"])
+def test_elite():
+    """Test Elite signal: 1m + 5m + 15m aligned, A+ grade."""
     test_data = {
-        "signal": "CALL",
-        "type":   "TRADE_V5",
-        "price":  "348.50",
-        "grade":  "B",
-        "bias":   "Bullish",
-        "vwap":   "Above VWAP (Bull Control)",
-        "vol":    "Strong",
-        "mom":    "Bullish (Valid)",
-        "cond":   "Trending (Clear)",
-        "session": "Morning Momentum",
-        "warning": "None"
+        "signal": "CALL", "type": "TRADE_V5", "price": "348.50",
+        "grade": "A+", "align": "Elite",
+        "bias": "Bullish", "vwap": "Above VWAP (Bull Control)",
+        "vol": "Strong", "mom": "Bullish (Valid)",
+        "cond": "Trending (Clear)", "session": "Morning Momentum",
+        "warning": "None", "bias_5m": "Bull", "bias_15m": "Bull"
     }
-    # Mock primary (0DTE)
     primary_opt = {
-        "strike": 348.0,
-        "expiry": get_today(),
-        "symbol": "TSLA260412C00348000",
-        "last_price": 1.50,
-        "ask": 1.60,
-        "bid": 1.40,
-        "volume": 8500,
-        "open_interest": 12000,
-        "implied_volatility": 0.65,
-        "tp": 2.10,
-        "sl": 0.75,
-        "is_0dte": True
+        "strike": 348.0, "expiry": get_today(),
+        "symbol": "TSLA260414C00348000",
+        "last_price": 1.50, "ask": 1.60, "bid": 1.40,
+        "volume": 8500, "open_interest": 12000,
+        "implied_volatility": 0.65, "tp": 2.10, "sl": 0.75, "is_0dte": True
     }
-    # Mock alternative (5 days out)
     alt_opt = {
-        "strike": 348.0,
-        "expiry": "2026-04-17",
-        "last_price": 3.20,
-        "tp": 4.48,
-        "sl": 1.60
+        "strike": 348.0, "expiry": "2026-04-17",
+        "last_price": 3.20, "tp": 4.48, "sl": 1.60
     }
     tg_ok = send_telegram(format_v5_trade_alert(test_data, primary_opt, alt_opt))
-    return jsonify({"status": "test_sent", "telegram": "sent" if tg_ok else "failed"}), 200
+    return jsonify({"status": "test_sent", "level": "Elite", "telegram": "sent" if tg_ok else "failed"}), 200
 
-@app.route("/test_v5_no_alt", methods=["GET"])
-def test_v5_no_alt():
-    """Test V5.1 signal without alternative (non-0DTE, good spread)."""
+@app.route("/test_attack", methods=["GET"])
+def test_attack():
+    """Test Attack signal: 1m + 5m aligned, B grade."""
     test_data = {
-        "signal": "PUT",
-        "type":   "TRADE_V5",
-        "price":  "352.00",
-        "grade":  "A+",
-        "bias":   "Bearish",
-        "vwap":   "Below VWAP (Bear Control)",
-        "vol":    "Strong",
-        "mom":    "Bearish (Valid)",
-        "cond":   "Trending (Clear)",
-        "session": "Morning Momentum",
-        "warning": "None"
+        "signal": "CALL", "type": "TRADE_V5", "price": "349.00",
+        "grade": "B", "align": "Attack",
+        "bias": "Bullish", "vwap": "Above VWAP (Bull Control)",
+        "vol": "Normal", "mom": "Bullish (Valid)",
+        "cond": "Trending (Clear)", "session": "Morning Momentum",
+        "warning": "None", "bias_5m": "Bull", "bias_15m": "Neutral"
     }
     primary_opt = {
-        "strike": 352.0,
-        "expiry": "2026-04-14",
-        "symbol": "TSLA260414P00352000",
-        "last_price": 2.80,
-        "ask": 2.90,
-        "bid": 2.70,
-        "volume": 5200,
-        "open_interest": 8000,
-        "implied_volatility": 0.55,
-        "tp": 3.92,
-        "sl": 1.40,
-        "is_0dte": False
+        "strike": 349.0, "expiry": "2026-04-14",
+        "symbol": "TSLA260414C00349000",
+        "last_price": 2.40, "ask": 2.50, "bid": 2.30,
+        "volume": 5200, "open_interest": 9000,
+        "implied_volatility": 0.58, "tp": 3.36, "sl": 1.20, "is_0dte": False
     }
     tg_ok = send_telegram(format_v5_trade_alert(test_data, primary_opt, None))
-    return jsonify({"status": "test_sent", "telegram": "sent" if tg_ok else "failed"}), 200
+    return jsonify({"status": "test_sent", "level": "Attack", "telegram": "sent" if tg_ok else "failed"}), 200
+
+@app.route("/test_scout", methods=["GET"])
+def test_scout():
+    """Test Scout signal: 1m only, C grade."""
+    test_data = {
+        "signal": "PUT", "type": "TRADE_V5", "price": "352.00",
+        "grade": "C", "align": "Scout",
+        "bias": "Bearish", "vwap": "Below VWAP (Bear Control)",
+        "vol": "Weak", "mom": "Bearish (Valid)",
+        "cond": "Choppy (High Risk)", "session": "Midday (Slow)",
+        "warning": "Weak Volume", "bias_5m": "Neutral", "bias_15m": "Neutral"
+    }
+    primary_opt = {
+        "strike": 352.0, "expiry": get_today(),
+        "symbol": "TSLA260414P00352000",
+        "last_price": 0.80, "ask": 0.90, "bid": 0.70,
+        "volume": 1200, "open_interest": 3000,
+        "implied_volatility": 0.72, "tp": 1.12, "sl": 0.40, "is_0dte": True
+    }
+    alt_opt = {
+        "strike": 352.0, "expiry": "2026-04-17",
+        "last_price": 2.10, "tp": 2.94, "sl": 1.05
+    }
+    tg_ok = send_telegram(format_v5_trade_alert(test_data, primary_opt, alt_opt))
+    return jsonify({"status": "test_sent", "level": "Scout", "telegram": "sent" if tg_ok else "failed"}), 200
+
+@app.route("/test_conflict", methods=["GET"])
+def test_conflict():
+    """Test Conflict: 1m says CALL but 5m/15m oppose -- should NOT be sent in production."""
+    test_data = {
+        "signal": "CALL", "type": "TRADE_V5", "price": "350.00",
+        "grade": "C", "align": "Conflict",
+        "bias": "Bullish", "vwap": "Above VWAP (Bull Control)",
+        "vol": "Normal", "mom": "Bullish (Valid)",
+        "cond": "Choppy (High Risk)", "session": "Midday (Slow)",
+        "warning": "MTF Conflict -- Higher TF opposes",
+        "bias_5m": "Bear", "bias_15m": "Bear"
+    }
+    tg_ok = send_telegram(format_v5_trade_alert(test_data, None, None))
+    return jsonify({"status": "test_sent", "level": "Conflict", "telegram": "sent" if tg_ok else "failed"}), 200
 
 @app.route("/reset", methods=["GET"])
 def reset():

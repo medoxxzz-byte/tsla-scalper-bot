@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Smart Trading Alert Bot - V5.0 Mosquito Strategy Server
+Smart Trading Alert Bot - V5.1 Mosquito Strategy Server
 Webhook Server for TSLA Mosquito V5.0 Pine Script
 Features:
   - Supports TRADE_V5 signals with Grading (A+/B/C) and Warnings
   - Pulls real-time best Options contract from Yahoo Finance
   - Calculates Entry, Take Profit (40%), Stop Loss (50%)
+  - Alternative contract when 0DTE or bad spread
+  - 0DTE high-risk warning
   - Backward compatible with V4.0 and V3.3 signals
   - Arabic Telegram messages
 """
@@ -61,7 +63,7 @@ WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 COOLDOWN_SECONDS_SIMILAR = 1500   # 25 min between same-direction signals
 COOLDOWN_MIN_GAP         = 30     # minimum 30s between any two alerts
 
-MAX_DAILY_ALERTS    = int(os.environ.get("MAX_DAILY_TRADES", "11")) # Updated to 11 per user request
+MAX_DAILY_ALERTS    = int(os.environ.get("MAX_DAILY_TRADES", "11"))
 KEEP_ALIVE_INTERVAL = 600   # 10 minutes
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -142,71 +144,136 @@ def safe_get(data, key, default="--"):
 
 def get_best_option(symbol, signal_type, current_price):
     """
-    Fetches the best option contract from Yahoo Finance based on Mosquito Strategy:
-    - Expiry: 0DTE or closest available
-    - Strike: ATM or first ITM
-    - Returns contract details.
+    Fetches the best option contract from Yahoo Finance based on Mosquito Strategy.
+    Returns (primary, alternative) where alternative may be None.
+    Alternative appears only when:
+      - Primary is 0DTE, OR
+      - Primary has bad spread (>15%)
     """
     try:
         ticker = yf.Ticker(symbol)
         expirations = ticker.options
-        
+
         if not expirations:
-            return None
-            
+            return None, None
+
         # Get the closest expiration
         target_expiry = expirations[0]
         opt_chain = ticker.option_chain(target_expiry)
-        
+
         if signal_type == "CALL":
-            options = opt_chain.calls
-            # Sort by absolute distance to current price
-            options['distance'] = abs(options['strike'] - float(current_price))
-            # Filter for ATM or slightly ITM (strike <= current_price)
-            # If no ITM, just get closest
-            candidates = options.sort_values('distance')
-        else: # PUT
-            options = opt_chain.puts
-            options['distance'] = abs(options['strike'] - float(current_price))
-            candidates = options.sort_values('distance')
-            
+            options = opt_chain.calls.copy()
+        else:
+            options = opt_chain.puts.copy()
+
+        options['distance'] = abs(options['strike'] - float(current_price))
+        candidates = options.sort_values('distance')
+
         if candidates.empty:
-            return None
-            
-        best_contract = candidates.iloc[0]
-        
-        # Calculate TP and SL
-        entry_price = float(best_contract['lastPrice'])
+            return None, None
+
+        best = candidates.iloc[0]
+
+        # Calculate entry, TP, SL
+        entry_price = float(best['lastPrice'])
+        ask_price = float(best['ask']) if not pd.isna(best['ask']) else 0.0
+        bid_price = float(best['bid']) if not pd.isna(best['bid']) else 0.0
+
         if entry_price <= 0:
-            entry_price = float(best_contract['ask']) # fallback
-            
+            entry_price = ask_price
+
         if entry_price > 0:
-            tp_price = entry_price * 1.40
-            sl_price = entry_price * 0.50
+            tp_price = round(entry_price * 1.40, 2)
+            sl_price = round(entry_price * 0.50, 2)
         else:
             entry_price = tp_price = sl_price = 0.0
-            
-        return {
-            "strike": float(best_contract['strike']),
+
+        is_0dte = (target_expiry == get_today())
+
+        primary = {
+            "strike": float(best['strike']),
             "expiry": target_expiry,
-            "symbol": best_contract['contractSymbol'],
+            "symbol": best['contractSymbol'],
             "last_price": entry_price,
-            "volume": int(best_contract['volume']) if not pd.isna(best_contract['volume']) else 0,
-            "open_interest": int(best_contract['openInterest']) if not pd.isna(best_contract['openInterest']) else 0,
-            "implied_volatility": float(best_contract['impliedVolatility']) if not pd.isna(best_contract['impliedVolatility']) else 0.0,
+            "ask": ask_price,
+            "bid": bid_price,
+            "volume": int(best['volume']) if not pd.isna(best['volume']) else 0,
+            "open_interest": int(best['openInterest']) if not pd.isna(best['openInterest']) else 0,
+            "implied_volatility": float(best['impliedVolatility']) if not pd.isna(best['impliedVolatility']) else 0.0,
             "tp": tp_price,
-            "sl": sl_price
+            "sl": sl_price,
+            "is_0dte": is_0dte
         }
+
+        # ── Determine if alternative is needed ──
+        spread = ask_price - bid_price
+        spread_pct = (spread / bid_price) if bid_price > 0 else 0
+        bad_spread = spread_pct > 0.15
+        needs_alt = is_0dte or bad_spread
+
+        alt_data = None
+        if needs_alt and len(expirations) > 1:
+            # Find expiry 2-7 days out
+            alt_expiry = None
+            today_date = datetime.strptime(get_today(), "%Y-%m-%d")
+            for exp in expirations[1:]:
+                exp_date = datetime.strptime(exp, "%Y-%m-%d")
+                days_out = (exp_date - today_date).days
+                if 1 <= days_out <= 7:
+                    alt_expiry = exp
+                    break
+
+            if not alt_expiry:
+                alt_expiry = expirations[1]
+
+            alt_chain = ticker.option_chain(alt_expiry)
+            if signal_type == "CALL":
+                alt_options = alt_chain.calls.copy()
+            else:
+                alt_options = alt_chain.puts.copy()
+
+            alt_options['distance'] = abs(alt_options['strike'] - float(current_price))
+            alt_candidates = alt_options.sort_values('distance')
+
+            if not alt_candidates.empty:
+                alt_best = alt_candidates.iloc[0]
+                alt_entry = float(alt_best['lastPrice'])
+                if alt_entry <= 0:
+                    alt_entry = float(alt_best['ask']) if not pd.isna(alt_best['ask']) else 0.0
+
+                if alt_entry > 0:
+                    alt_tp = round(alt_entry * 1.40, 2)
+                    alt_sl = round(alt_entry * 0.50, 2)
+                    alt_data = {
+                        "strike": float(alt_best['strike']),
+                        "expiry": alt_expiry,
+                        "last_price": alt_entry,
+                        "tp": alt_tp,
+                        "sl": alt_sl
+                    }
+
+        return primary, alt_data
     except Exception as e:
         logger.error(f"Error fetching options data: {e}")
-        return None
+        return None, None
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Message Formatters
 # ──────────────────────────────────────────────────────────────────────────────
 
-def format_v5_trade_alert(data, option_data=None):
-    """Format V5.0 Mosquito trade signal."""
+MONTHS_AR = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
+             "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]
+
+def format_expiry_ar(expiry_str):
+    """Convert 2026-04-17 to '17 أبريل'."""
+    try:
+        d = datetime.strptime(expiry_str, "%Y-%m-%d")
+        return f"{d.day} {MONTHS_AR[d.month - 1]}"
+    except:
+        return expiry_str
+
+def format_v5_trade_alert(data, primary_opt=None, alt_opt=None):
+    """Format V5.0 Mosquito trade signal with compact option lines."""
     signal  = safe_get(data, "signal", "?")
     price   = safe_get(data, "price", "?")
     grade   = safe_get(data, "grade", "C")
@@ -218,44 +285,66 @@ def format_v5_trade_alert(data, option_data=None):
     # Decision Logic
     decision = "ادخل بقوة" if grade == "A+" else "ادخل بحذر" if grade == "B" else "تجاوز"
     decision_icon = "🔥" if grade == "A+" else "🟢" if grade == "B" else "⚠️"
-    
+
     sig_icon  = "🟢" if signal == "CALL" else "🔴"
     direction = "CALL شراء" if signal == "CALL" else "PUT بيع"
 
     now_et    = get_et_now()
     timestamp = now_et.strftime("%I:%M %p")
-    
+
     warning_text = f"\n⚠️ <b>تحذير:</b> {warning}" if warning != "None" else ""
 
-    msg = f"""{decision_icon} <b>{decision}</b> -- Mosquito V5.0
-{sig_icon} <b>{direction}</b> | TSLA @ <code>${price}</code>
-━━━━━━━━━━━━━━━━━━━━━
+    msg = (
+        f"{decision_icon} <b>{decision}</b> -- Mosquito V5.0\n"
+        f"{sig_icon} <b>{direction}</b> | TSLA @ <code>${price}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📊 <b>التقييم:</b> {grade} Setup\n"
+        f"📈 <b>الاتجاه:</b> {bias}\n"
+        f"🔍 <b>حالة السوق:</b> {cond}{warning_text}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+    )
 
-📊 <b>التقييم:</b> {grade} Setup
-📈 <b>الاتجاه:</b> {bias}
-🔍 <b>حالة السوق:</b> {cond}{warning_text}
+    if primary_opt and primary_opt.get('last_price', 0) > 0:
+        is_0dte = primary_opt.get('is_0dte', False)
+        dte_label = "0DTE" if is_0dte else format_expiry_ar(primary_opt['expiry'])
 
-━━━━━━━━━━━━━━━━━━━━━\n"""
+        msg += (
+            f"\n🎯 الأساسي: {signal} ${primary_opt['strike']:.0f} {dte_label}"
+            f" | ${primary_opt['last_price']:.2f}"
+            f" → TP ${primary_opt['tp']:.2f}"
+            f" | SL ${primary_opt['sl']:.2f}\n"
+        )
 
-    if option_data and option_data['last_price'] > 0:
-        msg += f"""🎯 <b>أفضل عقد مقترح:</b>
-🏷 <b>العقد:</b> {signal} ${option_data['strike']} (انتهاء {option_data['expiry']})
-💵 <b>الدخول:</b> <code>${option_data['last_price']:.2f}</code>
-✅ <b>الهدف (40%):</b> <code>${option_data['tp']:.2f}</code>
-🛑 <b>الوقف (50%):</b> <code>${option_data['sl']:.2f}</code>
-📊 <b>السيولة:</b> Vol {option_data['volume']} | OI {option_data['open_interest']}
+        # 0DTE warning: show when grade is B/C or market is Choppy
+        if is_0dte and (grade in ("B", "C") or "Choppy" in cond):
+            msg += "⚠️ 0DTE عالي الخطورة\n"
 
-━━━━━━━━━━━━━━━━━━━━━\n"""
+        # Alternative contract
+        if alt_opt:
+            alt_date = format_expiry_ar(alt_opt['expiry'])
+            msg += (
+                f"\n🔄 البديل: {signal} ${alt_opt['strike']:.0f} ({alt_date})"
+                f" | ${alt_opt['last_price']:.2f}"
+                f" → TP ${alt_opt['tp']:.2f}"
+                f" | SL ${alt_opt['sl']:.2f}\n"
+                f"✅ أكثر أماناً — Spread ضيق\n"
+            )
+
+        msg += "\n━━━━━━━━━━━━━━━━━━━━━\n"
     else:
-        msg += """🎯 <b>العقد المقترح:</b>
-اختر أقرب Strike للسعر (ATM) ينتهي اليوم.
-الهدف 40% والوقف 50%.
+        msg += (
+            "\n🎯 <b>العقد المقترح:</b>\n"
+            "اختر أقرب Strike للسعر (ATM) ينتهي اليوم.\n"
+            "الهدف 40% والوقف 50%.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+        )
 
-━━━━━━━━━━━━━━━━━━━━━\n"""
-
-    msg += f"""🕐 {timestamp} ET | {session}
-⏱ <i>الوقف الزمني: 10 دقائق -- اطلع اذا ما تحرك السعر</i>"""
+    msg += (
+        f"🕐 {timestamp} ET | {session}\n"
+        f"⏱ <i>الوقف الزمني: 10 دقائق -- اطلع اذا ما تحرك السعر</i>"
+    )
     return msg
+
 
 def format_v5_liquidity_report(data):
     """Format V5.0 Liquidity Report."""
@@ -271,16 +360,16 @@ def format_v5_liquidity_report(data):
     cond_icon = "✅" if "Trending" in cond else "⚠️"
     bias_icon = "🟢" if "Bull" in bias else "🔴" if "Bear" in bias else "⚪"
 
-    msg = f"""📊 <b>تقرير السيولة -- {time_min} دقيقة من الافتتاح</b>
-━━━━━━━━━━━━━━━━━━━━━
-
-{bias_icon} <b>الاتجاه:</b> {bias}
-💧 <b>متوسط الحجم:</b> {vol_avg}
-📐 <b>ATR:</b> ${atr}
-{cond_icon} <b>حالة السوق:</b> {cond}
-
-━━━━━━━━━━━━━━━━━━━━━
-🕐 {timestamp} ET | تقرير #{len(liquidity_reports) + 1}"""
+    msg = (
+        f"📊 <b>تقرير السيولة -- {time_min} دقيقة من الافتتاح</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{bias_icon} <b>الاتجاه:</b> {bias}\n"
+        f"💧 <b>متوسط الحجم:</b> {vol_avg}\n"
+        f"📐 <b>ATR:</b> ${atr}\n"
+        f"{cond_icon} <b>حالة السوق:</b> {cond}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🕐 {timestamp} ET | تقرير #{len(liquidity_reports) + 1}"
+    )
     return msg
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -328,7 +417,7 @@ def check_cooldown(data):
     elapsed = now - last_alert_time
     signal  = safe_get(data, "signal", "")
     current_price = safe_get(data, "price", "")
-    
+
     if current_price == last_alert_price and signal == last_alert_signal and elapsed < COOLDOWN_MIN_GAP:
         return False, f"مكرر (نفس السعر {current_price} بفارق {elapsed:.0f}ث)"
 
@@ -368,8 +457,8 @@ def home():
     reset_daily_if_needed()
     return jsonify({
         "status":        "running",
-        "service":       "Smart Trading Alert Bot -- Mosquito V5.0",
-        "version":       "5.0",
+        "service":       "Smart Trading Alert Bot -- Mosquito V5.1",
+        "version":       "5.1",
         "alerts_today":  len(daily_alerts),
         "blocked_today": len(blocked_today),
         "reports_today": len(liquidity_reports),
@@ -432,10 +521,10 @@ def webhook():
         })
         return jsonify({"status": "blocked", "reason": rejection_reason}), 200
 
-    # Fetch Option Data from Yahoo Finance
-    option_data = get_best_option("TSLA", signal, price)
-    
-    tg_msg = format_v5_trade_alert(data, option_data)
+    # Fetch Option Data from Yahoo Finance (primary + alternative)
+    primary_opt, alt_opt = get_best_option("TSLA", signal, price)
+
+    tg_msg = format_v5_trade_alert(data, primary_opt, alt_opt)
     tg_ok = send_telegram(tg_msg)
 
     # Update state
@@ -465,12 +554,12 @@ def webhook():
 
 @app.route("/test_v5", methods=["GET"])
 def test_v5_alert():
-    """Test V5.0 CALL signal."""
+    """Test V5.1 signal with primary + alternative contracts."""
     test_data = {
         "signal": "CALL",
         "type":   "TRADE_V5",
-        "price":  "346.50",
-        "grade":  "A+",
+        "price":  "348.50",
+        "grade":  "B",
         "bias":   "Bullish",
         "vwap":   "Above VWAP (Bull Control)",
         "vol":    "Strong",
@@ -479,18 +568,63 @@ def test_v5_alert():
         "session": "Morning Momentum",
         "warning": "None"
     }
-    # Mock option data for testing
-    option_data = {
-        "strike": 347.5,
-        "expiry": "2026-04-10",
-        "symbol": "TSLA260410C00347500",
+    # Mock primary (0DTE)
+    primary_opt = {
+        "strike": 348.0,
+        "expiry": get_today(),
+        "symbol": "TSLA260412C00348000",
         "last_price": 1.50,
+        "ask": 1.60,
+        "bid": 1.40,
         "volume": 8500,
         "open_interest": 12000,
+        "implied_volatility": 0.65,
         "tp": 2.10,
-        "sl": 0.75
+        "sl": 0.75,
+        "is_0dte": True
     }
-    tg_ok = send_telegram(format_v5_trade_alert(test_data, option_data))
+    # Mock alternative (5 days out)
+    alt_opt = {
+        "strike": 348.0,
+        "expiry": "2026-04-17",
+        "last_price": 3.20,
+        "tp": 4.48,
+        "sl": 1.60
+    }
+    tg_ok = send_telegram(format_v5_trade_alert(test_data, primary_opt, alt_opt))
+    return jsonify({"status": "test_sent", "telegram": "sent" if tg_ok else "failed"}), 200
+
+@app.route("/test_v5_no_alt", methods=["GET"])
+def test_v5_no_alt():
+    """Test V5.1 signal without alternative (non-0DTE, good spread)."""
+    test_data = {
+        "signal": "PUT",
+        "type":   "TRADE_V5",
+        "price":  "352.00",
+        "grade":  "A+",
+        "bias":   "Bearish",
+        "vwap":   "Below VWAP (Bear Control)",
+        "vol":    "Strong",
+        "mom":    "Bearish (Valid)",
+        "cond":   "Trending (Clear)",
+        "session": "Morning Momentum",
+        "warning": "None"
+    }
+    primary_opt = {
+        "strike": 352.0,
+        "expiry": "2026-04-14",
+        "symbol": "TSLA260414P00352000",
+        "last_price": 2.80,
+        "ask": 2.90,
+        "bid": 2.70,
+        "volume": 5200,
+        "open_interest": 8000,
+        "implied_volatility": 0.55,
+        "tp": 3.92,
+        "sl": 1.40,
+        "is_0dte": False
+    }
+    tg_ok = send_telegram(format_v5_trade_alert(test_data, primary_opt, None))
     return jsonify({"status": "test_sent", "telegram": "sent" if tg_ok else "failed"}), 200
 
 @app.route("/reset", methods=["GET"])

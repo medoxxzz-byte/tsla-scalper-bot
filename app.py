@@ -1,9 +1,10 @@
 """
-Smart Trading Alert Bot - V5.2 Mosquito Swamp Strategy Server
-Webhook Server for TSLA Mosquito Swamp V5.2 Pine Script
+Smart Trading Alert Bot - V5.4 Mosquito Swamp Strategy Server
+Webhook Server for TSLA Mosquito Swamp V5.4 Pine Script
 Features:
-  - Supports TRADE_V5_2 signals with Star Grading (1-5)
-  - Pre-Alerts (KILL_ZONE) for early preparation
+  - Supports TRADE_V5_4 signals with Star Grading (1-5)
+  - Loss Counter: 3 consecutive signals without movement = 30 mins silence
+  - Pre-Alerts (VOL_INTEL) for Volume Intelligence (Traps & Divergence)
   - Pulls real-time best Options contract from Yahoo Finance
   - Calculates Entry, Take Profit (40%), Stop Loss (50%)
   - Alternative contract when 0DTE or bad spread
@@ -64,6 +65,9 @@ COOLDOWN_MIN_GAP         = 30     # minimum 30s between any two alerts
 MAX_DAILY_ALERTS    = int(os.environ.get("MAX_DAILY_TRADES", "11"))
 KEEP_ALIVE_INTERVAL = 600   # 10 minutes
 
+LOSS_COUNTER_MAX = 3
+LOSS_COOLDOWN_SECONDS = 1800  # 30 minutes silence
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Logging
 # ──────────────────────────────────────────────────────────────────────────────
@@ -72,7 +76,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("alert_bot_v52.log"),
+        logging.FileHandler("alert_bot_v54.log"),
         logging.StreamHandler()
     ]
 )
@@ -92,6 +96,10 @@ last_alert_price  = ""
 last_alert_signal = ""
 last_call_time = 0
 last_put_time  = 0
+
+# Loss Counter State
+consecutive_no_move = 0
+loss_cooldown_until = 0
 
 daily_alerts  = []
 daily_date    = ""
@@ -116,12 +124,15 @@ def get_today():
 
 def reset_daily_if_needed():
     global daily_date, daily_alerts, blocked_today, liquidity_reports
+    global consecutive_no_move, loss_cooldown_until
     today = get_today()
     if daily_date != today:
         daily_date = today
         daily_alerts = []
         blocked_today = []
         liquidity_reports = []
+        consecutive_no_move = 0
+        loss_cooldown_until = 0
         logger.info(f"--- Reset daily limits for {today} ---")
 
 def safe_get(data, key, default=""):
@@ -227,8 +238,8 @@ def format_expiry_ar(expiry_str):
     except:
         return expiry_str
 
-def format_v5_2_trade_alert(data, primary_opt=None, alt_opt=None):
-    """Format V5.2 Mosquito Swamp trade signal with Stars."""
+def format_v5_4_trade_alert(data, primary_opt=None, alt_opt=None):
+    """Format V5.4 Mosquito Swamp trade signal with Stars."""
     signal  = safe_get(data, "signal", "?")
     price   = safe_get(data, "price", "?")
     stars   = safe_get(data, "stars", "1")
@@ -274,7 +285,7 @@ def format_v5_2_trade_alert(data, primary_opt=None, alt_opt=None):
     icon_15m = tf_icon(bias_15m, signal)
 
     msg = (
-        f"{decision_icon} <b>{decision}</b> -- Mosquito Swamp V5.2\n"
+        f"{decision_icon} <b>{decision}</b> -- Mosquito Swamp V5.4\n"
         f"{sig_icon} <b>{direction}</b> | TSLA @ <code>${price}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🌟 <b>التقييم:</b> {stars_display} ({stars}/5)\n"
@@ -327,29 +338,41 @@ def format_v5_2_trade_alert(data, primary_opt=None, alt_opt=None):
     )
     return msg
 
-def format_kill_zone_alert(data):
-    """Format V5.2 Kill Zone Pre-Alert."""
-    kz_type = safe_get(data, "type", "?")
+def format_vol_intel_alert(data):
+    """Format V5.3 Volume Intelligence Alert."""
+    intel_type = safe_get(data, "type", "?")
     price   = safe_get(data, "price", "?")
     
     now_et    = get_et_now()
     timestamp = now_et.strftime("%I:%M %p")
     
-    if kz_type == "PRE_CALL":
+    if intel_type == "TRAP_CALL":
+        icon = "🔵"
+        title = "VOLUME TRAP (CALL)"
+        desc = "صانع السوق يمتص ضغط البيع عند منطقة دعم (شمعة كميات عالية + إغلاق قرب الأعلى). استعد لارتداد صاعد."
+    elif intel_type == "TRAP_PUT":
+        icon = "🔵"
+        title = "VOLUME TRAP (PUT)"
+        desc = "صانع السوق يمتص ضغط الشراء عند منطقة مقاومة (شمعة كميات عالية + إغلاق قرب الأدنى). استعد لارتداد هابط."
+    elif intel_type == "DIV_CALL":
         icon = "🟢"
-        title = "PRE-CALL KILL ZONE"
-        desc = "السعر عند دعم مهم مع بوادر ارتداد للأعلى. راقب MACD لتقاطع إيجابي."
-    else:
+        title = "MACD DIVERGENCE (CALL)"
+        desc = "السعر صنع قاعاً جديداً لكن MACD لم يؤكد ذلك (دايفرجنس إيجابي). الزخم الهابط يضعف، استعد لارتداد."
+    elif intel_type == "DIV_PUT":
         icon = "🔴"
-        title = "PRE-PUT KILL ZONE"
-        desc = "السعر عند مقاومة مهمة مع بوادر ارتداد للأسفل. راقب MACD لتقاطع سلبي."
+        title = "MACD DIVERGENCE (PUT)"
+        desc = "السعر صنع قمة جديدة لكن MACD لم يؤكد ذلك (دايفرجنس سلبي). الزخم الصاعد يضعف، استعد لارتداد."
+    else:
+        icon = "⚠️"
+        title = "VOLUME INTELLIGENCE"
+        desc = "حركة غير معتادة في الكميات."
 
     msg = (
-        f"⚠️ <b>تنبيه تحضيري -- {title}</b>\n"
+        f"⚠️ <b>تنبيه مبكر -- {title}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{icon} <b>TSLA @ <code>${price}</code></b>\n\n"
         f"💡 {desc}\n\n"
-        f"<i>ملاحظة: هذه ليست إشارة دخول، بل تنبيه للاستعداد.</i>\n"
+        f"<i>ملاحظة: هذه إشارة تحضيرية (استراتيجيات الفوليوم). انتظر التقاطع للدخول المؤكد.</i>\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"🕐 {timestamp} ET"
     )
@@ -395,8 +418,15 @@ def check_data_quality(data):
 def check_cooldown(data):
     global last_alert_time, last_alert_price, last_alert_signal
     global last_call_time, last_put_time
+    global loss_cooldown_until
 
     now     = time.time()
+    
+    # Check Loss Cooldown (30 mins silence)
+    if now < loss_cooldown_until:
+        remaining = loss_cooldown_until - now
+        return False, f"وضع الراحة مفعل -- انتظر {remaining/60:.0f} دقيقة"
+
     elapsed = now - last_alert_time
     signal  = safe_get(data, "signal", "")
     current_price = safe_get(data, "price", "")
@@ -440,8 +470,8 @@ def home():
     reset_daily_if_needed()
     return jsonify({
         "status":        "running",
-        "service":       "Smart Trading Alert Bot -- Mosquito Swamp V5.2",
-        "version":       "5.2",
+        "service":       "Smart Trading Alert Bot -- Mosquito Swamp V5.4",
+        "version":       "5.4",
         "alerts_today":  len(daily_alerts),
         "blocked_today": len(blocked_today),
         "remaining":     MAX_DAILY_ALERTS - len(daily_alerts),
@@ -474,11 +504,38 @@ def webhook():
         market_state["last_price"]   = price
         market_state["last_updated"] = datetime.now(timezone.utc).isoformat()
 
-    # ── KILL ZONE PRE-ALERT ──
-    if signal == "KILL_ZONE":
-        tg_msg = format_kill_zone_alert(data)
+    # ── VOLUME INTELLIGENCE PRE-ALERT ──
+    if signal == "VOL_INTEL":
+        tg_msg = format_vol_intel_alert(data)
         tg_ok  = send_telegram(tg_msg)
-        return jsonify({"status": "kill_zone_sent", "telegram": "sent" if tg_ok else "failed"}), 200
+        return jsonify({"status": "vol_intel_sent", "telegram": "sent" if tg_ok else "failed"}), 200
+
+    # ── LOSS COUNTER LOGIC ──
+    # Check if price moved since last alert (0.3% movement)
+    global consecutive_no_move, loss_cooldown_until
+    if last_alert_price and price not in ("?", "--"):
+        try:
+            prev_p = float(last_alert_price)
+            curr_p = float(price)
+            move_pct = abs(curr_p - prev_p) / prev_p
+            if move_pct < 0.003:  # Less than 0.3% move
+                consecutive_no_move += 1
+                logger.info(f"Price didn't move enough ({move_pct*100:.2f}%). Counter: {consecutive_no_move}/{LOSS_COUNTER_MAX}")
+                if consecutive_no_move >= LOSS_COUNTER_MAX:
+                    loss_cooldown_until = time.time() + LOSS_COOLDOWN_SECONDS
+                    consecutive_no_move = 0
+                    msg = (
+                        "🛑 <b>تفعيل وضع الراحة (صمت 30 دقيقة)</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━━\n"
+                        "السوق في مسار عرضي ضعيف (3 إشارات متتالية بدون حركة سعرية كافية).\n"
+                        "النظام سيتوقف عن إرسال الإشارات لمدة 30 دقيقة لحمايتك من التذبذب."
+                    )
+                    send_telegram(msg)
+                    logger.info("Activated 30-min loss cooldown.")
+            else:
+                consecutive_no_move = 0  # Reset if price moved
+        except:
+            pass
 
     # ── TRADE SIGNAL ──
     try:
@@ -500,7 +557,7 @@ def webhook():
     # Fetch Option Data from Yahoo Finance (primary + alternative)
     primary_opt, alt_opt = get_best_option("TSLA", signal, price)
 
-    tg_msg = format_v5_2_trade_alert(data, primary_opt, alt_opt)
+    tg_msg = format_v5_4_trade_alert(data, primary_opt, alt_opt)
     tg_ok = send_telegram(tg_msg)
 
     # Update state
@@ -536,7 +593,7 @@ def webhook():
 def test_5stars():
     """Test 5-Star signal."""
     test_data = {
-        "signal": "CALL", "type": "TRADE_V5_2", "price": "348.50",
+        "signal": "CALL", "type": "TRADE_V5_4", "price": "348.50",
         "stars": "5", "bias": "Bullish", "vwap": "Above VWAP (Bull Control)",
         "vol": "Surge", "mom": "Bullish (Valid)",
         "cond": "Trending (Clear)", "session": "Morning Momentum",
@@ -553,14 +610,14 @@ def test_5stars():
         "strike": 348.0, "expiry": "2026-04-17",
         "last_price": 3.20, "tp": 4.48, "sl": 1.60
     }
-    tg_ok = send_telegram(format_v5_2_trade_alert(test_data, primary_opt, alt_opt))
+    tg_ok = send_telegram(format_v5_4_trade_alert(test_data, primary_opt, alt_opt))
     return jsonify({"status": "test_sent", "level": "5 Stars", "telegram": "sent" if tg_ok else "failed"}), 200
 
 @app.route("/test_3stars", methods=["GET"])
 def test_3stars():
     """Test 3-Star signal."""
     test_data = {
-        "signal": "PUT", "type": "TRADE_V5_2", "price": "352.00",
+        "signal": "PUT", "type": "TRADE_V5_4", "price": "352.00",
         "stars": "3", "bias": "Bearish", "vwap": "Below VWAP (Bear Control)",
         "vol": "Normal", "mom": "Bearish (Valid)",
         "cond": "Choppy (Note)", "session": "Midday (Slow)",
@@ -577,22 +634,36 @@ def test_3stars():
         "strike": 352.0, "expiry": "2026-04-17",
         "last_price": 2.10, "tp": 2.94, "sl": 1.05
     }
-    tg_ok = send_telegram(format_v5_2_trade_alert(test_data, primary_opt, alt_opt))
+    tg_ok = send_telegram(format_v5_4_trade_alert(test_data, primary_opt, alt_opt))
     return jsonify({"status": "test_sent", "level": "3 Stars", "telegram": "sent" if tg_ok else "failed"}), 200
 
-@app.route("/test_kz_call", methods=["GET"])
-def test_kz_call():
-    """Test Pre-Call Kill Zone."""
-    test_data = {"signal": "KILL_ZONE", "type": "PRE_CALL", "price": "345.00"}
-    tg_ok = send_telegram(format_kill_zone_alert(test_data))
-    return jsonify({"status": "test_sent", "level": "KZ Call", "telegram": "sent" if tg_ok else "failed"}), 200
+@app.route("/test_vol_trap_call", methods=["GET"])
+def test_vol_trap_call():
+    """Test Volume Trap Call Alert."""
+    test_data = {"signal": "VOL_INTEL", "type": "TRAP_CALL", "price": "345.00"}
+    tg_ok = send_telegram(format_vol_intel_alert(test_data))
+    return jsonify({"status": "test_sent", "level": "Vol Trap Call", "telegram": "sent" if tg_ok else "failed"}), 200
 
-@app.route("/test_kz_put", methods=["GET"])
-def test_kz_put():
-    """Test Pre-Put Kill Zone."""
-    test_data = {"signal": "KILL_ZONE", "type": "PRE_PUT", "price": "355.00"}
-    tg_ok = send_telegram(format_kill_zone_alert(test_data))
-    return jsonify({"status": "test_sent", "level": "KZ Put", "telegram": "sent" if tg_ok else "failed"}), 200
+@app.route("/test_vol_trap_put", methods=["GET"])
+def test_vol_trap_put():
+    """Test Volume Trap Put Alert."""
+    test_data = {"signal": "VOL_INTEL", "type": "TRAP_PUT", "price": "355.00"}
+    tg_ok = send_telegram(format_vol_intel_alert(test_data))
+    return jsonify({"status": "test_sent", "level": "Vol Trap Put", "telegram": "sent" if tg_ok else "failed"}), 200
+
+@app.route("/test_div_call", methods=["GET"])
+def test_div_call():
+    """Test MACD Divergence Call Alert."""
+    test_data = {"signal": "VOL_INTEL", "type": "DIV_CALL", "price": "345.50"}
+    tg_ok = send_telegram(format_vol_intel_alert(test_data))
+    return jsonify({"status": "test_sent", "level": "Div Call", "telegram": "sent" if tg_ok else "failed"}), 200
+
+@app.route("/test_div_put", methods=["GET"])
+def test_div_put():
+    """Test MACD Divergence Put Alert."""
+    test_data = {"signal": "VOL_INTEL", "type": "DIV_PUT", "price": "354.50"}
+    tg_ok = send_telegram(format_vol_intel_alert(test_data))
+    return jsonify({"status": "test_sent", "level": "Div Put", "telegram": "sent" if tg_ok else "failed"}), 200
 
 @app.route("/reset", methods=["GET"])
 def reset():

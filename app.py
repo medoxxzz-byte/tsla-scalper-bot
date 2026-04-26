@@ -48,6 +48,14 @@ try:
 except ImportError:
     pass
 
+# ── Reversal Detector Integration ─────────────────────────────────────────────
+try:
+    import reversal_detector as rd
+    _RD_AVAILABLE = True
+except ImportError:
+    _RD_AVAILABLE = False
+    logging.warning("reversal_detector.py not found — reversal detection disabled")
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ──────────────────────────────────────────────────────────────────────────────
@@ -543,6 +551,55 @@ def get_tsla_day_data():
     except Exception as e:
         logger.error(f"Error fetching TSLA day data: {e}")
         return None, None, None
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Support & Resistance — 5-Minute Candles (Last 3 Candles)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Cache: store last computed S/R levels and the candle timestamp they were computed on
+_sr_cache = {
+    "resistance":    None,   # Highest high of last 3 closed 5-min candles
+    "support":       None,   # Lowest low of last 3 closed 5-min candles
+    "last_candle_ts": None,  # Timestamp of the last candle used for calculation
+}
+
+def get_tsla_sr_levels():
+    """
+    Calculate Support & Resistance from the last 3 CLOSED 5-minute candles.
+    Recalculates ONLY when a new 5-minute candle has closed (intrabar updates ignored).
+    Returns: (resistance, support) as floats, or (None, None) on error.
+    """
+    global _sr_cache
+    try:
+        tkr = yf.Ticker("TSLA")
+        # Fetch last 6 5-min candles (enough to always have 3 closed ones)
+        df = tkr.history(period="1d", interval="5m")
+        if df is None or len(df) < 4:
+            return _sr_cache["resistance"], _sr_cache["support"]
+
+        # The last row may be an open (intrabar) candle — exclude it
+        # Use the last 3 fully CLOSED candles (rows -4 to -2, i.e., skip the last row)
+        closed_candles = df.iloc[-4:-1]  # 3 closed candles
+
+        latest_candle_ts = closed_candles.index[-1]
+
+        # Only recompute if a new candle has closed since last calculation
+        if _sr_cache["last_candle_ts"] is not None and latest_candle_ts == _sr_cache["last_candle_ts"]:
+            return _sr_cache["resistance"], _sr_cache["support"]
+
+        resistance = round(float(closed_candles["High"].max()), 2)
+        support    = round(float(closed_candles["Low"].min()),  2)
+
+        _sr_cache["resistance"]    = resistance
+        _sr_cache["support"]       = support
+        _sr_cache["last_candle_ts"] = latest_candle_ts
+
+        logger.info(f"[S&R] Updated — Resistance: ${resistance} | Support: ${support} | Candle: {latest_candle_ts}")
+        return resistance, support
+
+    except Exception as e:
+        logger.error(f"[S&R] Error fetching 5-min S&R levels: {e}")
+        return _sr_cache["resistance"], _sr_cache["support"]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Options Data (Yahoo Finance)
@@ -1249,6 +1306,31 @@ def reset():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Position Status Route (for reversal_detector integration)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route("/position_status", methods=["POST"])
+def position_status():
+    """
+    تحديث حالة الصفقة المفتوحة لوحدة reversal_detector.
+    Body JSON: {"open": true/false}
+    """
+    if not _RD_AVAILABLE:
+        return jsonify({"status": "error", "message": "reversal_detector not available"}), 503
+
+    data = request.get_json(force=True, silent=True) or {}
+    is_open = bool(data.get("open", False))
+    rd.set_position_open(is_open)
+
+    logger.info(f"[position_status] position_open set to: {is_open}")
+    return jsonify({
+        "status":        "ok",
+        "position_open": is_open,
+        "message":       f"Position {'opened' if is_open else 'closed'} — reversal detector {'active' if is_open else 'paused'}"
+    })
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Background Workers
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1267,4 +1349,12 @@ if __name__ == "__main__":
     # Start background threads
     threading.Thread(target=keep_alive_worker, daemon=True).start()
     threading.Thread(target=monitor_positions, daemon=True).start()
+
+    # Start Reversal Detector (if available)
+    if _RD_AVAILABLE:
+        rd.start_reversal_detector()
+        logger.info("Reversal Detector started as background thread ✅")
+    else:
+        logger.warning("Reversal Detector not available — skipping")
+
     app.run(host=SERVER_HOST, port=SERVER_PORT, debug=False)

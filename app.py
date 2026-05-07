@@ -1533,14 +1533,15 @@ def position_status():
 # ──────────────────────────────────────────────────────────────────────────────
 
 def keep_alive_worker():
+    """Self-ping to prevent Render free tier from sleeping."""
     while True:
         time.sleep(KEEP_ALIVE_INTERVAL)
         try:
-            railway_url = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
-            if railway_url:
-                http_requests.get(f"https://{railway_url}/", timeout=10)
-        except:
-            pass
+            render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://tsla-scalper-bot.onrender.com")
+            http_requests.get(f"{render_url}/", timeout=15)
+            logger.debug(f"Keep-alive ping sent to {render_url}")
+        except Exception as e:
+            logger.debug(f"Keep-alive ping failed: {e}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────

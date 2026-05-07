@@ -4,7 +4,7 @@ Webhook Server for TSLA Mosquito Swamp V5.5 Pine Script
 
 NEW IN V5.6:
   - Alpaca Paper Trading Auto-Executor
-  - Trading Window: 10:00 AM - 1:00 PM ET only (30 min after open, stop after 3 hours)
+  - Trading Window: 10:00 AM - 3:30 PM ET (تم التوسيع بطلب المستخدم)
   - Auto buy options on CALL/PUT signal
   - Auto Stop Loss + Take Profit orders
   - Telegram notification on order fill + P&L
@@ -56,12 +56,49 @@ except ImportError:
     _RD_AVAILABLE = False
     logging.warning("reversal_detector.py not found — reversal detection disabled")
 
+# # ── Reversal Tracker Integration ─────────────────────────────────────────
+try:
+    import reversal_tracker as rt
+    _RT_AVAILABLE = True
+except ImportError:
+    _RT_AVAILABLE = False
+    logging.warning("reversal_tracker.py not found — reversal tracking disabled")
+# ── Alpaca Options Feed Integration ─────────────────────────────────────────
+try:
+    import alpaca_options as ao
+    _AO_AVAILABLE = True
+except ImportError:
+    _AO_AVAILABLE = False
+    logging.warning("alpaca_options.py not found — options feed disabled")
+
+# ── حالة الصفقة الحالية لتحديد نوع الأوبشن ────────────────────────────────────
+_current_signal_type = None  # "CALL" أو "PUT"
+
+def _get_signal_type():
+    return _current_signal_type
+
+def _get_tsla_price_for_options():
+    """جلب سعر TSLA من Alpaca (بديل yfinance الموثوق)."""
+    return get_tsla_price_alpaca_snapshot()
+
+def _on_option_data_received(opt: dict):
+    """استقبال بيانات الأوبشن الحية وتمريرها لـ reversal_detector."""
+    if _RD_AVAILABLE:
+        rd.update_option_data(
+            premium      = opt["premium"],
+            delta        = opt["delta"],
+            option_symbol= opt["symbol"],
+            strike_price = opt["strike"],
+            expiration   = opt["expiration"],
+            option_type  = opt["option_type"]
+        )
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ──────────────────────────────────────────────────────────────────────────────
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID",   "YOUR_CHAT_ID_HERE")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8701854195:AAHVmtrdxwyPBjtXMC-bU1ZCOnUBNafmtzA")
+TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID",   "975644160")
 
 SERVER_HOST    = os.environ.get("SERVER_HOST", "0.0.0.0")
 SERVER_PORT    = int(os.environ.get("PORT", os.environ.get("SERVER_PORT", "8080")))
@@ -74,14 +111,14 @@ ALPACA_BASE_URL   = os.environ.get("ALPACA_BASE_URL",   "https://paper-api.alpac
 
 # ── Trading Window (ET) ───────────────────────────────────────────────────────
 # 30 minutes after open = 10:00 AM ET
-# Stop after 3 hours = 1:00 PM ET
+# Stop at 3:30 PM ET (تم التوسيع من 1:00 PM إلى 3:30 PM بطلب المستخدم)
 TRADING_START_HOUR   = 10   # 10:00 AM ET
 TRADING_START_MINUTE = 0
-TRADING_END_HOUR     = 13   # 1:00 PM ET
-TRADING_END_MINUTE   = 0
+TRADING_END_HOUR     = 15   # 3:30 PM ET (تم التوسيع بطلب المستخدم)
+TRADING_END_MINUTE   = 30
 
 # ── Position Sizing ───────────────────────────────────────────────────────────
-MAX_CONTRACTS_PER_TRADE = 1      # عدد العقود لكل صفقة
+MAX_CONTRACTS_PER_TRADE = 10     # عدد العقود لكل صفقة (تمت الزيادة بطلب المستخدم)
 MAX_OPTION_PRICE        = 5.00   # أقصى سعر للعقد (لا تشتري عقود غالية جداً)
 MIN_OPTION_PRICE        = 0.10   # أدنى سعر (لا تشتري عقود رخيصة جداً = خطر)
 MIN_STARS_TO_EXECUTE    = 3      # أقل عدد نجوم لتنفيذ الصفقة تلقائياً
@@ -114,6 +151,27 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────────────────────
 # Flask App & State
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+# ── HTTP Session with Retry (لحل SSL timeouts) ──────────────────────────────
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+def _create_retry_session():
+    """إنشاء session مع retry تلقائي لحل SSL timeouts."""
+    session = http_requests.Session()
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET", "POST", "DELETE"],
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+_retry_session = _create_retry_session()
 
 app = Flask(__name__)
 
@@ -157,12 +215,12 @@ def get_today():
 def is_trading_window():
     """
     Returns True only if current ET time is within the allowed trading window:
-    10:00 AM - 1:00 PM ET (30 min after open, stop after 3 hours)
+    10:00 AM - 3:30 PM ET (30 min after open, stop at 3:30 PM)
     """
     now = get_et_now()
     current_minutes = now.hour * 60 + now.minute
     start_minutes   = TRADING_START_HOUR * 60 + TRADING_START_MINUTE   # 600 = 10:00 AM
-    end_minutes     = TRADING_END_HOUR   * 60 + TRADING_END_MINUTE     # 780 = 1:00 PM
+    end_minutes     = TRADING_END_HOUR   * 60 + TRADING_END_MINUTE     # 930 = 3:30 PM
 
     # Also check it's a weekday (Mon-Fri)
     if now.weekday() >= 5:  # Saturday=5, Sunday=6
@@ -173,7 +231,7 @@ def is_trading_window():
         return False, f"قبل نافذة التداول — يبدأ الساعة 10:00 AM ET (بعد {remaining} دقيقة)"
 
     if current_minutes >= end_minutes:
-        return False, "انتهت نافذة التداول — 1:00 PM ET (3 ساعات من الافتتاح)"
+        return False, "\u0627\u0646\u062a\u0647\u062a \u0646\u0627\u0641\u0630\u0629 \u0627\u0644\u062a\u062f\u0627\u0648\u0644 \u2014 3:30 PM ET"
 
     return True, "نافذة التداول مفتوحة ✅"
 
@@ -208,7 +266,7 @@ def alpaca_headers():
 def get_alpaca_account():
     """Get current account info from Alpaca."""
     try:
-        r = http_requests.get(
+        r = _retry_session.get(
             f"{ALPACA_BASE_URL}/v2/account",
             headers=alpaca_headers(),
             timeout=10
@@ -224,7 +282,7 @@ def get_alpaca_account():
 def get_alpaca_positions():
     """Get open positions from Alpaca."""
     try:
-        r = http_requests.get(
+        r = _retry_session.get(
             f"{ALPACA_BASE_URL}/v2/positions",
             headers=alpaca_headers(),
             timeout=10
@@ -256,7 +314,7 @@ def place_alpaca_stock_order(symbol, qty, side, order_type="market",
         payload["stop_price"] = str(round(stop_price, 2))
 
     try:
-        r = http_requests.post(
+        r = _retry_session.post(
             f"{ALPACA_BASE_URL}/v2/orders",
             headers=alpaca_headers(),
             json=payload,
@@ -276,7 +334,7 @@ def place_alpaca_stock_order(symbol, qty, side, order_type="market",
 def close_alpaca_position(symbol):
     """Close an open position by symbol."""
     try:
-        r = http_requests.delete(
+        r = _retry_session.delete(
             f"{ALPACA_BASE_URL}/v2/positions/{symbol}",
             headers=alpaca_headers(),
             timeout=10
@@ -310,11 +368,11 @@ def execute_trade(signal, price, stars, opt_data):
 
         # Determine trade parameters
         # We use TSLA stock as proxy for options
-        # For CALL: buy 1 share of TSLA
+        # For CALL: buy MAX_CONTRACTS_PER_TRADE shares of TSLA
         # For PUT: we'll simulate by tracking the signal (paper only)
         
         tsla_price = float(price)
-        qty = 1  # 1 share as proxy
+        qty = MAX_CONTRACTS_PER_TRADE  # 10 أسهم لكل صفقة (تم التحديث بطلب المستخدم)
 
         if signal == "CALL":
             # Check we have enough buying power
@@ -333,8 +391,12 @@ def execute_trade(signal, price, stars, opt_data):
                 tp_opt    = opt_data["tp"]
                 sl_opt    = opt_data["sl"]
                 # Convert to stock equivalent percentages
-                tp_stock = tsla_price * (1 + (tp_opt - entry_opt) / entry_opt * 0.3)
-                sl_stock = tsla_price * (1 - (entry_opt - sl_opt) / entry_opt * 0.3)
+                # استخدام نسب معقولة من بيانات الأوبشن مع حد أقصى لتجنب أهداف غير واقعية
+                raw_tp = tsla_price * (1 + (tp_opt - entry_opt) / entry_opt * 0.3)
+                raw_sl = tsla_price * (1 - (entry_opt - sl_opt) / entry_opt * 0.3)
+                # حد أقصى: TP لا يتجاوز +2.0%، SL لا يتجاوز -1.5%
+                tp_stock = min(raw_tp, tsla_price * 1.020)
+                sl_stock = max(raw_sl, tsla_price * 0.985)
             else:
                 tp_stock = tsla_price * 1.015  # +1.5%
                 sl_stock = tsla_price * 0.990  # -1.0%
@@ -449,9 +511,8 @@ def monitor_positions():
             continue
 
         try:
-            # Get current TSLA price
-            tkr = yf.Ticker("TSLA")
-            current_price = float(tkr.fast_info.last_price)
+            # Get current TSLA price — Alpaca (موثوق بدلاً من yfinance)
+            current_price = get_tsla_price_alpaca_snapshot()
             if current_price <= 0:
                 continue
 
@@ -540,17 +601,113 @@ def calc_fibonacci(high, low):
         "fib_786": round(high - diff * 0.786, 2),
     }
 
+def get_tsla_price_alpaca():
+    """جلب سعر TSLA من Alpaca (quote)."""
+    try:
+        r = _retry_session.get(
+            f"{ALPACA_BASE_URL}/v2/stocks/TSLA/quotes/latest",
+            headers=alpaca_headers(),
+            timeout=8
+        )
+        if r.status_code == 200:
+            data = r.json()
+            price = float(data.get("quote", {}).get("ap", 0) or data.get("quote", {}).get("bp", 0))
+            if price > 0:
+                return price
+    except Exception as e:
+        logger.error(f"Alpaca price error: {e}")
+    return 0.0
+
+def get_tsla_price_alpaca_snapshot():
+    """المصدر الرئيسي للسعر — Alpaca Snapshot (أسرع وأكثر موثوقية)."""
+    try:
+        r = _retry_session.get(
+            "https://data.alpaca.markets/v2/stocks/TSLA/snapshot",
+            headers=alpaca_headers(),
+            timeout=8
+        )
+        if r.status_code == 200:
+            snap = r.json()
+            # أولاً: آخر صفقة
+            price = float(snap.get("latestTrade", {}).get("p", 0))
+            if price > 0:
+                return price
+            # ثانياً: آخر سعر طلب
+            price = float(snap.get("latestQuote", {}).get("ap", 0))
+            if price > 0:
+                return price
+    except Exception as e:
+        logger.error(f"Alpaca snapshot error: {e}")
+    # Fallback: quote endpoint
+    return get_tsla_price_alpaca()
+
+def get_tsla_day_data_alpaca():
+    """جلب بيانات اليوم (High/Low/Price) من Alpaca Snapshot — بديل yfinance."""
+    try:
+        r = _retry_session.get(
+            "https://data.alpaca.markets/v2/stocks/TSLA/snapshot",
+            headers=alpaca_headers(),
+            timeout=8
+        )
+        if r.status_code == 200:
+            snap = r.json()
+            daily = snap.get("dailyBar", {})
+            latest = snap.get("latestTrade", {})
+            last_price = float(latest.get("p", 0))
+            day_high   = float(daily.get("h", 0))
+            day_low    = float(daily.get("l", 0))
+            if last_price > 0:
+                logger.info(f"[Alpaca] Price: ${last_price} | H: ${day_high} | L: ${day_low}")
+                return last_price, day_high, day_low
+    except Exception as e:
+        logger.error(f"Alpaca day data error: {e}")
+    return None, None, None
+
+def get_tsla_5min_bars_alpaca():
+    """جلب شمعات 5 دقائق من Alpaca — بديل yfinance للـ S&R."""
+    try:
+        from datetime import datetime, timedelta
+        end = datetime.utcnow()
+        start = end - timedelta(hours=8)
+        params = {
+            "timeframe": "5Min",
+            "start": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "limit": 10,
+            "feed": "iex"
+        }
+        r = http_requests.get(
+            "https://data.alpaca.markets/v2/stocks/TSLA/bars",
+            headers=alpaca_headers(),
+            params=params,
+            timeout=10
+        )
+        if r.status_code == 200:
+            bars = r.json().get("bars", [])
+            if len(bars) >= 4:
+                return bars  # قائمة من dicts: {o, h, l, c, v, t}
+    except Exception as e:
+        logger.error(f"Alpaca 5min bars error: {e}")
+    return []
+
 def get_tsla_day_data():
+    """جلب بيانات اليوم — Alpaca أولاً (موثوق)، yfinance كاحتياطي."""
+    # المصدر الأساسي: Alpaca
+    price, high, low = get_tsla_day_data_alpaca()
+    if price and price > 0:
+        return price, high or 0.0, low or 0.0
+    # Fallback: yfinance
     try:
         tkr = yf.Ticker("TSLA")
         info = tkr.fast_info
         day_high   = float(info.day_high)   if info.day_high   else 0.0
         day_low    = float(info.day_low)    if info.day_low    else 0.0
         last_price = float(info.last_price) if info.last_price else 0.0
-        return last_price, day_high, day_low
+        if last_price > 0:
+            return last_price, day_high, day_low
     except Exception as e:
-        logger.error(f"Error fetching TSLA day data: {e}")
-        return None, None, None
+        logger.error(f"yfinance day data error: {e}")
+    return None, None, None
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Support & Resistance — 5-Minute Candles (Last 3 Candles)
@@ -566,40 +723,46 @@ _sr_cache = {
 def get_tsla_sr_levels():
     """
     Calculate Support & Resistance from the last 3 CLOSED 5-minute candles.
-    Recalculates ONLY when a new 5-minute candle has closed (intrabar updates ignored).
-    Returns: (resistance, support) as floats, or (None, None) on error.
+    Uses Alpaca as primary source, yfinance as fallback.
     """
     global _sr_cache
+    # المصدر الأساسي: Alpaca 5-min bars
+    try:
+        bars = get_tsla_5min_bars_alpaca()
+        if bars and len(bars) >= 4:
+            # آخر 3 شمعات مغلقة (نتجاهل الأخيرة لأنها قد تكون مفتوحة)
+            closed = bars[-4:-1]
+            latest_ts = closed[-1].get("t", "")
+            if _sr_cache["last_candle_ts"] is not None and latest_ts == _sr_cache["last_candle_ts"]:
+                return _sr_cache["resistance"], _sr_cache["support"]
+            resistance = round(max(b["h"] for b in closed), 2)
+            support    = round(min(b["l"] for b in closed), 2)
+            _sr_cache["resistance"]     = resistance
+            _sr_cache["support"]        = support
+            _sr_cache["last_candle_ts"] = latest_ts
+            logger.info(f"[S&R][Alpaca] R: ${resistance} | S: ${support}")
+            return resistance, support
+    except Exception as e:
+        logger.error(f"[S&R] Alpaca bars error: {e}")
+    # Fallback: yfinance
     try:
         tkr = yf.Ticker("TSLA")
-        # Fetch last 6 5-min candles (enough to always have 3 closed ones)
         df = tkr.history(period="1d", interval="5m")
-        if df is None or len(df) < 4:
-            return _sr_cache["resistance"], _sr_cache["support"]
-
-        # The last row may be an open (intrabar) candle — exclude it
-        # Use the last 3 fully CLOSED candles (rows -4 to -2, i.e., skip the last row)
-        closed_candles = df.iloc[-4:-1]  # 3 closed candles
-
-        latest_candle_ts = closed_candles.index[-1]
-
-        # Only recompute if a new candle has closed since last calculation
-        if _sr_cache["last_candle_ts"] is not None and latest_candle_ts == _sr_cache["last_candle_ts"]:
-            return _sr_cache["resistance"], _sr_cache["support"]
-
-        resistance = round(float(closed_candles["High"].max()), 2)
-        support    = round(float(closed_candles["Low"].min()),  2)
-
-        _sr_cache["resistance"]    = resistance
-        _sr_cache["support"]       = support
-        _sr_cache["last_candle_ts"] = latest_candle_ts
-
-        logger.info(f"[S&R] Updated — Resistance: ${resistance} | Support: ${support} | Candle: {latest_candle_ts}")
-        return resistance, support
-
+        if df is not None and len(df) >= 4:
+            closed_candles = df.iloc[-4:-1]
+            latest_candle_ts = closed_candles.index[-1]
+            if _sr_cache["last_candle_ts"] is not None and latest_candle_ts == _sr_cache["last_candle_ts"]:
+                return _sr_cache["resistance"], _sr_cache["support"]
+            resistance = round(float(closed_candles["High"].max()), 2)
+            support    = round(float(closed_candles["Low"].min()),  2)
+            _sr_cache["resistance"]     = resistance
+            _sr_cache["support"]        = support
+            _sr_cache["last_candle_ts"] = latest_candle_ts
+            logger.info(f"[S&R][yfinance] R: ${resistance} | S: ${support}")
+            return resistance, support
     except Exception as e:
-        logger.error(f"[S&R] Error fetching 5-min S&R levels: {e}")
-        return _sr_cache["resistance"], _sr_cache["support"]
+        logger.error(f"[S&R] yfinance error: {e}")
+    return _sr_cache["resistance"], _sr_cache["support"]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Options Data (Yahoo Finance)
@@ -608,8 +771,12 @@ def get_tsla_sr_levels():
 def get_best_option(ticker_symbol, signal_type, current_price):
     try:
         current_price = float(current_price)
-        tkr = yf.Ticker(ticker_symbol)
-        exp_dates = tkr.options
+        try:
+            tkr = yf.Ticker(ticker_symbol)
+            exp_dates = tkr.options
+        except Exception as e:
+            logger.error(f"yfinance options error: {e}")
+            return None, None
         if not exp_dates:
             return None, None
 
@@ -826,7 +993,7 @@ def format_opening_map(price, d_high, d_low, fib, trend, liquidity):
         f"   ├─ 78.6%: <code>${fib['fib_786']:.2f}</code>\n"
         f"   🟢 أدنى: <code>${fib['low']:.2f}</code>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏰ <b>نافذة التداول:</b> 10:00 AM – 1:00 PM ET\n"
+        f"⏰ <b>نافذة التداول:</b> 10:00 AM – 3:30 PM ET\n"
         f"🤖 <b>Alpaca:</b> جاهز للتنفيذ التلقائي ✅\n"
         f"🕐 {timestamp} ET"
     )
@@ -1018,6 +1185,16 @@ def webhook():
 
     logger.info(f"Received: signal={signal} | type={msg_type} | price=${price}")
 
+    # ── تحديث مستويات S/R في reversal_detector من TradingView Webhook ──────────
+    try:
+        wh_resistance = float(safe_get(data, "resistance", "0") or 0)
+        wh_support    = float(safe_get(data, "support",    "0") or 0)
+        if wh_resistance > 0 and wh_support > 0 and _RD_AVAILABLE:
+            rd.update_levels_from_webhook(wh_resistance, wh_support)
+            logger.info(f"[S&R] Passed to reversal_detector: R=${wh_resistance} | S=${wh_support}")
+    except Exception as _e:
+        logger.warning(f"[S&R] Could not update reversal_detector levels: {_e}")
+
     if price not in ("?", "--"):
         market_state["last_price"]   = price
         market_state["last_updated"] = datetime.now(timezone.utc).isoformat()
@@ -1060,7 +1237,7 @@ def webhook():
                     f"━━━━━━━━━━━━━━━━━━━━━\n\n"
                     f"💰 <b>السعر:</b> <code>${price}</code>\n"
                     f"📈 <b>الاتجاه:</b> {trend}\n\n"
-                    f"⏰ <b>نافذة التداول:</b> 10:00 AM – 1:00 PM ET\n"
+                    f"⏰ <b>نافذة التداول:</b> 10:00 AM – 3:30 PM ET\n"
                     f"🤖 <b>Alpaca:</b> جاهز ✅\n"
                     f"🕐 {now_et.strftime('%I:%M %p')} ET"
                 )
@@ -1173,10 +1350,12 @@ def webhook():
     tg_ok  = send_telegram(tg_msg)
 
     # Update state
+    global _current_signal_type
     now = time.time()
     last_alert_time   = now
     last_alert_price  = price
     last_alert_signal = signal
+    _current_signal_type = signal  # تحديث نوع الأوبشن لـ Options Feed
     if signal == "CALL":
         last_call_time = now
     elif signal == "PUT":
@@ -1204,8 +1383,27 @@ def webhook():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Test & Utility Endpoints
+## Test & Utility Endpoints
 # ──────────────────────────────────────────────────────────────────────────────
+@app.route("/reversal_report", methods=["GET"])
+def reversal_report():
+    """تقرير أداء إشارات الانعكاس — نسبة الصدق والتاريخ."""
+    if not _RT_AVAILABLE:
+        return jsonify({"error": "Reversal Tracker not available"}), 503
+    report_text = rt.generate_performance_report()
+    # قراءة الملف مباشرة لإرجاع JSON مفصل
+    import csv, os
+    rows = []
+    tracker_file = "/home/ubuntu/reversal_tracker_log.csv"
+    if os.path.isfile(tracker_file):
+        with open(tracker_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+    return jsonify({
+        "summary": report_text,
+        "total_evaluated": len(rows),
+        "signals": rows[-20:] if len(rows) > 20 else rows  # آخر 20 إشارة
+    })
 
 @app.route("/alpaca_status", methods=["GET"])
 def alpaca_status():
@@ -1345,16 +1543,44 @@ def keep_alive_worker():
             pass
 
 
-if __name__ == "__main__":
-    # Start background threads
+# ──────────────────────────────────────────────────────────────────────────────
+# Startup: launch background threads (works with both gunicorn and direct run)
+# ──────────────────────────────────────────────────────────────────────────────
+_threads_started = False
+
+def _start_background_threads():
+    global _threads_started
+    if _threads_started:
+        return
+    _threads_started = True
     threading.Thread(target=keep_alive_worker, daemon=True).start()
     threading.Thread(target=monitor_positions, daemon=True).start()
-
+    logger.info("Background threads started (keep_alive + monitor_positions) ✅")
     # Start Reversal Detector (if available)
     if _RD_AVAILABLE:
         rd.start_reversal_detector()
         logger.info("Reversal Detector started as background thread ✅")
     else:
         logger.warning("Reversal Detector not available — skipping")
+    # Start Reversal Tracker (if available)
+    if _RT_AVAILABLE:
+        rt.start_reversal_tracker()
+        logger.info("Reversal Tracker started — تتبع وتقييم إشارات الانعكاس ✅")
+    else:
+        logger.warning("Reversal Tracker not available — skipping")
+    # Start Alpaca Options Feed (if available)
+    if _AO_AVAILABLE:
+        ao.start_options_feed(
+            signal_type_fn   = _get_signal_type,
+            current_price_fn = _get_tsla_price_for_options,
+            update_callback  = _on_option_data_received
+        )
+        logger.info("Alpaca Options Feed started ✅")
+    else:
+        logger.warning("Alpaca Options Feed not available — skipping")
 
+# Auto-start threads when module loads (works with gunicorn)
+_start_background_threads()
+
+if __name__ == "__main__":
     app.run(host=SERVER_HOST, port=SERVER_PORT, debug=False)

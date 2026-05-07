@@ -57,8 +57,8 @@ DELTA_THRESHOLD_PCT    = 0.40    # الـ Delta يجب أن يكون أقل من
 # نافذة التداول (ET)
 TRADING_START_HOUR   = 10
 TRADING_START_MINUTE = 0
-TRADING_END_HOUR     = 13
-TRADING_END_MINUTE   = 0
+TRADING_END_HOUR     = 15
+TRADING_END_MINUTE   = 30
 
 LOG_FILE = "reversal_log.csv"
 
@@ -87,6 +87,18 @@ _tape_buffer: deque = deque(maxlen=5000)
 
 # بيانات السعر اللحظي
 _price_buffer: deque = deque(maxlen=500)  # {"ts": timestamp, "price": float}
+
+# بيانات الأوبشن اللحظية
+_option_data = {
+    "premium":       0.0,
+    "delta":         0.0,
+    "peak_premium":  0.0,
+    "last_updated":  0.0,
+    "option_symbol": None,
+    "strike_price":  None,
+    "expiration":    None,
+    "option_type":   None,
+}
 
 # حالة الانعكاس
 _divergence_start_ts = None   # وقت بدء الانحراف المستمر
@@ -132,6 +144,23 @@ def _is_trading_window() -> bool:
 # ──────────────────────────────────────────────────────────────────────────────
 # Helper: CSV Logging
 # ──────────────────────────────────────────────────────────────────────────────
+
+def _check_premium_collapse() -> bool:
+    """التحقق من انهيار البريميوم (Premium Collapse)."""
+    with _lock:
+        peak_premium = _option_data["peak_premium"]
+        current_premium = _option_data["premium"]
+        if peak_premium > 0 and current_premium > 0:
+            drop_percentage = (peak_premium - current_premium) / peak_premium
+            if drop_percentage >= 0.70: # 70% drop
+                logger.warning(f"[RD] Premium Collapse detected! Current: {current_premium:.2f}, Peak: {peak_premium:.2f}, Drop: {drop_percentage:.2%}")
+                return True
+    return False
+
+def _check_delta_flip() -> bool:
+    """التحقق من انقلاب الدلتا (Delta Flip) لتأكيد الانعكاس."""
+    # Placeholder - a proper implementation requires historical delta data
+    return False
 
 def _log_to_csv(alert_type: str, price: float, delta: float, imbalance: float,
                 divergence: bool, reason: str):
@@ -183,9 +212,9 @@ def update_levels_from_webhook(resistance: float, support: float):
         _levels["updated_at"] = time.time()
     logger.info(f"[RD] Levels updated from TradingView — R: ${resistance} | S: ${support}")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Public: Add tape data (called when Cheddar Flow data is received)
-# ──────────────────────────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────────────
+    # Public: Add tape data (called when Cheddar Flow data is received)
+    # ──────────────────────────────────────────────────────────────────────────────
 
 def add_tape_event(side: str, volume: float):
     """
@@ -208,20 +237,88 @@ def add_price_event(price: float):
             "price": price
         })
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Core: Get current TSLA price
-# ──────────────────────────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────────────
+    # Public: Get Option Data
+    # ──────────────────────────────────────────────────────────────────────────────
+
+    def get_option_data() -> dict:
+        with _lock:
+            return _option_data.copy()
+
+    # ──────────────────────────────────────────────────────────────────────────────
+    # Core: Get current TSLA price
+    # ──────────────────────────────────────────────────────────────────────────────
+
+def _check_premium_collapse() -> bool:
+    """التحقق من انهيار البريميوم (Premium Collapse)."""
+    with _lock:
+        peak_premium = _option_data["peak_premium"]
+        current_premium = _option_data["premium"]
+        if peak_premium > 0 and current_premium > 0:
+            drop_percentage = (peak_premium - current_premium) / peak_premium
+            if drop_percentage >= 0.70: # 70% drop
+                logger.warning(f"[RD] Premium Collapse detected! Current: {current_premium:.2f}, Peak: {peak_premium:.2f}, Drop: {drop_percentage:.2%}")
+                return True
+    return False
+
+def _check_delta_flip() -> bool:
+    """التحقق من انقلاب الدلتا (Delta Flip) لتأكيد الانعكاس."""
+    # Placeholder - a proper implementation requires historical delta data
+    return False
+
+def _check_premium_collapse() -> bool:
+    """التحقق من انهيار البريميوم (Premium Collapse)."""
+    with _lock:
+        peak_premium = _option_data["peak_premium"]
+        current_premium = _option_data["premium"]
+        if peak_premium > 0 and current_premium > 0:
+            drop_percentage = (peak_premium - current_premium) / peak_premium
+            if drop_percentage >= 0.70: # 70% drop
+                logger.warning(f"[RD] Premium Collapse detected! Current: {current_premium:.2f}, Peak: {peak_premium:.2f}, Drop: {drop_percentage:.2%}")
+                return True
+    return False
+
+def _check_delta_flip() -> bool:
+    """التحقق من انقلاب الدلتا (Delta Flip) لتأكيد الانعكاس."""
+    # Placeholder - a proper implementation requires historical delta data
+    return False
+
+def _alpaca_snapshot_price() -> float:
+    """جلب سعر TSLA من Alpaca Snapshot — موثوق وسريع."""
+    try:
+        alpaca_key    = os.environ.get("ALPACA_API_KEY",    "PKW3OHVLGGWGYCFMTCKDB435WA")
+        alpaca_secret = os.environ.get("ALPACA_SECRET_KEY", "BeNQ9BiZ8t5wxDwb6Dmvd62W3i57wKj8SmdSTxjAQYYH")
+        r = http_requests.get(
+            "https://data.alpaca.markets/v2/stocks/TSLA/snapshot",
+            headers={"APCA-API-KEY-ID": alpaca_key, "APCA-API-SECRET-KEY": alpaca_secret},
+            timeout=6
+        )
+        if r.status_code == 200:
+            snap = r.json()
+            price = float(snap.get("latestTrade", {}).get("p", 0))
+            if price > 0:
+                return price
+            price = float(snap.get("latestQuote", {}).get("ap", 0))
+            if price > 0:
+                return price
+    except Exception as e:
+        logger.error(f"[RD] Alpaca snapshot error: {e}")
+    return 0.0
 
 def _get_current_price() -> float:
-    """جلب السعر اللحظي لـ TSLA."""
+    """جلب السعر اللحظي لـ TSLA — Alpaca أولاً، yfinance احتياطي."""
     # أولاً: من الـ Price Buffer (إذا كانت البيانات حديثة)
     with _lock:
         if _price_buffer:
             latest = _price_buffer[-1]
-            if time.time() - latest["ts"] < 10:  # أحدث من 10 ثوانٍ
+            if time.time() - latest["ts"] < 10:
                 return latest["price"]
-
-    # ثانياً: من yfinance
+    # ثانياً: Alpaca Snapshot
+    price = _alpaca_snapshot_price()
+    if price > 0:
+        add_price_event(price)
+        return price
+    # ثالثاً: yfinance كاحتياطي
     try:
         tkr = yf.Ticker("TSLA")
         price = float(tkr.fast_info.last_price)
@@ -229,7 +326,7 @@ def _get_current_price() -> float:
             add_price_event(price)
             return price
     except Exception as e:
-        logger.error(f"[RD] Price fetch error: {e}")
+        logger.error(f"[RD] yfinance price error: {e}")
     return 0.0
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -248,47 +345,75 @@ def _get_levels() -> tuple:
                 _levels["source"] == "tradingview"):
             return _levels["resistance"], _levels["support"]
 
-    # Backup: Previous Day High/Low + VWAP من 5-min candles
+    # Backup: Alpaca Snapshot للحصول على High/Low اليومي
+    try:
+        alpaca_key    = os.environ.get("ALPACA_API_KEY",    "PKW3OHVLGGWGYCFMTCKDB435WA")
+        alpaca_secret = os.environ.get("ALPACA_SECRET_KEY", "BeNQ9BiZ8t5wxDwb6Dmvd62W3i57wKj8SmdSTxjAQYYH")
+        r = http_requests.get(
+            "https://data.alpaca.markets/v2/stocks/TSLA/snapshot",
+            headers={"APCA-API-KEY-ID": alpaca_key, "APCA-API-SECRET-KEY": alpaca_secret},
+            timeout=8
+        )
+        if r.status_code == 200:
+            snap = r.json()
+            daily = snap.get("dailyBar", {})
+            prev  = snap.get("prevDailyBar", {})
+            # استخدام High/Low اليوم السابق كمستويات
+            resistance_backup = round(float(prev.get("h", daily.get("h", 0))), 2)
+            support_backup    = round(float(prev.get("l", daily.get("l", 0))), 2)
+            # VWAP من شمعات 5 دقائق عبر Alpaca Bars
+            from datetime import datetime as _dt, timedelta as _td
+            end = _dt.utcnow()
+            start = end - _td(hours=8)
+            params = {
+                "timeframe": "5Min",
+                "start": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "end": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "limit": 10, "feed": "iex"
+            }
+            r2 = http_requests.get(
+                "https://data.alpaca.markets/v2/stocks/TSLA/bars",
+                headers={"APCA-API-KEY-ID": alpaca_key, "APCA-API-SECRET-KEY": alpaca_secret},
+                params=params, timeout=10
+            )
+            vwap = None
+            if r2.status_code == 200:
+                bars = r2.json().get("bars", [])
+                if len(bars) >= 4:
+                    closed = bars[-4:-1]
+                    total_vol = sum(b["v"] for b in closed)
+                    if total_vol > 0:
+                        vwap = round(sum(b["vw"] * b["v"] for b in closed) / total_vol, 2)
+            if vwap and support_backup and vwap > support_backup:
+                support_backup = vwap
+            with _lock:
+                if resistance_backup and support_backup:
+                    _levels["resistance"] = resistance_backup
+                    _levels["support"]    = support_backup
+                    _levels["source"]     = "backup"
+                    _levels["updated_at"] = time.time()
+                    logger.info(f"[RD] Backup levels (Alpaca) — R: ${resistance_backup} | S: ${support_backup} | VWAP: ${vwap}")
+            return resistance_backup, support_backup
+    except Exception as e:
+        logger.error(f"[RD] Alpaca backup levels error: {e}")
+    # Fallback: yfinance
     try:
         tkr = yf.Ticker("TSLA")
-
-        # Previous Day High/Low
         hist = tkr.history(period="5d", interval="1d")
         if hist is not None and len(hist) >= 2:
             prev_day = hist.iloc[-2]
             resistance_backup = round(float(prev_day["High"]), 2)
             support_backup    = round(float(prev_day["Low"]),  2)
-        else:
-            info = tkr.fast_info
-            resistance_backup = round(float(info.day_high), 2) if info.day_high else None
-            support_backup    = round(float(info.day_low),  2) if info.day_low  else None
-
-        # VWAP من 5-min candles (آخر 3 شموع مغلقة)
-        df5 = tkr.history(period="1d", interval="5m")
-        vwap = None
-        if df5 is not None and len(df5) >= 4:
-            closed = df5.iloc[-4:-1]
-            typical_price = (closed["High"] + closed["Low"] + closed["Close"]) / 3
-            vwap = round(float((typical_price * closed["Volume"]).sum() / closed["Volume"].sum()), 2)
-
-        # استخدام VWAP كدعم إضافي إذا كان أعلى من الـ Support الحالي
-        if vwap and support_backup and vwap > support_backup:
-            support_backup = vwap
-
-        with _lock:
-            if resistance_backup and support_backup:
+            with _lock:
                 _levels["resistance"] = resistance_backup
                 _levels["support"]    = support_backup
                 _levels["source"]     = "backup"
                 _levels["updated_at"] = time.time()
-                logger.info(f"[RD] Backup levels — R: ${resistance_backup} | S: ${support_backup} | VWAP: ${vwap}")
-
-        return resistance_backup, support_backup
-
+            return resistance_backup, support_backup
     except Exception as e:
-        logger.error(f"[RD] Backup levels error: {e}")
-        with _lock:
-            return _levels["resistance"], _levels["support"]
+        logger.error(f"[RD] yfinance backup levels error: {e}")
+    with _lock:
+        return _levels["resistance"], _levels["support"]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Core: Calculate Delta & Imbalance (Adaptive)
@@ -415,6 +540,9 @@ def _send_early_warning(price: float, delta: float, imbalance: float,
     now_str = _get_et_now().strftime("%I:%M:%S %p")
     sweep_note = "نعم ⚠️" if imbalance > 1.5 else "لا"
 
+    premium_collapse = _check_premium_collapse()
+    delta_flip = _check_delta_flip()
+
     msg = (
         f"⚠️ <b>تحذير مبكر — راقب صفقتك</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -427,14 +555,26 @@ def _send_early_warning(price: float, delta: float, imbalance: float,
         f"🔴 <b>حجم البيع:</b> {bid_vol:.0f}\n"
         f"🟢 <b>حجم الشراء:</b> {ask_vol:.0f}\n"
         f"🌊 <b>Sweep معاكس:</b> {sweep_note}\n"
+    )
+
+    if premium_collapse:
+        msg += f"📉 <b>Premium Collapse:</b> ⚠️ تحذير (انهيار > 70%)\n"
+    if delta_flip:
+        msg += f"🔄 <b>Delta Flip:</b> ⚠️ تحذير (انقلاب الدلتا)\n"
+
+    msg += (
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"→ راقب صفقتك وجهز أمر الخروج\n"
         f"🕐 {now_str} ET"
     )
+
+    reason = f"قرب {level_type} @ ${level_val:.2f}"
+    if premium_collapse: reason += " + Premium Collapse"
+    if delta_flip: reason += " + Delta Flip"
+
     sent = _send_telegram(msg)
     if sent:
-        _log_to_csv("EARLY_WARNING", price, delta, imbalance, False,
-                    f"قرب {level_type} @ ${level_val:.2f}")
+        _log_to_csv("EARLY_WARNING", price, delta, imbalance, False, reason)
         logger.info(f"[RD] Early warning sent @ ${price:.2f} near {level_type} ${level_val:.2f}")
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -445,6 +585,9 @@ def _send_reversal_alert(price: float, delta: float, imbalance: float):
     """إرسال تنبيه الانعكاس الفعلي — اخرج فوراً."""
     now_str = _get_et_now().strftime("%I:%M:%S %p")
 
+    premium_collapse = _check_premium_collapse()
+    delta_flip = _check_delta_flip()
+
     msg = (
         f"🚨 <b>انعكاس يحدث الحين — اخرج فوراً</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -453,21 +596,108 @@ def _send_reversal_alert(price: float, delta: float, imbalance: float):
         f"📊 <b>Delta:</b> {delta:+.0f}\n"
         f"⚖️ <b>نسبة البيع/الشراء:</b> {imbalance:.2f}x\n"
         f"🔀 <b>Divergence:</b> نعم ✅\n"
+    )
+
+    if premium_collapse:
+        msg += f"📉 <b>Premium Collapse:</b> ⚠️ مؤكد (انهيار > 70%)\n"
+    if delta_flip:
+        msg += f"🔄 <b>Delta Flip:</b> ⚠️ مؤكد (انقلاب الدلتا)\n"
+
+    msg += (
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"→ اخرج من العقد الحالي فوراً\n"
         f"→ انتظر استقرار السوق\n"
         f"→ ادخل عقد ATM جديد بعد التأكد\n"
         f"🕐 {now_str} ET"
     )
+
+    reason = "Divergence + Consolidation 90s"
+    if premium_collapse: reason += " + Premium Collapse"
+    if delta_flip: reason += " + Delta Flip"
+
     sent = _send_telegram(msg)
     if sent:
-        _log_to_csv("ACTUAL_REVERSAL", price, delta, imbalance, True,
-                    "Divergence + Consolidation 90s")
+        _log_to_csv("ACTUAL_REVERSAL", price, delta, imbalance, True, reason)
         logger.info(f"[RD] Reversal alert sent @ ${price:.2f} | Delta: {delta:+.0f}")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Main Detection Loop
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# AUTO TAPE FEED: جلب صفقات TSLA الأخيرة من Alpaca وتغذية tape_buffer
+# ──────────────────────────────────────────────────────────────────────────────
+
+_last_trade_ts = ""  # تتبع آخر صفقة لتجنب التكرار
+
+def _fetch_alpaca_trades_as_tape():
+    """
+    جلب آخر صفقات TSLA من Alpaca وتحويلها لبيانات Tape.
+    يستخدم Tick Rule: إذا السعر أعلى من الصفقة السابقة = ask (شراء)
+    إذا السعر أقل = bid (بيع)
+    إذا متساوي = يستخدم NBBO midpoint للتصنيف
+    """
+    global _last_trade_ts
+    try:
+        alpaca_key    = os.environ.get("ALPACA_API_KEY",    "PKW3OHVLGGWGYCFMTCKDB435WA")
+        alpaca_secret = os.environ.get("ALPACA_SECRET_KEY", "BeNQ9BiZ8t5wxDwb6Dmvd62W3i57wKj8SmdSTxjAQYYH")
+        headers = {"APCA-API-KEY-ID": alpaca_key, "APCA-API-SECRET-KEY": alpaca_secret}
+        
+        # جلب آخر quote للحصول على bid/ask
+        quote_r = http_requests.get(
+            "https://data.alpaca.markets/v2/stocks/TSLA/quotes/latest",
+            headers=headers, timeout=6
+        )
+        if quote_r.status_code != 200:
+            return
+        quote = quote_r.json().get("quote", {})
+        bid_price = float(quote.get("bp", 0))
+        ask_price = float(quote.get("ap", 0))
+        if bid_price <= 0 or ask_price <= 0:
+            return
+        mid_price = (bid_price + ask_price) / 2
+        
+        # جلب آخر 100 صفقة
+        trades_r = http_requests.get(
+            "https://data.alpaca.markets/v2/stocks/TSLA/trades?limit=100",
+            headers=headers, timeout=6
+        )
+        if trades_r.status_code != 200:
+            return
+        trades = trades_r.json().get("trades", [])
+        if not trades:
+            return
+        
+        # تجنب تكرار نفس الصفقات
+        latest_ts = trades[-1].get("t", "")
+        if latest_ts == _last_trade_ts:
+            return  # لا توجد صفقات جديدة
+        _last_trade_ts = latest_ts
+        
+        # Tick Rule + NBBO midpoint
+        prev_price = float(trades[0].get("p", 0))
+        for trade in trades:
+            trade_price = float(trade.get("p", 0))
+            trade_size  = float(trade.get("s", 0))
+            if trade_price <= 0 or trade_size <= 0:
+                continue
+            
+            # Tick Rule: مقارنة بالصفقة السابقة
+            if trade_price > prev_price:
+                side = "ask"  # uptick = شراء عدواني
+            elif trade_price < prev_price:
+                side = "bid"  # downtick = بيع عدواني
+            else:
+                # نفس السعر = استخدم NBBO midpoint
+                side = "ask" if trade_price >= mid_price else "bid"
+            
+            add_tape_event(side, trade_size)
+            prev_price = trade_price
+        
+    except Exception as e:
+        logger.error(f"[RD] Tape feed error: {e}")
 
 def _detection_loop():
     """
@@ -487,15 +717,15 @@ def _detection_loop():
                 _divergence_start_ts = None  # reset divergence outside window
                 continue
 
-            # ── شرط 2: هل هناك صفقة مفتوحة؟ ──────────────────────────────────
-            if not get_position_open():
-                _divergence_start_ts = None
-                continue
+            # ── مراقبة TSLA دائماً (CALL فقط) ─────────────────────────────
 
             # ── جلب البيانات ────────────────────────────────────────────────────
             current_price = _get_current_price()
             if current_price <= 0:
                 continue
+
+            # تغذية Tape Buffer من Alpaca Trades
+            _fetch_alpaca_trades_as_tape()
 
             resistance, support = _get_levels()
             delta_60s, imbalance, ask_vol, bid_vol, delta_avg, is_delta_weak = _calc_delta_and_imbalance()
@@ -597,3 +827,21 @@ if __name__ == "__main__":
     logger.info(f"Divergence: {div} | Consolidating: {consol} | Range: ${rng}")
 
     logger.info("=== Test Complete ===")
+
+
+def _check_premium_collapse() -> bool:
+    """التحقق من انهيار البريميوم (Premium Collapse)."""
+    with _lock:
+        peak_premium = _option_data["peak_premium"]
+        current_premium = _option_data["premium"]
+        if peak_premium > 0 and current_premium > 0:
+            drop_percentage = (peak_premium - current_premium) / peak_premium
+            if drop_percentage >= 0.70: # 70% drop
+                logger.warning(f"[RD] Premium Collapse detected! Current: {current_premium:.2f}, Peak: {peak_premium:.2f}, Drop: {drop_percentage:.2%}")
+                return True
+    return False
+
+def _check_delta_flip() -> bool:
+    """التحقق من انقلاب الدلتا (Delta Flip) لتأكيد الانعكاس."""
+    # Placeholder - a proper implementation requires historical delta data
+    return False

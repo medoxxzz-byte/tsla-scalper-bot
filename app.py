@@ -1,14 +1,16 @@
 """
-Smart Trading Alert Bot - V5.6 Mosquito Swamp Strategy Server
-Webhook Server for TSLA Mosquito Swamp V5.5 Pine Script
+Smart Trading Alert Bot - V6.0
+Webhook Server for TSLA Mosquito Swamp Pine Script
 
-NEW IN V5.6:
+NEW IN V6.0:
+  - فلتر ADX إجباري (لا تداول في سوق جانبي ADX < 20)
+  - Stop Loss تلقائي -20% (محاكاة على السهم)
+  - FlashAlpha GEX كفلتر إضافي (توافق مع مستويات Gamma)
+  - نافذة تداول: 9:30 AM - 3:30 PM ET (البوت يعمل مستقل)
   - Alpaca Paper Trading Auto-Executor
-  - Trading Window: 10:00 AM - 3:30 PM ET (تم التوسيع بطلب المستخدم)
-  - Auto buy options on CALL/PUT signal
-  - Auto Stop Loss + Take Profit orders
-  - Telegram notification on order fill + P&L
   - Position tracker with real-time P&L
+
+الهدف: تجربة 3-6 أشهر لإثبات الاستراتيجية قبل التداول الحقيقي.
 """
 
 import os
@@ -48,7 +50,15 @@ try:
 except ImportError:
     pass
 
-# ── Reversal Detector Integration ─────────────────────────────────────────────
+## ── FlashAlpha GEX Integration (V6.0) ────────────────────────────────────
+try:
+    import flashalpha_gex as fa
+    _FA_AVAILABLE = True
+except ImportError:
+    _FA_AVAILABLE = False
+    logging.warning("flashalpha_gex.py not found — GEX filter disabled")
+
+# ── Reversal Detector Integration ─────────────────────────────────────────
 try:
     import reversal_detector as rd
     _RD_AVAILABLE = True
@@ -110,11 +120,10 @@ ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "BeNQ9BiZ8t5wxDwb6Dmvd62
 ALPACA_BASE_URL   = os.environ.get("ALPACA_BASE_URL",   "https://paper-api.alpaca.markets")
 
 # ── Trading Window (ET) ───────────────────────────────────────────────────────
-# 30 minutes after open = 10:00 AM ET
-# Stop at 3:30 PM ET (تم التوسيع من 1:00 PM إلى 3:30 PM بطلب المستخدم)
-TRADING_START_HOUR   = 10   # 10:00 AM ET
-TRADING_START_MINUTE = 0
-TRADING_END_HOUR     = 15   # 3:30 PM ET (تم التوسيع بطلب المستخدم)
+# نافذة واسعة: 9:30 AM - 3:30 PM ET (البوت يعمل مستقل طوال الجلسة)
+TRADING_START_HOUR   = 9    # 9:30 AM ET
+TRADING_START_MINUTE = 30
+TRADING_END_HOUR     = 15   # 3:30 PM ET
 TRADING_END_MINUTE   = 30
 
 # ── Position Sizing ───────────────────────────────────────────────────────────
@@ -130,6 +139,12 @@ REVERSAL_COOLDOWN_SECS   = 1800   # 30 min between reversal alerts
 
 MAX_DAILY_ALERTS    = int(os.environ.get("MAX_DAILY_TRADES", "11"))
 KEEP_ALIVE_INTERVAL = 600
+
+# V6.0: فلتر ADX إجباري (لا تداول في سوق جانبي)
+MIN_ADX_TO_TRADE = 20  # ADX < 20 = لا دخول
+
+# V6.0: Stop Loss تلقائي -20% (محاكاة على السهم)
+AUTO_STOP_LOSS_PCT = 0.20  # -20% من سعر الأوبشن (يعادل ~1.5% على السهم)
 
 LOSS_COUNTER_MAX      = 3
 LOSS_COOLDOWN_SECONDS = 1800
@@ -228,12 +243,12 @@ def is_trading_window():
 
     if current_minutes < start_minutes:
         remaining = start_minutes - current_minutes
-        return False, f"قبل نافذة التداول — يبدأ الساعة 10:00 AM ET (بعد {remaining} دقيقة)"
+        return False, f"قبل نافذة التداول — يبدأ 9:30 AM ET (بعد {remaining} دقيقة)"
 
     if current_minutes >= end_minutes:
-        return False, "\u0627\u0646\u062a\u0647\u062a \u0646\u0627\u0641\u0630\u0629 \u0627\u0644\u062a\u062f\u0627\u0648\u0644 \u2014 3:30 PM ET"
+        return False, "انتهت نافذة التداول — 3:30 PM ET"
 
-    return True, "نافذة التداول مفتوحة ✅"
+    return True, "نافذة التداول مفتوحة (9:30-3:30) ✅"
 
 def reset_daily_if_needed():
     global daily_date, daily_alerts, blocked_today
@@ -246,7 +261,7 @@ def reset_daily_if_needed():
         consecutive_no_move = 0
         loss_cooldown_until = 0
         last_reversal_time = 0
-        logger.info(f"--- Reset daily limits for {today} ---")
+        logger.info(f"--- V6.0 Reset daily limits for {today} ---")
 
 def safe_get(data, key, default=""):
     val = data.get(key, default)
@@ -386,20 +401,10 @@ def execute_trade(signal, price, stars, opt_data):
             order_id = order.get("id", "")
             
             # Calculate SL and TP based on option data if available
-            if opt_data and opt_data.get("last_price", 0) > 0:
-                entry_opt = opt_data["last_price"]
-                tp_opt    = opt_data["tp"]
-                sl_opt    = opt_data["sl"]
-                # Convert to stock equivalent percentages
-                # استخدام نسب معقولة من بيانات الأوبشن مع حد أقصى لتجنب أهداف غير واقعية
-                raw_tp = tsla_price * (1 + (tp_opt - entry_opt) / entry_opt * 0.3)
-                raw_sl = tsla_price * (1 - (entry_opt - sl_opt) / entry_opt * 0.3)
-                # حد أقصى: TP لا يتجاوز +2.0%، SL لا يتجاوز -1.5%
-                tp_stock = min(raw_tp, tsla_price * 1.020)
-                sl_stock = max(raw_sl, tsla_price * 0.985)
-            else:
-                tp_stock = tsla_price * 1.015  # +1.5%
-                sl_stock = tsla_price * 0.990  # -1.0%
+            # V6.0: SL ثابت -20% من الأوبشن، TP +40% (محاكاة على السهم)
+            # للسهم كبروكسي: SL -1.5% و TP +2.5% (يعادل تقريباً -20%/+40% على الأوبشن)
+            tp_stock = tsla_price * 1.025  # +2.5% (محاكاة +40% أوبشن)
+            sl_stock = tsla_price * (1 - AUTO_STOP_LOSS_PCT * 0.075)  # -1.5% (محاكاة -20% أوبشن)
 
             # Store position info
             active_positions[order_id] = {
@@ -1130,8 +1135,33 @@ def check_daily_limit(data=None):
         return False, f"وصلت الحد اليومي ({MAX_DAILY_ALERTS} تنبيهات)"
     return True, ""
 
+def check_adx_filter(data):
+    """V6.0: فلتر ADX إجباري — لا تداول في سوق جانبي."""
+    cond = safe_get(data, "cond", "")
+    # TradingView يرسل cond = "Trending (Clear)" أو "Choppy" أو "Ranging"
+    if "Choppy" in cond or "Ranging" in cond or "choppy" in cond:
+        return False, f"⛔ ADX منخفض (سوق جانبي) — لا دخول | cond={cond}"
+    return True, ""
+
+def check_gex_alignment(data):
+    """V6.0: فلتر GEX — تحقق من توافق الإشارة مع مستويات Gamma."""
+    try:
+        if not _FA_AVAILABLE:
+            return True, ""  # لا فلتر إذا FlashAlpha غير متاح
+        signal = safe_get(data, "signal", "")
+        price = float(safe_get(data, "price", "0"))
+        if not signal or price <= 0:
+            return True, ""
+        aligned, reason = fa.check_gex_alignment(signal, price)
+        if not aligned:
+            return False, f"📊 GEX غير متوافق: {reason}"
+        return True, reason
+    except Exception:
+        return True, ""  # في حالة خطأ، لا نمنع الصفقة
+
 def apply_filters(data):
-    for check in [check_data_quality, check_cooldown, check_daily_limit]:
+    # V6.0: فلاتر معززة — ADX + GEX
+    for check in [check_data_quality, check_adx_filter, check_gex_alignment, check_cooldown, check_daily_limit]:
         ok, reason = check(data)
         if not ok:
             return False, reason
@@ -1148,8 +1178,8 @@ def home():
     account = get_alpaca_account()
     return jsonify({
         "status":          "running",
-        "service":         "Smart Trading Alert Bot — Mosquito Swamp V5.6",
-        "version":         "5.6",
+        "service":         "Smart Trading Alert Bot — Mosquito Swamp V6.0 (Discipline Edition)",
+        "version":         "6.0",
         "trading_window":  window_msg,
         "in_window":       in_window,
         "alpaca_balance":  f"${float(account.get('cash', 0)):,.2f}" if account else "N/A",
@@ -1157,6 +1187,8 @@ def home():
         "active_positions": len(active_positions),
         "alerts_today":    len(daily_alerts),
         "remaining":       MAX_DAILY_ALERTS - len(daily_alerts),
+        "gex_available":   _FA_AVAILABLE and fa.get_gex_levels() is not None if _FA_AVAILABLE else False,
+        "adx_filter":      "active",
         "timestamp":       datetime.now(timezone.utc).isoformat()
     })
 
@@ -1500,7 +1532,7 @@ def reset():
     last_reversal_time  = 0
     consecutive_no_move = 0
     loss_cooldown_until = 0
-    return jsonify({"status": "reset", "message": "All counters cleared — V5.6"})
+    return jsonify({"status": "reset", "message": "All counters cleared — V6.0"})
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1545,6 +1577,32 @@ def keep_alive_worker():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# V6.0: GEX Morning Worker
+# ──────────────────────────────────────────────────────────────────────────────
+def gex_morning_worker():
+    """يسحب بيانات GEX مرة واحدة صباحاً (9:15 AM ET) ويرسل الخريطة على Telegram."""
+    while True:
+        try:
+            now = get_et_now()
+            # انتظر حتى 9:15 AM ET في أيام العمل
+            if now.hour == 9 and 15 <= now.minute <= 20 and now.weekday() < 5:
+                if _FA_AVAILABLE:
+                    gex_data = fa.fetch_gex()
+                    if gex_data:
+                        msg = fa.format_gex_telegram()
+                        if msg:
+                            send_telegram(msg)
+                            logger.info("[GEX] Morning map sent to Telegram")
+                # انتظر ساعة لتجنب التكرار
+                time.sleep(3600)
+            else:
+                time.sleep(60)
+        except Exception as e:
+            logger.error(f"[GEX] Morning worker error: {e}")
+            time.sleep(300)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Startup: launch background threads (works with both gunicorn and direct run)
 # ──────────────────────────────────────────────────────────────────────────────
 _threads_started = False
@@ -1579,6 +1637,12 @@ def _start_background_threads():
         logger.info("Alpaca Options Feed started ✅")
     else:
         logger.warning("Alpaca Options Feed not available — skipping")
+    # Start GEX Morning Worker (V6.0)
+    if _FA_AVAILABLE:
+        threading.Thread(target=gex_morning_worker, daemon=True).start()
+        logger.info("FlashAlpha GEX morning worker started ✅")
+    else:
+        logger.warning("FlashAlpha GEX not available — skipping")
 
 # Auto-start threads when module loads (works with gunicorn)
 _start_background_threads()

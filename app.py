@@ -1,8 +1,15 @@
 """
-Smart Trading Alert Bot - V6.0
+Smart Trading Alert Bot - V7.0
 Webhook Server for TSLA Mosquito Swamp Pine Script
 
-NEW IN V6.0:
+NEW IN V7.0:
+  - خريطة الانعكاسات المدمجة مع رسائل التلقرام (Reversal Map Alignment)
+  - فلتر Trend Alignment (يمنع صفقات ضد الترند)
+  - تحسين رسائل الانعكاس (سياق الترند + تصنيف الحجم)
+  - تقليل Reversal Cooldown من 30 إلى 15 دقيقة
+  - فلتر Trend Bias للدايفرجنس (يُطبق في Pine Script)
+
+KEPT FROM V6.0:
   - فلتر ADX إجباري (لا تداول في سوق جانبي ADX < 20)
   - Stop Loss تلقائي -20% (محاكاة على السهم)
   - FlashAlpha GEX كفلتر إضافي (توافق مع مستويات Gamma)
@@ -135,7 +142,7 @@ MIN_STARS_TO_EXECUTE    = 3      # أقل عدد نجوم لتنفيذ الصف�
 # ── Cooldowns ─────────────────────────────────────────────────────────────────
 COOLDOWN_SECONDS_SIMILAR = 1500   # 25 min between same-direction trade signals
 COOLDOWN_MIN_GAP         = 30     # minimum 30s between any two alerts
-REVERSAL_COOLDOWN_SECS   = 1800   # 30 min between reversal alerts
+REVERSAL_COOLDOWN_SECS   = 900    # 15 min between reversal alerts (V7.0: reduced from 30)
 
 MAX_DAILY_ALERTS    = int(os.environ.get("MAX_DAILY_TRADES", "11"))
 KEEP_ALIVE_INTERVAL = 600
@@ -216,6 +223,193 @@ market_state = {
 
 # Alpaca position tracker
 active_positions = {}   # {order_id: {signal, strike, contracts, entry_price, sl, tp, symbol}}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# V7.0: Reversal Map — خريطة الانعكاسات المدمجة مع الرسائل
+# ──────────────────────────────────────────────────────────────────────────────
+
+# خريطة الانعكاسات اليومية — تُبنى من GEX + Fibonacci + S/R
+reversal_map = {
+    "levels": [],        # [{"name": str, "price": float, "type": "support"|"resistance", "source": str, "strength": str}]
+    "date": "",          # تاريخ آخر تحديث
+    "built": False       # هل تم بناء الخريطة اليوم؟
+}
+
+# V7.0: Proximity threshold — كم % يُعتبر السعر "عند" مستوى
+MAP_PROXIMITY_PCT = 0.008   # 0.8% = السعر عند المستوى
+MAP_NEAR_PCT      = 0.015   # 1.5% = السعر قريب من المستوى
+
+
+def build_reversal_map():
+    """
+    V7.0: بناء خريطة الانعكاسات اليومية من مصادر متعددة.
+    تُستدعى مرة واحدة صباحاً (مع Opening Map) وتُحدّث مع كل Webhook.
+    """
+    global reversal_map
+    today = get_today()
+    
+    # لا نبني مرتين في نفس اليوم (إلا إذا فارغة)
+    if reversal_map["date"] == today and reversal_map["built"] and len(reversal_map["levels"]) > 0:
+        return reversal_map
+    
+    levels = []
+    
+    # ── المصدر 1: GEX Levels (FlashAlpha) ────────────────────────────────────
+    if _FA_AVAILABLE:
+        gex = fa.get_gex_levels()
+        if gex:
+            if gex.get("call_wall"):
+                levels.append({
+                    "name": "Call Wall",
+                    "price": float(gex["call_wall"]),
+                    "type": "resistance",
+                    "source": "GEX",
+                    "strength": "قوية"
+                })
+            if gex.get("put_wall"):
+                levels.append({
+                    "name": "Put Wall",
+                    "price": float(gex["put_wall"]),
+                    "type": "support",
+                    "source": "GEX",
+                    "strength": "قوية"
+                })
+            if gex.get("gamma_flip"):
+                levels.append({
+                    "name": "Gamma Flip",
+                    "price": float(gex["gamma_flip"]),
+                    "type": "pivot",
+                    "source": "GEX",
+                    "strength": "قوية جداً"
+                })
+    
+    # ── المصدر 2: Fibonacci Levels ───────────────────────────────────────────
+    d_high = market_state.get("day_high", 0)
+    d_low  = market_state.get("day_low", 0)
+    if d_high > 0 and d_low > 0 and d_high > d_low:
+        fib = calc_fibonacci(d_high, d_low)
+        levels.append({"name": "Fib 38.2%", "price": fib["fib_382"], "type": "support", "source": "Fibonacci", "strength": "متوسطة"})
+        levels.append({"name": "Fib 50%",   "price": fib["fib_500"], "type": "pivot",   "source": "Fibonacci", "strength": "قوية"})
+        levels.append({"name": "Fib 61.8%", "price": fib["fib_618"], "type": "support", "source": "Fibonacci", "strength": "قوية"})
+        levels.append({"name": "Day High",  "price": fib["high"],    "type": "resistance", "source": "Fibonacci", "strength": "قوية"})
+        levels.append({"name": "Day Low",   "price": fib["low"],     "type": "support", "source": "Fibonacci", "strength": "قوية"})
+    
+    # ── المصدر 3: S/R from 5-min candles ─────────────────────────────────────
+    sr_r, sr_s = get_tsla_sr_levels()
+    if sr_r and sr_r > 0:
+        levels.append({"name": "5m Resistance", "price": float(sr_r), "type": "resistance", "source": "S/R", "strength": "متوسطة"})
+    if sr_s and sr_s > 0:
+        levels.append({"name": "5m Support", "price": float(sr_s), "type": "support", "source": "S/R", "strength": "متوسطة"})
+    
+    # ── المصدر 4: Round Numbers (أرقام نفسية) ────────────────────────────────
+    if d_high > 0:
+        # أقرب أرقام نفسية ($5 intervals)
+        mid_price = (d_high + d_low) / 2 if d_low > 0 else d_high
+        base = int(mid_price / 5) * 5
+        for rn in [base - 10, base - 5, base, base + 5, base + 10, base + 15]:
+            if rn > 0:
+                levels.append({
+                    "name": f"${rn} Round",
+                    "price": float(rn),
+                    "type": "pivot",
+                    "source": "Psychology",
+                    "strength": "متوسطة" if rn % 10 != 0 else "قوية"
+                })
+    
+    # ── إزالة المكررات وترتيب ────────────────────────────────────────────────
+    # إزالة المستويات المتقاربة جداً (أقل من 0.3%)
+    unique_levels = []
+    levels_sorted = sorted(levels, key=lambda x: x["price"], reverse=True)
+    for lvl in levels_sorted:
+        is_duplicate = False
+        for existing in unique_levels:
+            if abs(lvl["price"] - existing["price"]) / existing["price"] < 0.003:
+                # إذا المستوى الجديد أقوى، استبدل
+                if _strength_rank(lvl["strength"]) > _strength_rank(existing["strength"]):
+                    unique_levels.remove(existing)
+                    unique_levels.append(lvl)
+                is_duplicate = True
+                break
+        if not is_duplicate:
+            unique_levels.append(lvl)
+    
+    reversal_map["levels"] = sorted(unique_levels, key=lambda x: x["price"], reverse=True)
+    reversal_map["date"] = today
+    reversal_map["built"] = True
+    
+    logger.info(f"[ReversalMap] Built with {len(reversal_map['levels'])} levels for {today}")
+    return reversal_map
+
+
+def _strength_rank(strength_str):
+    """تحويل قوة المستوى إلى رقم للمقارنة."""
+    ranks = {"ضعيفة": 1, "متوسطة": 2, "قوية": 3, "قوية جداً": 4}
+    return ranks.get(strength_str, 1)
+
+
+def check_map_alignment(price, signal_direction=None):
+    """
+    V7.0: تحقق من توافق السعر مع خريطة الانعكاسات.
+    
+    Args:
+        price: السعر الحالي
+        signal_direction: "BULL" أو "BEAR" أو None
+    
+    Returns:
+        (is_aligned: bool, alignment_text: str, nearest_level: dict or None)
+    """
+    if not reversal_map["built"] or not reversal_map["levels"]:
+        return False, "", None
+    
+    try:
+        price = float(price)
+    except (ValueError, TypeError):
+        return False, "", None
+    
+    nearest = None
+    min_dist_pct = float('inf')
+    
+    for lvl in reversal_map["levels"]:
+        dist_pct = abs(price - lvl["price"]) / lvl["price"]
+        if dist_pct < min_dist_pct:
+            min_dist_pct = dist_pct
+            nearest = lvl
+    
+    if not nearest:
+        return False, "", None
+    
+    # تحديد العلاقة
+    dist_dollars = abs(price - nearest["price"])
+    dist_pct_display = min_dist_pct * 100
+    
+    if min_dist_pct <= MAP_PROXIMITY_PCT:
+        # السعر عند المستوى
+        position = "عند"
+        is_aligned = True
+        
+        # تحقق من التوافق مع اتجاه الإشارة
+        if signal_direction == "BULL" and nearest["type"] in ("support", "pivot"):
+            alignment_text = f"✅ <b>متوافق مع الخريطة</b> — عند {nearest['name']} (${nearest['price']:.2f}) | {nearest['source']} | {nearest['strength']}"
+        elif signal_direction == "BEAR" and nearest["type"] in ("resistance", "pivot"):
+            alignment_text = f"✅ <b>متوافق مع الخريطة</b> — عند {nearest['name']} (${nearest['price']:.2f}) | {nearest['source']} | {nearest['strength']}"
+        elif signal_direction:
+            alignment_text = f"⚠️ <b>تعارض مع الخريطة</b> — عند {nearest['name']} (${nearest['price']:.2f}) | {nearest['type']} | {nearest['source']}"
+            is_aligned = False
+        else:
+            alignment_text = f"📍 <b>عند مستوى</b> {nearest['name']} (${nearest['price']:.2f}) | {nearest['source']} | {nearest['strength']}"
+        
+    elif min_dist_pct <= MAP_NEAR_PCT:
+        # السعر قريب من المستوى
+        is_aligned = True
+        above_below = "فوق" if price > nearest["price"] else "تحت"
+        alignment_text = f"📍 <b>قريب من</b> {nearest['name']} (${nearest['price']:.2f}) | بُعد {dist_pct_display:.1f}% ({above_below}) | {nearest['source']}"
+    else:
+        # السعر بعيد
+        is_aligned = False
+        above_below = "فوق" if price > nearest["price"] else "تحت"
+        alignment_text = f"📊 <b>أقرب مستوى:</b> {nearest['name']} (${nearest['price']:.2f}) | بُعد {dist_pct_display:.1f}% ({above_below})"
+    
+    return is_aligned, alignment_text, nearest
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helper Functions
@@ -972,6 +1166,16 @@ def format_v5_6_trade_alert(data, primary_opt=None, alt_opt=None, alpaca_msg=Non
         f"⏱ <b>الوقف الزمني:</b> 10 دقائق — اطلع إذا ما تحرك السعر\n"
     )
 
+    # V7.0: توافق مع خريطة الانعكاسات
+    try:
+        p_float = float(price)
+        signal_dir = "BULL" if signal == "CALL" else "BEAR"
+        is_aligned, alignment_text, nearest = check_map_alignment(p_float, signal_dir)
+        if alignment_text:
+            msg += f"🗺️ {alignment_text}\n\n"
+    except:
+        pass
+
     # Alpaca execution status
     if alpaca_msg:
         msg += f"\n🤖 <b>Alpaca:</b> {alpaca_msg}"
@@ -1005,10 +1209,13 @@ def format_opening_map(price, d_high, d_low, fib, trend, liquidity):
     return msg
 
 def format_reversal_alert(data, fib=None):
+    """V7.0: رسالة انعكاس محسّنة — سياق الترند + خريطة الانعكاسات + تصنيف الحجم."""
     price    = safe_get(data, "price", "?")
     div_type = safe_get(data, "div_type", "?")
     tf       = safe_get(data, "timeframe", "5m")
     vol_ok   = safe_get(data, "vol_confirm", "false").lower() == "true"
+    bias     = safe_get(data, "bias", "")
+    bias_15m = safe_get(data, "bias_15m", "")
 
     now_et    = get_et_now()
     timestamp = now_et.strftime("%I:%M %p")
@@ -1020,7 +1227,11 @@ def format_reversal_alert(data, fib=None):
         rev_icon = "📉"
         rev_text = f"هبوط محتمل (Divergence سلبي {tf})"
 
-    vol_text = "✅ مؤكد بالحجم" if vol_ok else "⚠️ ضعيف — تأكد قبل الدخول"
+    # V7.0: تصنيف الحجم (ثلاثي)
+    if vol_ok:
+        vol_text = "✅ مؤكد بالحجم — إشارة قوية"
+    else:
+        vol_text = "⚠️ الحجم ضعيف — تأكد قبل الدخول"
 
     msg = (
         f"⚠️ <b>قرب انعكاس</b> — TSLA @ <code>${price}</code>\n"
@@ -1028,6 +1239,34 @@ def format_reversal_alert(data, fib=None):
         f"{rev_icon} <b>النوع:</b> {rev_text}\n"
         f"📦 <b>الحجم:</b> {vol_text}\n"
     )
+
+    # V7.0: سياق الترند العام
+    if bias or bias_15m:
+        trend_icon = "📈" if "Bull" in bias else "📉" if "Bear" in bias else "↔️"
+        trend_text = bias if bias else "غير محدد"
+        msg += f"🔍 <b>الترند العام:</b> {trend_icon} {trend_text}"
+        if bias_15m:
+            msg += f" | 15m: {bias_15m}"
+        msg += "\n"
+        
+        # V7.0: تحذير إذا الدايفرجنس ضد الترند
+        is_against_trend = False
+        if div_type == "BEAR" and ("Bull" in bias or "Bull" in bias_15m):
+            is_against_trend = True
+            msg += "🚨 <b>تحذير:</b> الدايفرجنس ضد الترند الصاعد — احتمال فشل عالي\n"
+        elif div_type == "BULL" and ("Bear" in bias or "Bear" in bias_15m):
+            is_against_trend = True
+            msg += "🚨 <b>تحذير:</b> الدايفرجنس ضد الترند الهابط — احتمال فشل عالي\n"
+
+    # V7.0: توافق مع خريطة الانعكاسات
+    try:
+        p_float = float(price)
+        signal_dir = div_type  # "BULL" or "BEAR"
+        is_aligned, alignment_text, nearest = check_map_alignment(p_float, signal_dir)
+        if alignment_text:
+            msg += f"\n🗺️ <b>خريطة الانعكاسات:</b>\n   {alignment_text}\n"
+    except:
+        pass
 
     if fib:
         if div_type == "BULL":
@@ -1047,10 +1286,10 @@ def format_reversal_alert(data, fib=None):
                 ("61.8%", fib["fib_618"]),
             ]
 
-        msg += f"\n📐 <b>مستويات Fibonacci (دعم/مقاومة):</b>\n"
+        msg += f"\n📐 <b>مستويات Fibonacci:</b>\n"
         for label, val in levels:
             msg += f"   {label} → <code>${val:.2f}</code>\n"
-        msg += f"\n   🎯 <b>{nearest_label}:</b> <code>${fib[nearest_key]:.2f}</code>\n"
+        msg += f"   🎯 <b>{nearest_label}:</b> <code>${fib[nearest_key]:.2f}</code>\n"
 
     msg += (
         f"\n━━━━━━━━━━━━━━━━━━━━━\n"
@@ -1159,9 +1398,36 @@ def check_gex_alignment(data):
     except Exception:
         return True, ""  # في حالة خطأ، لا نمنع الصفقة
 
+def check_trend_alignment(data):
+    """V7.0: فلتر توافق الإشارة مع اتجاه الترند — يمنع صفقات ضد الترند القوي."""
+    signal   = safe_get(data, "signal", "")
+    bias     = safe_get(data, "bias", "")
+    bias_15m = safe_get(data, "bias_15m", "")
+    stars    = safe_get(data, "stars", "1")
+    
+    try:
+        stars_int = int(stars)
+    except:
+        stars_int = 1
+    
+    # إذا النجوم 5 (إشارة قوية جداً)، لا نمنعها حتى لو ضد الترند
+    if stars_int >= 5:
+        return True, ""
+    
+    # PUT ضد ترند صاعد قوي (bias + 15m كلاهما Bull)
+    if signal == "PUT" and "Bull" in bias and "Bull" in bias_15m:
+        return False, f"⚠️ PUT ضد ترند صاعد قوي (1m: {bias} | 15m: {bias_15m}) — مرفوض"
+    
+    # CALL ضد ترند هابط قوي (bias + 15m كلاهما Bear)
+    if signal == "CALL" and "Bear" in bias and "Bear" in bias_15m:
+        return False, f"⚠️ CALL ضد ترند هابط قوي (1m: {bias} | 15m: {bias_15m}) — مرفوض"
+    
+    return True, ""
+
+
 def apply_filters(data):
-    # V6.0: فلاتر معززة — ADX + GEX
-    for check in [check_data_quality, check_adx_filter, check_gex_alignment, check_cooldown, check_daily_limit]:
+    # V7.0: فلاتر معززة — ADX + GEX + Trend Alignment
+    for check in [check_data_quality, check_adx_filter, check_trend_alignment, check_gex_alignment, check_cooldown, check_daily_limit]:
         ok, reason = check(data)
         if not ok:
             return False, reason
@@ -1178,8 +1444,8 @@ def home():
     account = get_alpaca_account()
     return jsonify({
         "status":          "running",
-        "service":         "Smart Trading Alert Bot — Mosquito Swamp V6.0 (Discipline Edition)",
-        "version":         "6.0",
+        "service":         "Smart Trading Alert Bot — Mosquito Swamp V7.0 (Reversal Map Edition)",
+        "version":         "7.0",
         "trading_window":  window_msg,
         "in_window":       in_window,
         "alpaca_balance":  f"${float(account.get('cash', 0)):,.2f}" if account else "N/A",
@@ -1189,6 +1455,8 @@ def home():
         "remaining":       MAX_DAILY_ALERTS - len(daily_alerts),
         "gex_available":   _FA_AVAILABLE and fa.get_gex_levels() is not None if _FA_AVAILABLE else False,
         "adx_filter":      "active",
+        "trend_filter":    "active (V7.0)",
+        "reversal_map":    f"{len(reversal_map['levels'])} levels" if reversal_map["built"] else "not built",
         "timestamp":       datetime.now(timezone.utc).isoformat()
     })
 
@@ -1275,18 +1543,34 @@ def webhook():
                 )
 
             tg_ok = send_telegram(tg_msg)
+            
+            # V7.0: بناء خريطة الانعكاسات عند استقبال Opening Map
+            try:
+                build_reversal_map()
+                logger.info("[V7.0] Reversal Map built on Opening Map")
+            except Exception as map_err:
+                logger.warning(f"[V7.0] Reversal Map build error: {map_err}")
+            
             return jsonify({"status": "opening_map_sent", "telegram": "sent" if tg_ok else "failed"}), 200
 
         except Exception as e:
             logger.error(f"Opening map error: {e}")
             return jsonify({"status": "error", "error": str(e)}), 200
 
-    # ── REVERSAL ALERT ───────────────────────────────────────────────────────
+    # ── REVERSAL ALERT ───────────────────────────────────────────────────────────
     if signal == "REVERSAL_ALERT":
         now = time.time()
         if now - last_reversal_time < REVERSAL_COOLDOWN_SECS:
             remaining = REVERSAL_COOLDOWN_SECS - (now - last_reversal_time)
             return jsonify({"status": "blocked", "reason": f"reversal cooldown — {remaining/60:.0f} min"}), 200
+
+        # V7.0: فلتر Trend Bias للدايفرجنس (حماية إضافية في Backend)
+        div_type = safe_get(data, "div_type", "")
+        rev_bias = safe_get(data, "bias", "")
+        rev_bias_15m = safe_get(data, "bias_15m", "")
+        
+        # إذا الدايفرجنس ضد الترند القوي على 15m — نرسل مع تحذير (لا نحظر)
+        # هذا يعطي المستخدم المعلومة لكن مع تحذير واضح
 
         try:
             ph = float(safe_get(data, "day_high", "0") or 0)
@@ -1299,6 +1583,13 @@ def webhook():
         d_high = market_state["day_high"]
         d_low  = market_state["day_low"]
         fib = calc_fibonacci(d_high, d_low) if (d_high > 0 and d_low > 0 and d_high > d_low) else None
+
+        # V7.0: بناء/تحديث خريطة الانعكاسات إذا لم تُبنَ بعد
+        if not reversal_map["built"] or reversal_map["date"] != get_today():
+            try:
+                build_reversal_map()
+            except:
+                pass
 
         tg_msg = format_reversal_alert(data, fib)
         tg_ok  = send_telegram(tg_msg)
@@ -1347,6 +1638,13 @@ def webhook():
             "reason":    rejection_reason
         })
         return jsonify({"status": "blocked", "reason": rejection_reason}), 200
+
+    # V7.0: بناء خريطة الانعكاسات إذا لم تُبنَ بعد (للإشارات التجارية)
+    if not reversal_map["built"] or reversal_map["date"] != get_today():
+        try:
+            build_reversal_map()
+        except:
+            pass
 
     # Fetch Option Data
     primary_opt, alt_opt = get_best_option("TSLA", signal, price)
@@ -1532,7 +1830,10 @@ def reset():
     last_reversal_time  = 0
     consecutive_no_move = 0
     loss_cooldown_until = 0
-    return jsonify({"status": "reset", "message": "All counters cleared — V6.0"})
+    # V7.0: إعادة بناء الخريطة
+    reversal_map["built"] = False
+    reversal_map["levels"] = []
+    return jsonify({"status": "reset", "message": "All counters cleared — V7.0"})
 
 
 # ──────────────────────────────────────────────────────────────────────────────

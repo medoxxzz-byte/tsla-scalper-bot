@@ -1,19 +1,26 @@
 """
-Smart Trading Alert Bot - V7.0
+Smart Trading Alert Bot - V7.1 (Mosquito ثاقب)
 Webhook Server for TSLA Mosquito Swamp Pine Script
 
-NEW IN V7.0:
+NEW IN V7.1:
+  - إصلاح نظام النجوم: Neutral = -1 نجمة، معاكس = -2 نجمة
+  - فلتر 15 دقيقة إجباري: يمنع التنفيذ إذا 15m ضد الإشارة
+  - فلتر حجم للانعكاسات: لا ترسل إلا إذا vol_confirm = true
+  - إصلاح اتجاه Fibonacci في رسائل الانعكاس
+  - رسائل تلقرام جديدة بالكامل — عملية مباشرة للسكالبينج
+  - تحذير الشوبي: "هالمكان حرق أعصاب وفلوس"
+  - حد يومي: 6 تنبيهات تداول + 3 انعكاسات (بدل 11)
+  - لا تداول يوم الجمعة (0DTE = كازينو)
+  - اسم البوت: ثاقب (Mosquito V7.1)
+
+KEPT FROM V7.0:
   - خريطة الانعكاسات المدمجة مع رسائل التلقرام (Reversal Map Alignment)
   - فلتر Trend Alignment (يمنع صفقات ضد الترند)
-  - تحسين رسائل الانعكاس (سياق الترند + تصنيف الحجم)
   - تقليل Reversal Cooldown من 30 إلى 15 دقيقة
-  - فلتر Trend Bias للدايفرجنس (يُطبق في Pine Script)
-
-KEPT FROM V6.0:
   - فلتر ADX إجباري (لا تداول في سوق جانبي ADX < 20)
   - Stop Loss تلقائي -20% (محاكاة على السهم)
-  - FlashAlpha GEX كفلتر إضافي (توافق مع مستويات Gamma)
-  - نافذة تداول: 9:30 AM - 3:30 PM ET (البوت يعمل مستقل)
+  - FlashAlpha GEX كفلتر إضافي
+  - نافذة تداول: 9:30 AM - 3:30 PM ET
   - Alpaca Paper Trading Auto-Executor
   - Position tracker with real-time P&L
 
@@ -73,13 +80,14 @@ except ImportError:
     _RD_AVAILABLE = False
     logging.warning("reversal_detector.py not found — reversal detection disabled")
 
-# # ── Reversal Tracker Integration ─────────────────────────────────────────
+# ── Reversal Tracker Integration ─────────────────────────────────────────
 try:
     import reversal_tracker as rt
     _RT_AVAILABLE = True
 except ImportError:
     _RT_AVAILABLE = False
     logging.warning("reversal_tracker.py not found — reversal tracking disabled")
+
 # ── Alpaca Options Feed Integration ─────────────────────────────────────────
 try:
     import alpaca_options as ao
@@ -127,34 +135,40 @@ ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "BeNQ9BiZ8t5wxDwb6Dmvd62
 ALPACA_BASE_URL   = os.environ.get("ALPACA_BASE_URL",   "https://paper-api.alpaca.markets")
 
 # ── Trading Window (ET) ───────────────────────────────────────────────────────
-# نافذة واسعة: 9:30 AM - 3:30 PM ET (البوت يعمل مستقل طوال الجلسة)
-TRADING_START_HOUR   = 9    # 9:30 AM ET
+TRADING_START_HOUR   = 9
 TRADING_START_MINUTE = 30
-TRADING_END_HOUR     = 15   # 3:30 PM ET
+TRADING_END_HOUR     = 15
 TRADING_END_MINUTE   = 30
 
 # ── Position Sizing ───────────────────────────────────────────────────────────
-MAX_CONTRACTS_PER_TRADE = 10     # عدد العقود لكل صفقة (تمت الزيادة بطلب المستخدم)
-MAX_OPTION_PRICE        = 5.00   # أقصى سعر للعقد (لا تشتري عقود غالية جداً)
-MIN_OPTION_PRICE        = 0.10   # أدنى سعر (لا تشتري عقود رخيصة جداً = خطر)
-MIN_STARS_TO_EXECUTE    = 3      # أقل عدد نجوم لتنفيذ الصفقة تلقائياً
+MAX_CONTRACTS_PER_TRADE = 10
+MAX_OPTION_PRICE        = 5.00
+MIN_OPTION_PRICE        = 0.10
+MIN_STARS_TO_EXECUTE    = 3      # V7.1: أقل عدد نجوم لتنفيذ الصفقة تلقائياً
 
 # ── Cooldowns ─────────────────────────────────────────────────────────────────
 COOLDOWN_SECONDS_SIMILAR = 1500   # 25 min between same-direction trade signals
 COOLDOWN_MIN_GAP         = 30     # minimum 30s between any two alerts
-REVERSAL_COOLDOWN_SECS   = 900    # 15 min between reversal alerts (V7.0: reduced from 30)
+REVERSAL_COOLDOWN_SECS   = 900    # 15 min between reversal alerts
 
-MAX_DAILY_ALERTS    = int(os.environ.get("MAX_DAILY_TRADES", "11"))
+# V7.1: حدود يومية محسّنة
+MAX_DAILY_TRADE_ALERTS    = 6    # حد تنبيهات التداول (CALL/PUT)
+MAX_DAILY_REVERSAL_ALERTS = 3    # حد تنبيهات الانعكاس
+MAX_DAILY_ALERTS          = int(os.environ.get("MAX_DAILY_TRADES", "6"))
+
 KEEP_ALIVE_INTERVAL = 600
 
 # V6.0: فلتر ADX إجباري (لا تداول في سوق جانبي)
-MIN_ADX_TO_TRADE = 20  # ADX < 20 = لا دخول
+MIN_ADX_TO_TRADE = 20
 
 # V6.0: Stop Loss تلقائي -20% (محاكاة على السهم)
-AUTO_STOP_LOSS_PCT = 0.20  # -20% من سعر الأوبشن (يعادل ~1.5% على السهم)
+AUTO_STOP_LOSS_PCT = 0.20
 
 LOSS_COUNTER_MAX      = 3
 LOSS_COOLDOWN_SECONDS = 1800
+
+# V7.1: حد الخسارة اليومي
+DAILY_LOSS_LIMIT = -150.0  # -$150
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Logging
@@ -164,7 +178,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("alert_bot_v56.log"),
+        logging.FileHandler("alert_bot_v71.log"),
         logging.StreamHandler()
     ]
 )
@@ -174,13 +188,10 @@ logger = logging.getLogger(__name__)
 # Flask App & State
 # ──────────────────────────────────────────────────────────────────────────────
 
-
-# ── HTTP Session with Retry (لحل SSL timeouts) ──────────────────────────────
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 def _create_retry_session():
-    """إنشاء session مع retry تلقائي لحل SSL timeouts."""
     session = http_requests.Session()
     retry_strategy = Retry(
         total=3,
@@ -211,6 +222,7 @@ consecutive_no_move = 0
 loss_cooldown_until = 0
 
 daily_alerts  = []
+daily_reversal_count = 0  # V7.1: عداد الانعكاسات اليومي
 daily_date    = ""
 blocked_today = []
 
@@ -222,33 +234,26 @@ market_state = {
 }
 
 # Alpaca position tracker
-active_positions = {}   # {order_id: {signal, strike, contracts, entry_price, sl, tp, symbol}}
+active_positions = {}
 
 # ──────────────────────────────────────────────────────────────────────────────
 # V7.0: Reversal Map — خريطة الانعكاسات المدمجة مع الرسائل
 # ──────────────────────────────────────────────────────────────────────────────
 
-# خريطة الانعكاسات اليومية — تُبنى من GEX + Fibonacci + S/R
 reversal_map = {
-    "levels": [],        # [{"name": str, "price": float, "type": "support"|"resistance", "source": str, "strength": str}]
-    "date": "",          # تاريخ آخر تحديث
-    "built": False       # هل تم بناء الخريطة اليوم؟
+    "levels": [],
+    "date": "",
+    "built": False
 }
 
-# V7.0: Proximity threshold — كم % يُعتبر السعر "عند" مستوى
-MAP_PROXIMITY_PCT = 0.008   # 0.8% = السعر عند المستوى
-MAP_NEAR_PCT      = 0.015   # 1.5% = السعر قريب من المستوى
+MAP_PROXIMITY_PCT = 0.008
+MAP_NEAR_PCT      = 0.015
 
 
 def build_reversal_map():
-    """
-    V7.0: بناء خريطة الانعكاسات اليومية من مصادر متعددة.
-    تُستدعى مرة واحدة صباحاً (مع Opening Map) وتُحدّث مع كل Webhook.
-    """
     global reversal_map
     today = get_today()
     
-    # لا نبني مرتين في نفس اليوم (إلا إذا فارغة)
     if reversal_map["date"] == today and reversal_map["built"] and len(reversal_map["levels"]) > 0:
         return reversal_map
     
@@ -291,8 +296,6 @@ def build_reversal_map():
         levels.append({"name": "Fib 38.2%", "price": fib["fib_382"], "type": "support", "source": "Fibonacci", "strength": "متوسطة"})
         levels.append({"name": "Fib 50%",   "price": fib["fib_500"], "type": "pivot",   "source": "Fibonacci", "strength": "قوية"})
         levels.append({"name": "Fib 61.8%", "price": fib["fib_618"], "type": "support", "source": "Fibonacci", "strength": "قوية"})
-        levels.append({"name": "Day High",  "price": fib["high"],    "type": "resistance", "source": "Fibonacci", "strength": "قوية"})
-        levels.append({"name": "Day Low",   "price": fib["low"],     "type": "support", "source": "Fibonacci", "strength": "قوية"})
     
     # ── المصدر 3: S/R from 5-min candles ─────────────────────────────────────
     sr_r, sr_s = get_tsla_sr_levels()
@@ -303,7 +306,6 @@ def build_reversal_map():
     
     # ── المصدر 4: Round Numbers (أرقام نفسية) ────────────────────────────────
     if d_high > 0:
-        # أقرب أرقام نفسية ($5 intervals)
         mid_price = (d_high + d_low) / 2 if d_low > 0 else d_high
         base = int(mid_price / 5) * 5
         for rn in [base - 10, base - 5, base, base + 5, base + 10, base + 15]:
@@ -317,14 +319,12 @@ def build_reversal_map():
                 })
     
     # ── إزالة المكررات وترتيب ────────────────────────────────────────────────
-    # إزالة المستويات المتقاربة جداً (أقل من 0.3%)
     unique_levels = []
     levels_sorted = sorted(levels, key=lambda x: x["price"], reverse=True)
     for lvl in levels_sorted:
         is_duplicate = False
         for existing in unique_levels:
             if abs(lvl["price"] - existing["price"]) / existing["price"] < 0.003:
-                # إذا المستوى الجديد أقوى، استبدل
                 if _strength_rank(lvl["strength"]) > _strength_rank(existing["strength"]):
                     unique_levels.remove(existing)
                     unique_levels.append(lvl)
@@ -342,22 +342,11 @@ def build_reversal_map():
 
 
 def _strength_rank(strength_str):
-    """تحويل قوة المستوى إلى رقم للمقارنة."""
     ranks = {"ضعيفة": 1, "متوسطة": 2, "قوية": 3, "قوية جداً": 4}
     return ranks.get(strength_str, 1)
 
 
 def check_map_alignment(price, signal_direction=None):
-    """
-    V7.0: تحقق من توافق السعر مع خريطة الانعكاسات.
-    
-    Args:
-        price: السعر الحالي
-        signal_direction: "BULL" أو "BEAR" أو None
-    
-    Returns:
-        (is_aligned: bool, alignment_text: str, nearest_level: dict or None)
-    """
     if not reversal_map["built"] or not reversal_map["levels"]:
         return False, "", None
     
@@ -378,36 +367,31 @@ def check_map_alignment(price, signal_direction=None):
     if not nearest:
         return False, "", None
     
-    # تحديد العلاقة
     dist_dollars = abs(price - nearest["price"])
     dist_pct_display = min_dist_pct * 100
     
     if min_dist_pct <= MAP_PROXIMITY_PCT:
-        # السعر عند المستوى
         position = "عند"
         is_aligned = True
         
-        # تحقق من التوافق مع اتجاه الإشارة
         if signal_direction == "BULL" and nearest["type"] in ("support", "pivot"):
-            alignment_text = f"✅ <b>متوافق مع الخريطة</b> — عند {nearest['name']} (${nearest['price']:.2f}) | {nearest['source']} | {nearest['strength']}"
+            alignment_text = f"✅ متوافق — عند {nearest['name']} (${nearest['price']:.2f})"
         elif signal_direction == "BEAR" and nearest["type"] in ("resistance", "pivot"):
-            alignment_text = f"✅ <b>متوافق مع الخريطة</b> — عند {nearest['name']} (${nearest['price']:.2f}) | {nearest['source']} | {nearest['strength']}"
+            alignment_text = f"✅ متوافق — عند {nearest['name']} (${nearest['price']:.2f})"
         elif signal_direction:
-            alignment_text = f"⚠️ <b>تعارض مع الخريطة</b> — عند {nearest['name']} (${nearest['price']:.2f}) | {nearest['type']} | {nearest['source']}"
+            alignment_text = f"⚠️ تعارض — عند {nearest['name']} (${nearest['price']:.2f})"
             is_aligned = False
         else:
-            alignment_text = f"📍 <b>عند مستوى</b> {nearest['name']} (${nearest['price']:.2f}) | {nearest['source']} | {nearest['strength']}"
+            alignment_text = f"📍 عند {nearest['name']} (${nearest['price']:.2f})"
         
     elif min_dist_pct <= MAP_NEAR_PCT:
-        # السعر قريب من المستوى
         is_aligned = True
         above_below = "فوق" if price > nearest["price"] else "تحت"
-        alignment_text = f"📍 <b>قريب من</b> {nearest['name']} (${nearest['price']:.2f}) | بُعد {dist_pct_display:.1f}% ({above_below}) | {nearest['source']}"
+        alignment_text = f"📍 قريب من {nearest['name']} (${nearest['price']:.2f}) | {above_below}"
     else:
-        # السعر بعيد
         is_aligned = False
         above_below = "فوق" if price > nearest["price"] else "تحت"
-        alignment_text = f"📊 <b>أقرب مستوى:</b> {nearest['name']} (${nearest['price']:.2f}) | بُعد {dist_pct_display:.1f}% ({above_below})"
+        alignment_text = f"📊 أقرب مستوى: {nearest['name']} (${nearest['price']:.2f}) | {above_below}"
     
     return is_aligned, alignment_text, nearest
 
@@ -421,18 +405,17 @@ def get_et_now():
 def get_today():
     return get_et_now().strftime("%Y-%m-%d")
 
+def is_friday():
+    """V7.1: تحقق إذا اليوم جمعة (0DTE = كازينو)."""
+    return get_et_now().weekday() == 4
+
 def is_trading_window():
-    """
-    Returns True only if current ET time is within the allowed trading window:
-    10:00 AM - 3:30 PM ET (30 min after open, stop at 3:30 PM)
-    """
     now = get_et_now()
     current_minutes = now.hour * 60 + now.minute
-    start_minutes   = TRADING_START_HOUR * 60 + TRADING_START_MINUTE   # 600 = 10:00 AM
-    end_minutes     = TRADING_END_HOUR   * 60 + TRADING_END_MINUTE     # 930 = 3:30 PM
+    start_minutes   = TRADING_START_HOUR * 60 + TRADING_START_MINUTE
+    end_minutes     = TRADING_END_HOUR   * 60 + TRADING_END_MINUTE
 
-    # Also check it's a weekday (Mon-Fri)
-    if now.weekday() >= 5:  # Saturday=5, Sunday=6
+    if now.weekday() >= 5:
         return False, "عطلة نهاية الأسبوع"
 
     if current_minutes < start_minutes:
@@ -445,17 +428,18 @@ def is_trading_window():
     return True, "نافذة التداول مفتوحة (9:30-3:30) ✅"
 
 def reset_daily_if_needed():
-    global daily_date, daily_alerts, blocked_today
+    global daily_date, daily_alerts, blocked_today, daily_reversal_count
     global consecutive_no_move, loss_cooldown_until, last_reversal_time
     today = get_today()
     if daily_date != today:
         daily_date = today
         daily_alerts = []
         blocked_today = []
+        daily_reversal_count = 0
         consecutive_no_move = 0
         loss_cooldown_until = 0
         last_reversal_time = 0
-        logger.info(f"--- V6.0 Reset daily limits for {today} ---")
+        logger.info(f"--- V7.1 Reset daily limits for {today} ---")
 
 def safe_get(data, key, default=""):
     val = data.get(key, default)
@@ -473,7 +457,6 @@ def alpaca_headers():
     }
 
 def get_alpaca_account():
-    """Get current account info from Alpaca."""
     try:
         r = _retry_session.get(
             f"{ALPACA_BASE_URL}/v2/account",
@@ -489,7 +472,6 @@ def get_alpaca_account():
         return None
 
 def get_alpaca_positions():
-    """Get open positions from Alpaca."""
     try:
         r = _retry_session.get(
             f"{ALPACA_BASE_URL}/v2/positions",
@@ -506,10 +488,6 @@ def get_alpaca_positions():
 def place_alpaca_stock_order(symbol, qty, side, order_type="market",
                               limit_price=None, stop_price=None,
                               time_in_force="day"):
-    """
-    Place a stock order on Alpaca Paper Trading.
-    side: 'buy' or 'sell'
-    """
     payload = {
         "symbol":        symbol,
         "qty":           str(qty),
@@ -541,7 +519,6 @@ def place_alpaca_stock_order(symbol, qty, side, order_type="market",
         return None
 
 def close_alpaca_position(symbol):
-    """Close an open position by symbol."""
     try:
         r = _retry_session.delete(
             f"{ALPACA_BASE_URL}/v2/positions/{symbol}",
@@ -560,47 +537,29 @@ def close_alpaca_position(symbol):
 def execute_trade(signal, price, stars, opt_data):
     """
     Execute a trade on Alpaca Paper Trading.
-    Since Alpaca Paper doesn't support options, we trade TSLA stock as proxy.
-    - CALL signal → BUY TSLA shares
-    - PUT signal  → SELL SHORT TSLA shares (if allowed) or skip
-    
-    Returns: (success, order_id, message)
+    CALL → BUY TSLA shares | PUT → SELL SHORT TSLA shares
     """
     try:
-        # Check account
         account = get_alpaca_account()
         if not account:
             return False, None, "فشل الاتصال بـ Alpaca"
 
         buying_power = float(account.get("buying_power", 0))
-        cash = float(account.get("cash", 0))
-
-        # Determine trade parameters
-        # We use TSLA stock as proxy for options
-        # For CALL: buy MAX_CONTRACTS_PER_TRADE shares of TSLA
-        # For PUT: we'll simulate by tracking the signal (paper only)
-        
         tsla_price = float(price)
-        qty = MAX_CONTRACTS_PER_TRADE  # 10 أسهم لكل صفقة (تم التحديث بطلب المستخدم)
+        qty = MAX_CONTRACTS_PER_TRADE
 
         if signal == "CALL":
-            # Check we have enough buying power
             if buying_power < tsla_price * qty:
-                return False, None, f"رصيد غير كافٍ (${buying_power:.0f} < ${tsla_price:.0f})"
+                return False, None, f"رصيد غير كافٍ (${buying_power:.0f})"
 
             order = place_alpaca_stock_order("TSLA", qty, "buy")
             if not order:
                 return False, None, "فشل تنفيذ أمر الشراء"
 
             order_id = order.get("id", "")
-            
-            # Calculate SL and TP based on option data if available
-            # V6.0: SL ثابت -20% من الأوبشن، TP +40% (محاكاة على السهم)
-            # للسهم كبروكسي: SL -1.5% و TP +2.5% (يعادل تقريباً -20%/+40% على الأوبشن)
-            tp_stock = tsla_price * 1.025  # +2.5% (محاكاة +40% أوبشن)
-            sl_stock = tsla_price * (1 - AUTO_STOP_LOSS_PCT * 0.075)  # -1.5% (محاكاة -20% أوبشن)
+            tp_stock = tsla_price * 1.025
+            sl_stock = tsla_price * (1 - AUTO_STOP_LOSS_PCT * 0.075)
 
-            # Store position info
             active_positions[order_id] = {
                 "signal":     signal,
                 "tsla_price": tsla_price,
@@ -613,30 +572,25 @@ def execute_trade(signal, price, stars, opt_data):
             }
 
             msg = (
-                f"✅ <b>تم تنفيذ الصفقة — Alpaca Paper</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🟢 <b>شراء TSLA</b> × {qty} سهم\n"
-                f"💰 <b>سعر الدخول:</b> ~${tsla_price:.2f}\n"
-                f"🎯 <b>الهدف:</b> ${tp_stock:.2f} (+{((tp_stock/tsla_price)-1)*100:.1f}%)\n"
-                f"🛑 <b>وقف الخسارة:</b> ${sl_stock:.2f} (-{(1-(sl_stock/tsla_price))*100:.1f}%)\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🆔 Order: <code>{order_id[:8]}...</code>\n"
-                f"⭐ النجوم: {'⭐'*int(stars)}\n"
+                f"🤖 <b>ثاقب نفّذ — CALL</b>\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"🟢 شراء TSLA × {qty} سهم @ ${tsla_price:.2f}\n"
+                f"🎯 هدف: ${tp_stock:.2f}\n"
+                f"🛑 وقف: ${sl_stock:.2f}\n"
+                f"⭐ {stars}/5\n"
                 f"🕐 {get_et_now().strftime('%I:%M %p')} ET"
             )
             return True, order_id, msg
 
         elif signal == "PUT":
-            # For PUT: try short selling (paper trading allows it)
-            # Check if shorting is enabled
             if account.get("shorting_enabled", False):
                 order = place_alpaca_stock_order("TSLA", qty, "sell")
                 if not order:
                     return False, None, "فشل تنفيذ أمر البيع"
 
                 order_id = order.get("id", "")
-                tp_stock = tsla_price * 0.985  # -1.5%
-                sl_stock = tsla_price * 1.010  # +1.0%
+                tp_stock = tsla_price * 0.985
+                sl_stock = tsla_price * 1.010
 
                 active_positions[order_id] = {
                     "signal":     signal,
@@ -650,20 +604,16 @@ def execute_trade(signal, price, stars, opt_data):
                 }
 
                 msg = (
-                    f"✅ <b>تم تنفيذ الصفقة — Alpaca Paper</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🔴 <b>بيع (Short) TSLA</b> × {qty} سهم\n"
-                    f"💰 <b>سعر الدخول:</b> ~${tsla_price:.2f}\n"
-                    f"🎯 <b>الهدف:</b> ${tp_stock:.2f} (-{(1-(tp_stock/tsla_price))*100:.1f}%)\n"
-                    f"🛑 <b>وقف الخسارة:</b> ${sl_stock:.2f} (+{((sl_stock/tsla_price)-1)*100:.1f}%)\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🆔 Order: <code>{order_id[:8]}...</code>\n"
-                    f"⭐ النجوم: {'⭐'*int(stars)}\n"
+                    f"🤖 <b>ثاقب نفّذ — PUT</b>\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"🔴 بيع (Short) TSLA × {qty} سهم @ ${tsla_price:.2f}\n"
+                    f"🎯 هدف: ${tp_stock:.2f}\n"
+                    f"🛑 وقف: ${sl_stock:.2f}\n"
+                    f"⭐ {stars}/5\n"
                     f"🕐 {get_et_now().strftime('%I:%M %p')} ET"
                 )
                 return True, order_id, msg
             else:
-                # Shorting not enabled — log as paper trade only
                 fake_id = f"PAPER_{int(time.time())}"
                 tp_stock = tsla_price * 0.985
                 sl_stock = tsla_price * 1.010
@@ -681,15 +631,13 @@ def execute_trade(signal, price, stars, opt_data):
                 }
 
                 msg = (
-                    f"📝 <b>تسجيل صفقة PUT — Paper Only</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🔴 <b>PUT TSLA</b> × {qty} (محاكاة)\n"
-                    f"💰 <b>سعر الدخول:</b> ${tsla_price:.2f}\n"
-                    f"🎯 <b>الهدف:</b> ${tp_stock:.2f}\n"
-                    f"🛑 <b>وقف الخسارة:</b> ${sl_stock:.2f}\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"⭐ النجوم: {'⭐'*int(stars)}\n"
-                    f"ℹ️ البيع القصير غير مفعل — تم التسجيل فقط\n"
+                    f"🤖 <b>ثاقب سجّل — PUT (محاكاة)</b>\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"🔴 PUT TSLA × {qty} @ ${tsla_price:.2f}\n"
+                    f"🎯 هدف: ${tp_stock:.2f}\n"
+                    f"🛑 وقف: ${sl_stock:.2f}\n"
+                    f"⭐ {stars}/5\n"
+                    f"ℹ️ البيع القصير غير مفعل — تسجيل فقط\n"
                     f"🕐 {get_et_now().strftime('%I:%M %p')} ET"
                 )
                 return True, fake_id, msg
@@ -703,14 +651,12 @@ def execute_trade(signal, price, stars, opt_data):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def monitor_positions():
-    """Background thread: check open positions against SL/TP every 60 seconds."""
     while True:
         time.sleep(60)
         if not active_positions:
             continue
 
         try:
-            # Get current TSLA price — Alpaca (موثوق بدلاً من yfinance)
             current_price = get_tsla_price_alpaca_snapshot()
             if current_price <= 0:
                 continue
@@ -739,7 +685,7 @@ def monitor_positions():
                         close_reason = "🎯 وصل الهدف"
                     elif current_price <= sl:
                         hit_sl = True
-                        close_reason = "🛑 وصل وقف الخسارة"
+                        close_reason = "🛑 وقف الخسارة"
                 elif signal == "PUT":
                     pnl = (entry - current_price) * pos["qty"]
                     if current_price <= tp:
@@ -747,31 +693,26 @@ def monitor_positions():
                         close_reason = "🎯 وصل الهدف"
                     elif current_price >= sl:
                         hit_sl = True
-                        close_reason = "🛑 وصل وقف الخسارة"
+                        close_reason = "🛑 وقف الخسارة"
 
-                # Force close at 3:45 PM ET (15 min before market close)
                 force_close = (now.hour == 15 and now.minute >= 45)
 
                 if hit_tp or hit_sl or force_close:
                     if force_close:
                         close_reason = "⏰ إغلاق إجباري (قبل إغلاق السوق)"
 
-                    # Close position if not paper_only
                     if not paper_only:
                         close_alpaca_position("TSLA")
 
                     pnl_icon = "💚" if pnl >= 0 else "🔴"
                     msg = (
-                        f"{pnl_icon} <b>إغلاق صفقة — Alpaca Paper</b>\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"{pnl_icon} <b>ثاقب أغلق الصفقة</b>\n"
+                        f"━━━━━━━━━━━━━━━\n"
                         f"{'🟢 CALL' if signal == 'CALL' else '🔴 PUT'} TSLA\n"
-                        f"📥 <b>دخول:</b> ${entry:.2f} ({entry_time})\n"
-                        f"📤 <b>خروج:</b> ${current_price:.2f}\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📥 دخول: ${entry:.2f} ({entry_time})\n"
+                        f"📤 خروج: ${current_price:.2f}\n"
                         f"{close_reason}\n"
-                        f"{'💰' if pnl >= 0 else '💸'} <b>P&L:</b> {'+' if pnl >= 0 else ''}{pnl:.2f}$\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"⭐ النجوم: {'⭐'*int(stars)}\n"
+                        f"{'💰' if pnl >= 0 else '💸'} <b>P&L: {'+' if pnl >= 0 else ''}{pnl:.2f}$</b>\n"
                         f"🕐 {now.strftime('%I:%M %p')} ET"
                     )
                     send_telegram(msg)
@@ -801,7 +742,6 @@ def calc_fibonacci(high, low):
     }
 
 def get_tsla_price_alpaca():
-    """جلب سعر TSLA من Alpaca (quote)."""
     try:
         r = _retry_session.get(
             f"{ALPACA_BASE_URL}/v2/stocks/TSLA/quotes/latest",
@@ -818,7 +758,6 @@ def get_tsla_price_alpaca():
     return 0.0
 
 def get_tsla_price_alpaca_snapshot():
-    """المصدر الرئيسي للسعر — Alpaca Snapshot (أسرع وأكثر موثوقية)."""
     try:
         r = _retry_session.get(
             "https://data.alpaca.markets/v2/stocks/TSLA/snapshot",
@@ -827,21 +766,17 @@ def get_tsla_price_alpaca_snapshot():
         )
         if r.status_code == 200:
             snap = r.json()
-            # أولاً: آخر صفقة
             price = float(snap.get("latestTrade", {}).get("p", 0))
             if price > 0:
                 return price
-            # ثانياً: آخر سعر طلب
             price = float(snap.get("latestQuote", {}).get("ap", 0))
             if price > 0:
                 return price
     except Exception as e:
         logger.error(f"Alpaca snapshot error: {e}")
-    # Fallback: quote endpoint
     return get_tsla_price_alpaca()
 
 def get_tsla_day_data_alpaca():
-    """جلب بيانات اليوم (High/Low/Price) من Alpaca Snapshot — بديل yfinance."""
     try:
         r = _retry_session.get(
             "https://data.alpaca.markets/v2/stocks/TSLA/snapshot",
@@ -856,14 +791,12 @@ def get_tsla_day_data_alpaca():
             day_high   = float(daily.get("h", 0))
             day_low    = float(daily.get("l", 0))
             if last_price > 0:
-                logger.info(f"[Alpaca] Price: ${last_price} | H: ${day_high} | L: ${day_low}")
                 return last_price, day_high, day_low
     except Exception as e:
         logger.error(f"Alpaca day data error: {e}")
     return None, None, None
 
 def get_tsla_5min_bars_alpaca():
-    """جلب شمعات 5 دقائق من Alpaca — بديل yfinance للـ S&R."""
     try:
         from datetime import datetime, timedelta
         end = datetime.utcnow()
@@ -884,18 +817,15 @@ def get_tsla_5min_bars_alpaca():
         if r.status_code == 200:
             bars = r.json().get("bars", [])
             if len(bars) >= 4:
-                return bars  # قائمة من dicts: {o, h, l, c, v, t}
+                return bars
     except Exception as e:
         logger.error(f"Alpaca 5min bars error: {e}")
     return []
 
 def get_tsla_day_data():
-    """جلب بيانات اليوم — Alpaca أولاً (موثوق)، yfinance كاحتياطي."""
-    # المصدر الأساسي: Alpaca
     price, high, low = get_tsla_day_data_alpaca()
     if price and price > 0:
         return price, high or 0.0, low or 0.0
-    # Fallback: yfinance
     try:
         tkr = yf.Ticker("TSLA")
         info = tkr.fast_info
@@ -909,27 +839,20 @@ def get_tsla_day_data():
     return None, None, None
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Support & Resistance — 5-Minute Candles (Last 3 Candles)
+# Support & Resistance — 5-Minute Candles
 # ──────────────────────────────────────────────────────────────────────────────
 
-# Cache: store last computed S/R levels and the candle timestamp they were computed on
 _sr_cache = {
-    "resistance":    None,   # Highest high of last 3 closed 5-min candles
-    "support":       None,   # Lowest low of last 3 closed 5-min candles
-    "last_candle_ts": None,  # Timestamp of the last candle used for calculation
+    "resistance":    None,
+    "support":       None,
+    "last_candle_ts": None,
 }
 
 def get_tsla_sr_levels():
-    """
-    Calculate Support & Resistance from the last 3 CLOSED 5-minute candles.
-    Uses Alpaca as primary source, yfinance as fallback.
-    """
     global _sr_cache
-    # المصدر الأساسي: Alpaca 5-min bars
     try:
         bars = get_tsla_5min_bars_alpaca()
         if bars and len(bars) >= 4:
-            # آخر 3 شمعات مغلقة (نتجاهل الأخيرة لأنها قد تكون مفتوحة)
             closed = bars[-4:-1]
             latest_ts = closed[-1].get("t", "")
             if _sr_cache["last_candle_ts"] is not None and latest_ts == _sr_cache["last_candle_ts"]:
@@ -939,11 +862,9 @@ def get_tsla_sr_levels():
             _sr_cache["resistance"]     = resistance
             _sr_cache["support"]        = support
             _sr_cache["last_candle_ts"] = latest_ts
-            logger.info(f"[S&R][Alpaca] R: ${resistance} | S: ${support}")
             return resistance, support
     except Exception as e:
         logger.error(f"[S&R] Alpaca bars error: {e}")
-    # Fallback: yfinance
     try:
         tkr = yf.Ticker("TSLA")
         df = tkr.history(period="1d", interval="5m")
@@ -957,7 +878,6 @@ def get_tsla_sr_levels():
             _sr_cache["resistance"]     = resistance
             _sr_cache["support"]        = support
             _sr_cache["last_candle_ts"] = latest_candle_ts
-            logger.info(f"[S&R][yfinance] R: ${resistance} | S: ${support}")
             return resistance, support
     except Exception as e:
         logger.error(f"[S&R] yfinance error: {e}")
@@ -1045,7 +965,83 @@ def _find_contract(tkr, expiry, signal_type, current_price):
         return None
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Formatting
+# V7.1: Stars Rating — FIXED
+# ──────────────────────────────────────────────────────────────────────────────
+
+def calculate_stars_v71(data):
+    """
+    V7.1: إعادة حساب النجوم في الباك إند.
+    
+    Pine Script يرسل النجوم الأصلية (1-5).
+    الباك إند يعدّلها بناءً على:
+    - إذا أي فريم NEUTRAL = -1 نجمة
+    - إذا أي فريم يعاكس الإشارة = -2 نجمة
+    - الحد الأدنى = 1 نجمة
+    - 5 نجوم فقط إذا الثلاث فريمات متوافقة 100%
+    """
+    signal   = safe_get(data, "signal", "")
+    bias_5m  = safe_get(data, "bias_5m", "")
+    bias_15m = safe_get(data, "bias_15m", "")
+    
+    try:
+        pine_stars = int(safe_get(data, "stars", "1"))
+    except:
+        pine_stars = 1
+    
+    adjusted = pine_stars
+    
+    # تحقق من 5m
+    if signal == "CALL":
+        if "Neutral" in bias_5m:
+            adjusted -= 1
+            logger.info(f"[Stars V7.1] -1 star: 5m is Neutral for CALL")
+        elif "Bear" in bias_5m:
+            adjusted -= 2
+            logger.info(f"[Stars V7.1] -2 stars: 5m is Bear for CALL")
+    elif signal == "PUT":
+        if "Neutral" in bias_5m:
+            adjusted -= 1
+            logger.info(f"[Stars V7.1] -1 star: 5m is Neutral for PUT")
+        elif "Bull" in bias_5m:
+            adjusted -= 2
+            logger.info(f"[Stars V7.1] -2 stars: 5m is Bull for PUT")
+    
+    # تحقق من 15m
+    if signal == "CALL":
+        if "Neutral" in bias_15m:
+            adjusted -= 1
+            logger.info(f"[Stars V7.1] -1 star: 15m is Neutral for CALL")
+        elif "Bear" in bias_15m:
+            adjusted -= 2
+            logger.info(f"[Stars V7.1] -2 stars: 15m is Bear for CALL")
+    elif signal == "PUT":
+        if "Neutral" in bias_15m:
+            adjusted -= 1
+            logger.info(f"[Stars V7.1] -1 star: 15m is Neutral for PUT")
+        elif "Bull" in bias_15m:
+            adjusted -= 2
+            logger.info(f"[Stars V7.1] -2 stars: 15m is Bull for PUT")
+    
+    # الحد الأدنى 1
+    adjusted = max(1, adjusted)
+    
+    # 5 نجوم فقط إذا كل شيء متوافق
+    if adjusted >= 5:
+        all_aligned = True
+        if signal == "CALL":
+            if "Bull" not in bias_5m or "Bull" not in bias_15m:
+                all_aligned = False
+        elif signal == "PUT":
+            if "Bear" not in bias_5m or "Bear" not in bias_15m:
+                all_aligned = False
+        if not all_aligned:
+            adjusted = 4
+    
+    logger.info(f"[Stars V7.1] Pine={pine_stars} → Adjusted={adjusted} | signal={signal} | 5m={bias_5m} | 15m={bias_15m}")
+    return adjusted
+
+# ──────────────────────────────────────────────────────────────────────────────
+# V7.1: Telegram Message Formatting — REDESIGNED
 # ──────────────────────────────────────────────────────────────────────────────
 
 MONTHS_AR = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
@@ -1058,158 +1054,139 @@ def format_expiry_ar(expiry_str):
     except:
         return expiry_str
 
-def format_v5_6_trade_alert(data, primary_opt=None, alt_opt=None, alpaca_msg=None):
-    """Format V5.6 trade signal with Stars + Alpaca execution status."""
-    signal  = safe_get(data, "signal", "?")
-    price   = safe_get(data, "price", "?")
-    stars   = safe_get(data, "stars", "1")
-    bias    = safe_get(data, "bias", "--")
-    cond    = safe_get(data, "cond", "--")
-    session = safe_get(data, "session", "--")
-    vol     = safe_get(data, "vol", "--")
+
+def format_trade_alert_v71(data, stars_adjusted, primary_opt=None, alt_opt=None, alpaca_msg=None):
+    """
+    V7.1: رسالة تداول عملية ومباشرة — للسكالبينج.
+    لا تحليل أكاديمي. فقط: ادخل؟ وين الهدف؟ متى تطلع؟
+    """
+    signal   = safe_get(data, "signal", "?")
+    price    = safe_get(data, "price", "?")
+    bias     = safe_get(data, "bias", "--")
+    cond     = safe_get(data, "cond", "--")
+    vol      = safe_get(data, "vol", "--")
     bias_5m  = safe_get(data, "bias_5m", "--")
     bias_15m = safe_get(data, "bias_15m", "--")
-
-    try:
-        stars_int = int(stars)
-    except:
-        stars_int = 1
-
-    stars_display = "⭐" * stars_int
-
-    if stars_int >= 4:
-        decision      = "إشارة قوية"
-        decision_icon = "🔥"
-    elif stars_int == 3:
-        decision      = "إشارة جيدة"
-        decision_icon = "🟢"
-    else:
-        decision      = "إشارة مبدئية / خطرة"
-        decision_icon = "⚠️"
-
-    sig_icon  = "🟢" if signal == "CALL" else "🔴"
-    direction = "CALL شراء" if signal == "CALL" else "PUT بيع"
 
     now_et    = get_et_now()
     timestamp = now_et.strftime("%I:%M %p")
 
-    # Determine session label
-    hour = now_et.hour
-    if hour < 10:
-        session_label = "Opening Power"
-    elif hour < 12:
-        session_label = "Morning Momentum"
-    elif hour < 14:
-        session_label = "Midday"
+    # ── أيقونات وقوة الإشارة ──
+    if signal == "CALL":
+        sig_icon = "🟢"
+        direction = "CALL"
     else:
-        session_label = "Afternoon"
+        sig_icon = "🔴"
+        direction = "PUT"
 
-    # 1m/5m/15m alignment
-    align_1m  = "✅"
-    align_5m  = "✅ Bull" if "Bull" in bias_5m  else ("✅ Bear" if "Bear" in bias_5m  else "➖ Neutral")
-    align_15m = "✅ Bull" if "Bull" in bias_15m else ("✅ Bear" if "Bear" in bias_15m else "➖ Neutral")
+    if stars_adjusted >= 4:
+        strength = "قوي"
+        action_text = "✅ هذا المكان حق الدخول — دخل الحين"
+    elif stars_adjusted == 3:
+        strength = "جيد"
+        action_text = "✅ فرصة جيدة — دخل مع حذر"
+    else:
+        strength = "ضعيف"
+        action_text = "⚠️ إشارة ضعيفة — الأفضل تنتظر"
 
-    # Vol label
+    stars_display = "⭐" * stars_adjusted
+
+    # ── حساب الأهداف ──
+    try:
+        p_float = float(price)
+        if signal == "CALL":
+            target_1 = p_float + 3.0
+            target_2 = p_float + 5.0
+            stop_level = p_float - 2.0
+        else:
+            target_1 = p_float - 3.0
+            target_2 = p_float - 5.0
+            stop_level = p_float + 2.0
+    except:
+        target_1 = 0
+        target_2 = 0
+        stop_level = 0
+
+    # ── توافق الفريمات (مختصر) ──
+    def frame_icon(bias_str, sig):
+        if sig == "CALL":
+            if "Bull" in bias_str: return "✅"
+            elif "Bear" in bias_str: return "❌"
+            else: return "➖"
+        else:
+            if "Bear" in bias_str: return "✅"
+            elif "Bull" in bias_str: return "❌"
+            else: return "➖"
+
+    f5  = frame_icon(bias_5m, signal)
+    f15 = frame_icon(bias_15m, signal)
+
+    # ── الحجم ──
     if "Ultra" in vol or "Surge" in vol:
         vol_label = "قوي 💪"
     elif "Normal" in vol:
         vol_label = "طبيعي"
-    elif "Weak" in vol or "Low" in vol:
-        vol_label = "Weak"
     else:
-        vol_label = vol
+        vol_label = "ضعيف ⚠️"
 
+    # ── بناء الرسالة ──
     msg = (
-        f"{decision_icon} <b>{decision} — Mosquito Swamp V5.6</b>\n"
-        f"{sig_icon} <b>{direction}</b> | TSLA @ <code>${price}</code>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🌟 <b>التقييم:</b> {stars_display} ({stars_int}/5)\n"
-        f"📈 <b>الاتجاه:</b> {bias}\n"
-        f"📝 <b>ملاحظات:</b> {cond} | Vol: {vol_label}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🟣 <b>توافق الفريمات:</b>\n"
-        f"   1m: {align_1m} | 5m: {align_5m} | 15m: {align_15m}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{sig_icon} <b>{direction} {strength}</b> — TSLA ${price}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"{action_text}\n"
+        f"🎯 الهدف: ${target_1:.0f} → ${target_2:.0f}\n"
+        f"🛑 وقف: إذا {'كسر' if signal == 'CALL' else 'فوق'} ${stop_level:.0f} اطلع فوراً\n"
+        f"{stars_display} ({stars_adjusted}/5)\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📊 5m: {f5} | 15m: {f15} | حجم: {vol_label}\n"
     )
 
+    # ── بيانات الأوبشن (مختصرة) ──
     if primary_opt and primary_opt.get("last_price", 0) > 0:
         p_strike = primary_opt["strike"]
         p_price  = primary_opt["last_price"]
-        p_tp     = primary_opt["tp"]
-        p_sl     = primary_opt["sl"]
         p_exp    = format_expiry_ar(primary_opt["expiry"])
         is_0dte  = primary_opt.get("is_0dte", False)
-        dte_label = "0DTE" if is_0dte else p_exp
+        dte_label = "0DTE ⚡" if is_0dte else p_exp
 
         msg += (
-            f"🎯 <b>الأساسي:</b> {signal} ${p_strike:.0f} {dte_label} | "
-            f"<code>${p_price:.2f}</code> → TP <code>${p_tp:.2f}</code> | SL <code>${p_sl:.2f}</code>\n\n"
+            f"💰 {signal} ${p_strike:.0f} ({dte_label}) @ ${p_price:.2f}\n"
         )
 
         if alt_opt and alt_opt.get("last_price", 0) > 0:
             a_strike = alt_opt["strike"]
             a_price  = alt_opt["last_price"]
-            a_tp     = alt_opt["tp"]
-            a_sl     = alt_opt["sl"]
             a_exp    = format_expiry_ar(alt_opt["expiry"])
-            msg += (
-                f"🔄 <b>البديل:</b> {signal} ${a_strike:.0f} ({a_exp}) | "
-                f"<code>${a_price:.2f}</code> → TP <code>${a_tp:.2f}</code> | SL <code>${a_sl:.2f}</code>\n"
-                f"✅ أكثر أماناً — وقت أطول\n\n"
-            )
-    else:
-        msg += f"⚠️ <i>بيانات الـ Options غير متاحة حالياً</i>\n\n"
+            msg += f"🔄 بديل: ${a_strike:.0f} ({a_exp}) @ ${a_price:.2f}\n"
 
-    msg += (
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🕐 {timestamp} ET | {session_label}\n"
-        f"⏱ <b>الوقف الزمني:</b> 10 دقائق — اطلع إذا ما تحرك السعر\n"
-    )
-
-    # V7.0: توافق مع خريطة الانعكاسات
+    # ── خريطة الانعكاسات ──
     try:
         p_float = float(price)
         signal_dir = "BULL" if signal == "CALL" else "BEAR"
         is_aligned, alignment_text, nearest = check_map_alignment(p_float, signal_dir)
         if alignment_text:
-            msg += f"🗺️ {alignment_text}\n\n"
+            msg += f"🗺️ {alignment_text}\n"
     except:
         pass
 
-    # Alpaca execution status
-    if alpaca_msg:
-        msg += f"\n🤖 <b>Alpaca:</b> {alpaca_msg}"
-
-    return msg
-
-def format_opening_map(price, d_high, d_low, fib, trend, liquidity):
-    now_et = get_et_now()
-    date_str = f"{now_et.day} {MONTHS_AR[now_et.month - 1]} {now_et.year}"
-    timestamp = now_et.strftime("%I:%M %p")
-
-    msg = (
-        f"📊 <b>خريطة TSLA — {date_str}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"💰 <b>السعر الحالي:</b> <code>${price:.2f}</code>\n"
-        f"📈 <b>الاتجاه:</b> {trend}\n"
-        f"💧 <b>السيولة:</b> {liquidity}\n\n"
-        f"📐 <b>مستويات Fibonacci اليوم:</b>\n"
-        f"   🔴 أعلى: <code>${fib['high']:.2f}</code>\n"
-        f"   ├─ 23.6%: <code>${fib['fib_236']:.2f}</code>\n"
-        f"   ├─ 38.2%: <code>${fib['fib_382']:.2f}</code>\n"
-        f"   ├─ 50.0%: <code>${fib['fib_500']:.2f}</code>  ← <b>المحور</b>\n"
-        f"   ├─ 61.8%: <code>${fib['fib_618']:.2f}</code>  ← <b>ذهبي</b>\n"
-        f"   ├─ 78.6%: <code>${fib['fib_786']:.2f}</code>\n"
-        f"   🟢 أدنى: <code>${fib['low']:.2f}</code>\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏰ <b>نافذة التداول:</b> 10:00 AM – 3:30 PM ET\n"
-        f"🤖 <b>Alpaca:</b> جاهز للتنفيذ التلقائي ✅\n"
-        f"🕐 {timestamp} ET"
+    msg += (
+        f"━━━━━━━━━━━━━━━\n"
+        f"⏱ إذا ما تحرك خلال 10 دق = اطلع\n"
     )
+
+    # V7.1: Alpaca execution status
+    if alpaca_msg:
+        msg += f"🤖 ثاقب: {alpaca_msg}\n"
+
+    msg += f"🕐 {timestamp} ET"
+
     return msg
 
-def format_reversal_alert(data, fib=None):
-    """V7.0: رسالة انعكاس محسّنة — سياق الترند + خريطة الانعكاسات + تصنيف الحجم."""
+
+def format_reversal_alert_v71(data, fib=None):
+    """
+    V7.1: رسالة انعكاس عملية — لا تقل "ادخل"، تقول "انتبه وانتظر التأكيد".
+    """
     price    = safe_get(data, "price", "?")
     div_type = safe_get(data, "div_type", "?")
     tf       = safe_get(data, "timeframe", "5m")
@@ -1222,82 +1199,160 @@ def format_reversal_alert(data, fib=None):
 
     if div_type == "BULL":
         rev_icon = "📈"
-        rev_text = f"صعود محتمل (Divergence إيجابي {tf})"
+        direction_text = "صعود محتمل من هنا"
+        confirm_text = "انتظر شمعة تأكيد خضراء + حجم"
     else:
         rev_icon = "📉"
-        rev_text = f"هبوط محتمل (Divergence سلبي {tf})"
+        direction_text = "هبوط محتمل من هنا"
+        confirm_text = "انتظر شمعة تأكيد حمراء + حجم"
 
-    # V7.0: تصنيف الحجم (ثلاثي)
+    # ── الحجم ──
     if vol_ok:
-        vol_text = "✅ مؤكد بالحجم — إشارة قوية"
+        vol_text = "✅ حجم مؤكد — إشارة أقوى"
     else:
-        vol_text = "⚠️ الحجم ضعيف — تأكد قبل الدخول"
+        vol_text = "⚠️ حجم ضعيف — انتبه"
 
     msg = (
-        f"⚠️ <b>قرب انعكاس</b> — TSLA @ <code>${price}</code>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{rev_icon} <b>النوع:</b> {rev_text}\n"
-        f"📦 <b>الحجم:</b> {vol_text}\n"
+        f"🔥 <b>منطقة انعكاس</b> — TSLA ${price}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"{rev_icon} {direction_text} (Divergence {tf})\n"
+        f"⚠️ انتبه لهذا المكان — لا تدخل بعد\n"
+        f"✅ {confirm_text}\n"
+        f"📦 {vol_text}\n"
     )
 
-    # V7.0: سياق الترند العام
-    if bias or bias_15m:
-        trend_icon = "📈" if "Bull" in bias else "📉" if "Bear" in bias else "↔️"
-        trend_text = bias if bias else "غير محدد"
-        msg += f"🔍 <b>الترند العام:</b> {trend_icon} {trend_text}"
-        if bias_15m:
-            msg += f" | 15m: {bias_15m}"
-        msg += "\n"
-        
-        # V7.0: تحذير إذا الدايفرجنس ضد الترند
-        is_against_trend = False
-        if div_type == "BEAR" and ("Bull" in bias or "Bull" in bias_15m):
-            is_against_trend = True
-            msg += "🚨 <b>تحذير:</b> الدايفرجنس ضد الترند الصاعد — احتمال فشل عالي\n"
-        elif div_type == "BULL" and ("Bear" in bias or "Bear" in bias_15m):
-            is_against_trend = True
-            msg += "🚨 <b>تحذير:</b> الدايفرجنس ضد الترند الهابط — احتمال فشل عالي\n"
+    # ── تحذير ضد الترند ──
+    if div_type == "BEAR" and ("Bull" in bias or "Bull" in bias_15m):
+        msg += "🚨 تحذير: ضد الترند الصاعد — احتمال فشل عالي\n"
+    elif div_type == "BULL" and ("Bear" in bias or "Bear" in bias_15m):
+        msg += "🚨 تحذير: ضد الترند الهابط — احتمال فشل عالي\n"
 
-    # V7.0: توافق مع خريطة الانعكاسات
+    # ── خريطة الانعكاسات ──
     try:
         p_float = float(price)
-        signal_dir = div_type  # "BULL" or "BEAR"
+        signal_dir = div_type
         is_aligned, alignment_text, nearest = check_map_alignment(p_float, signal_dir)
         if alignment_text:
-            msg += f"\n🗺️ <b>خريطة الانعكاسات:</b>\n   {alignment_text}\n"
+            msg += f"🗺️ {alignment_text}\n"
     except:
         pass
 
+    # ── V7.1: Fibonacci — FIXED direction ──
     if fib:
-        if div_type == "BULL":
-            nearest_key = "fib_618"
-            nearest_label = "أقرب مستوى مقاومة"
-            levels = [
-                ("61.8%", fib["fib_618"]),
-                ("50.0%", fib["fib_500"]),
-                ("38.2%", fib["fib_382"]),
-            ]
-        else:
-            nearest_key = "fib_382"
-            nearest_label = "أقرب مستوى دعم"
-            levels = [
-                ("38.2%", fib["fib_382"]),
-                ("50.0%", fib["fib_500"]),
-                ("61.8%", fib["fib_618"]),
-            ]
+        try:
+            p_float = float(price)
+        except:
+            p_float = 0
 
-        msg += f"\n📐 <b>مستويات Fibonacci:</b>\n"
-        for label, val in levels:
-            msg += f"   {label} → <code>${val:.2f}</code>\n"
-        msg += f"   🎯 <b>{nearest_label}:</b> <code>${fib[nearest_key]:.2f}</code>\n"
+        if div_type == "BULL" and p_float > 0:
+            # صعود: أظهر مستويات المقاومة فوق السعر الحالي
+            targets = []
+            for label, val in [("38.2%", fib["fib_382"]), ("50%", fib["fib_500"]), ("61.8%", fib["fib_618"])]:
+                if val > p_float:
+                    targets.append((label, val))
+            # إذا لم نجد مستويات فوق، أظهر أقرب مستوى
+            if not targets:
+                targets = [("23.6%", fib["fib_236"])]
+            
+            if targets:
+                target_str = " → ".join([f"${v:.0f}" for _, v in targets[:2]])
+                msg += f"🎯 لو تأكد: هدف {target_str}\n"
+
+        elif div_type == "BEAR" and p_float > 0:
+            # هبوط: أظهر مستويات الدعم تحت السعر الحالي
+            targets = []
+            for label, val in [("61.8%", fib["fib_618"]), ("50%", fib["fib_500"]), ("38.2%", fib["fib_382"])]:
+                if val < p_float:
+                    targets.append((label, val))
+            if not targets:
+                targets = [("78.6%", fib["fib_786"])]
+            
+            if targets:
+                target_str = " → ".join([f"${v:.0f}" for _, v in targets[:2]])
+                msg += f"🎯 لو تأكد: هدف {target_str}\n"
 
     msg += (
-        f"\n━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏳ <b>الوقت المتوقع للانعكاس:</b> 30–60 دقيقة\n"
-        f"✅ <b>القرار لك</b> — راجع Cheddar Flow للتأكيد\n"
+        f"━━━━━━━━━━━━━━━\n"
         f"🕐 {timestamp} ET"
     )
     return msg
+
+
+def format_opening_map_v71(price, d_high, d_low, fib, trend, liquidity):
+    """V7.1: خريطة الصباح — عملية ومباشرة."""
+    now_et = get_et_now()
+    date_str = f"{now_et.day} {MONTHS_AR[now_et.month - 1]} {now_et.year}"
+    timestamp = now_et.strftime("%I:%M %p")
+
+    # V7.1: تحذير الجمعة
+    friday_warning = ""
+    if is_friday():
+        friday_warning = "\n🚫 <b>اليوم جمعة — 0DTE = كازينو. لا تتداول!</b>\n"
+
+    msg = (
+        f"🗺️ <b>خريطة ثاقب — TSLA {date_str}</b>\n"
+        f"━━━━━━━━━━━━━━━"
+        f"{friday_warning}\n"
+        f"💰 السعر: <code>${price:.2f}</code>\n"
+        f"📈 الاتجاه: {trend} | السيولة: {liquidity}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📐 <b>مستويات اليوم:</b>\n"
+        f"   🔴 ${fib['high']:.0f} (أعلى)\n"
+        f"   ├ 38.2%: ${fib['fib_382']:.0f}\n"
+        f"   ├ 50.0%: ${fib['fib_500']:.0f} ← المحور\n"
+        f"   ├ 61.8%: ${fib['fib_618']:.0f} ← ذهبي\n"
+        f"   🟢 ${fib['low']:.0f} (أدنى)\n"
+        f"━━━━━━━━━━━━━━━\n"
+    )
+
+    # V7.1: خريطة الانعكاسات المختصرة
+    if reversal_map["built"] and reversal_map["levels"]:
+        msg += "🗺️ <b>مستويات مهمة:</b>\n"
+        count = 0
+        for lvl in reversal_map["levels"]:
+            if count >= 5:
+                break
+            icon = "🔴" if lvl["type"] == "resistance" else "🟢" if lvl["type"] == "support" else "🟡"
+            msg += f"   {icon} ${lvl['price']:.0f} — {lvl['name']} ({lvl['strength']})\n"
+            count += 1
+        msg += "━━━━━━━━━━━━━━━\n"
+
+    msg += (
+        f"⏰ نافذة التداول: 9:30 AM – 3:30 PM ET\n"
+        f"🤖 ثاقب V7.1 جاهز ✅\n"
+        f"🕐 {timestamp} ET"
+    )
+    return msg
+
+
+def format_choppy_warning_v71():
+    """V7.1: تحذير السوق الشوبي — واضح ومباشر."""
+    now_et = get_et_now()
+    timestamp = now_et.strftime("%I:%M %p")
+    
+    msg = (
+        f"⛔ <b>السوق شوبي — لا تتداول الحين</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🔥 هالمكان حرق أعصاب وفلوس\n"
+        f"انتظر رسالة CALL أو PUT جديدة\n"
+        f"🕐 {timestamp} ET"
+    )
+    return msg
+
+
+def format_rest_mode_v71():
+    """V7.1: رسالة وضع الراحة."""
+    now_et = get_et_now()
+    timestamp = now_et.strftime("%I:%M %p")
+    
+    msg = (
+        f"🛑 <b>ثاقب دخل وضع الراحة (30 دقيقة)</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"السوق ما يتحرك — صمت 30 دقيقة لحمايتك\n"
+        f"🕐 {timestamp} ET"
+    )
+    return msg
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Telegram
@@ -1370,23 +1425,21 @@ def check_cooldown(data):
 
 def check_daily_limit(data=None):
     reset_daily_if_needed()
-    if len(daily_alerts) >= MAX_DAILY_ALERTS:
-        return False, f"وصلت الحد اليومي ({MAX_DAILY_ALERTS} تنبيهات)"
+    if len(daily_alerts) >= MAX_DAILY_TRADE_ALERTS:
+        return False, f"وصلت الحد اليومي ({MAX_DAILY_TRADE_ALERTS} تنبيهات)"
     return True, ""
 
 def check_adx_filter(data):
     """V6.0: فلتر ADX إجباري — لا تداول في سوق جانبي."""
     cond = safe_get(data, "cond", "")
-    # TradingView يرسل cond = "Trending (Clear)" أو "Choppy" أو "Ranging"
     if "Choppy" in cond or "Ranging" in cond or "choppy" in cond:
         return False, f"⛔ ADX منخفض (سوق جانبي) — لا دخول | cond={cond}"
     return True, ""
 
 def check_gex_alignment(data):
-    """V6.0: فلتر GEX — تحقق من توافق الإشارة مع مستويات Gamma."""
     try:
         if not _FA_AVAILABLE:
-            return True, ""  # لا فلتر إذا FlashAlpha غير متاح
+            return True, ""
         signal = safe_get(data, "signal", "")
         price = float(safe_get(data, "price", "0"))
         if not signal or price <= 0:
@@ -1396,10 +1449,10 @@ def check_gex_alignment(data):
             return False, f"📊 GEX غير متوافق: {reason}"
         return True, reason
     except Exception:
-        return True, ""  # في حالة خطأ، لا نمنع الصفقة
+        return True, ""
 
 def check_trend_alignment(data):
-    """V7.0: فلتر توافق الإشارة مع اتجاه الترند — يمنع صفقات ضد الترند القوي."""
+    """V7.0: فلتر توافق الإشارة مع اتجاه الترند."""
     signal   = safe_get(data, "signal", "")
     bias     = safe_get(data, "bias", "")
     bias_15m = safe_get(data, "bias_15m", "")
@@ -1410,24 +1463,47 @@ def check_trend_alignment(data):
     except:
         stars_int = 1
     
-    # إذا النجوم 5 (إشارة قوية جداً)، لا نمنعها حتى لو ضد الترند
     if stars_int >= 5:
         return True, ""
     
-    # PUT ضد ترند صاعد قوي (bias + 15m كلاهما Bull)
     if signal == "PUT" and "Bull" in bias and "Bull" in bias_15m:
-        return False, f"⚠️ PUT ضد ترند صاعد قوي (1m: {bias} | 15m: {bias_15m}) — مرفوض"
+        return False, f"⚠️ PUT ضد ترند صاعد قوي — مرفوض"
     
-    # CALL ضد ترند هابط قوي (bias + 15m كلاهما Bear)
     if signal == "CALL" and "Bear" in bias and "Bear" in bias_15m:
-        return False, f"⚠️ CALL ضد ترند هابط قوي (1m: {bias} | 15m: {bias_15m}) — مرفوض"
+        return False, f"⚠️ CALL ضد ترند هابط قوي — مرفوض"
     
+    return True, ""
+
+def check_15m_mandatory_filter(data):
+    """
+    V7.1: فلتر 15 دقيقة إجباري — BUG FIX #2.
+    إذا 15m يعاكس الإشارة → يمنع التنفيذ على Alpaca.
+    لكن يسمح بإرسال الرسالة مع تحذير.
+    
+    Returns: (allow_execution: bool, reason: str)
+    """
+    signal   = safe_get(data, "signal", "")
+    bias_15m = safe_get(data, "bias_15m", "")
+    
+    if signal == "CALL" and "Bear" in bias_15m:
+        return False, "15m هابط ضد CALL — لا تنفيذ"
+    
+    if signal == "PUT" and "Bull" in bias_15m:
+        return False, "15m صاعد ضد PUT — لا تنفيذ"
+    
+    return True, ""
+
+def check_friday_filter(data=None):
+    """V7.1: لا تداول يوم الجمعة (0DTE = كازينو)."""
+    if is_friday():
+        return False, "🚫 يوم الجمعة — 0DTE = كازينو. لا تداول!"
     return True, ""
 
 
 def apply_filters(data):
-    # V7.0: فلاتر معززة — ADX + GEX + Trend Alignment
-    for check in [check_data_quality, check_adx_filter, check_trend_alignment, check_gex_alignment, check_cooldown, check_daily_limit]:
+    """V7.1: فلاتر محسّنة — ADX + Friday + GEX + Trend + Cooldown + Daily."""
+    for check in [check_data_quality, check_friday_filter, check_adx_filter, 
+                  check_trend_alignment, check_gex_alignment, check_cooldown, check_daily_limit]:
         ok, reason = check(data)
         if not ok:
             return False, reason
@@ -1444,18 +1520,19 @@ def home():
     account = get_alpaca_account()
     return jsonify({
         "status":          "running",
-        "service":         "Smart Trading Alert Bot — Mosquito Swamp V7.0 (Reversal Map Edition)",
-        "version":         "7.0",
+        "service":         "Mosquito ثاقب V7.1 — Smart Trading Alert Bot",
+        "version":         "7.1",
         "trading_window":  window_msg,
         "in_window":       in_window,
         "alpaca_balance":  f"${float(account.get('cash', 0)):,.2f}" if account else "N/A",
         "alpaca_status":   account.get("status", "N/A") if account else "disconnected",
         "active_positions": len(active_positions),
         "alerts_today":    len(daily_alerts),
-        "remaining":       MAX_DAILY_ALERTS - len(daily_alerts),
+        "reversals_today": daily_reversal_count,
+        "remaining_trades": MAX_DAILY_TRADE_ALERTS - len(daily_alerts),
+        "remaining_reversals": MAX_DAILY_REVERSAL_ALERTS - daily_reversal_count,
         "gex_available":   _FA_AVAILABLE and fa.get_gex_levels() is not None if _FA_AVAILABLE else False,
-        "adx_filter":      "active",
-        "trend_filter":    "active (V7.0)",
+        "filters":         "ADX + 15m Mandatory + Trend + GEX + Friday + Stars V7.1",
         "reversal_map":    f"{len(reversal_map['levels'])} levels" if reversal_map["built"] else "not built",
         "timestamp":       datetime.now(timezone.utc).isoformat()
     })
@@ -1465,7 +1542,7 @@ def home():
 def webhook():
     global last_alert_time, last_alert_price, last_alert_signal
     global last_call_time, last_put_time
-    global last_reversal_time
+    global last_reversal_time, daily_reversal_count
     global consecutive_no_move, loss_cooldown_until
 
     if WEBHOOK_SECRET:
@@ -1483,17 +1560,16 @@ def webhook():
     price    = safe_get(data, "price", "?")
     msg_type = safe_get(data, "type", "TRADE")
 
-    logger.info(f"Received: signal={signal} | type={msg_type} | price=${price}")
+    logger.info(f"[V7.1] Received: signal={signal} | type={msg_type} | price=${price}")
 
-    # ── تحديث مستويات S/R في reversal_detector من TradingView Webhook ──────────
+    # ── تحديث مستويات S/R في reversal_detector ──
     try:
         wh_resistance = float(safe_get(data, "resistance", "0") or 0)
         wh_support    = float(safe_get(data, "support",    "0") or 0)
         if wh_resistance > 0 and wh_support > 0 and _RD_AVAILABLE:
             rd.update_levels_from_webhook(wh_resistance, wh_support)
-            logger.info(f"[S&R] Passed to reversal_detector: R=${wh_resistance} | S=${wh_support}")
     except Exception as _e:
-        logger.warning(f"[S&R] Could not update reversal_detector levels: {_e}")
+        pass
 
     if price not in ("?", "--"):
         market_state["last_price"]   = price
@@ -1527,29 +1603,27 @@ def webhook():
             else:
                 liquidity = "منخفضة ⚠️"
 
+            # بناء خريطة الانعكاسات أولاً
+            try:
+                build_reversal_map()
+            except:
+                pass
+
             if d_high > 0 and d_low > 0 and d_high > d_low:
                 fib = calc_fibonacci(d_high, d_low)
-                tg_msg = format_opening_map(live_price or float(price), d_high, d_low, fib, trend, liquidity)
+                tg_msg = format_opening_map_v71(live_price or float(price), d_high, d_low, fib, trend, liquidity)
             else:
                 now_et = get_et_now()
                 tg_msg = (
-                    f"📊 <b>خريطة TSLA — {now_et.strftime('%d/%m/%Y')}</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"💰 <b>السعر:</b> <code>${price}</code>\n"
-                    f"📈 <b>الاتجاه:</b> {trend}\n\n"
-                    f"⏰ <b>نافذة التداول:</b> 10:00 AM – 3:30 PM ET\n"
-                    f"🤖 <b>Alpaca:</b> جاهز ✅\n"
+                    f"🗺️ <b>خريطة ثاقب — TSLA {now_et.strftime('%d/%m/%Y')}</b>\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"💰 السعر: <code>${price}</code>\n"
+                    f"📈 الاتجاه: {trend}\n"
+                    f"🤖 ثاقب V7.1 جاهز ✅\n"
                     f"🕐 {now_et.strftime('%I:%M %p')} ET"
                 )
 
             tg_ok = send_telegram(tg_msg)
-            
-            # V7.0: بناء خريطة الانعكاسات عند استقبال Opening Map
-            try:
-                build_reversal_map()
-                logger.info("[V7.0] Reversal Map built on Opening Map")
-            except Exception as map_err:
-                logger.warning(f"[V7.0] Reversal Map build error: {map_err}")
             
             return jsonify({"status": "opening_map_sent", "telegram": "sent" if tg_ok else "failed"}), 200
 
@@ -1557,20 +1631,24 @@ def webhook():
             logger.error(f"Opening map error: {e}")
             return jsonify({"status": "error", "error": str(e)}), 200
 
-    # ── REVERSAL ALERT ───────────────────────────────────────────────────────────
+    # ── REVERSAL ALERT ───────────────────────────────────────────────────────
     if signal == "REVERSAL_ALERT":
         now = time.time()
+        
+        # V7.1: حد يومي للانعكاسات
+        reset_daily_if_needed()
+        if daily_reversal_count >= MAX_DAILY_REVERSAL_ALERTS:
+            return jsonify({"status": "blocked", "reason": f"reversal daily limit ({MAX_DAILY_REVERSAL_ALERTS})"}), 200
+        
         if now - last_reversal_time < REVERSAL_COOLDOWN_SECS:
             remaining = REVERSAL_COOLDOWN_SECS - (now - last_reversal_time)
             return jsonify({"status": "blocked", "reason": f"reversal cooldown — {remaining/60:.0f} min"}), 200
 
-        # V7.0: فلتر Trend Bias للدايفرجنس (حماية إضافية في Backend)
-        div_type = safe_get(data, "div_type", "")
-        rev_bias = safe_get(data, "bias", "")
-        rev_bias_15m = safe_get(data, "bias_15m", "")
-        
-        # إذا الدايفرجنس ضد الترند القوي على 15m — نرسل مع تحذير (لا نحظر)
-        # هذا يعطي المستخدم المعلومة لكن مع تحذير واضح
+        # V7.1: BUG FIX #3 — فلتر الحجم للانعكاسات
+        vol_confirm = safe_get(data, "vol_confirm", "false").lower() == "true"
+        if not vol_confirm:
+            logger.info(f"[V7.1] Reversal blocked — volume not confirmed (vol_confirm=false)")
+            return jsonify({"status": "blocked", "reason": "reversal volume not confirmed — V7.1 filter"}), 200
 
         try:
             ph = float(safe_get(data, "day_high", "0") or 0)
@@ -1584,17 +1662,17 @@ def webhook():
         d_low  = market_state["day_low"]
         fib = calc_fibonacci(d_high, d_low) if (d_high > 0 and d_low > 0 and d_high > d_low) else None
 
-        # V7.0: بناء/تحديث خريطة الانعكاسات إذا لم تُبنَ بعد
         if not reversal_map["built"] or reversal_map["date"] != get_today():
             try:
                 build_reversal_map()
             except:
                 pass
 
-        tg_msg = format_reversal_alert(data, fib)
+        tg_msg = format_reversal_alert_v71(data, fib)
         tg_ok  = send_telegram(tg_msg)
         if tg_ok:
             last_reversal_time = now
+            daily_reversal_count += 1
 
         return jsonify({"status": "reversal_sent", "telegram": "sent" if tg_ok else "failed"}), 200
 
@@ -1613,12 +1691,7 @@ def webhook():
                 if consecutive_no_move >= LOSS_COUNTER_MAX:
                     loss_cooldown_until = time.time() + LOSS_COOLDOWN_SECONDS
                     consecutive_no_move = 0
-                    send_telegram(
-                        "🛑 <b>تفعيل وضع الراحة (صمت 30 دقيقة)</b>\n"
-                        "━━━━━━━━━━━━━━━━━━━━━\n"
-                        "السوق في مسار عرضي ضعيف.\n"
-                        "النظام سيتوقف 30 دقيقة لحمايتك."
-                    )
+                    send_telegram(format_rest_mode_v71())
             else:
                 consecutive_no_move = 0
         except:
@@ -1637,46 +1710,53 @@ def webhook():
             "price":     price,
             "reason":    rejection_reason
         })
+        
+        # V7.1: إذا السبب هو ADX/Choppy، أرسل تحذير الشوبي
+        if "ADX" in rejection_reason or "Choppy" in rejection_reason or "Ranging" in rejection_reason:
+            send_telegram(format_choppy_warning_v71())
+        
         return jsonify({"status": "blocked", "reason": rejection_reason}), 200
 
-    # V7.0: بناء خريطة الانعكاسات إذا لم تُبنَ بعد (للإشارات التجارية)
+    # V7.1: بناء خريطة الانعكاسات
     if not reversal_map["built"] or reversal_map["date"] != get_today():
         try:
             build_reversal_map()
         except:
             pass
 
+    # V7.1: إعادة حساب النجوم
+    stars_adjusted = calculate_stars_v71(data)
+
     # Fetch Option Data
     primary_opt, alt_opt = get_best_option("TSLA", signal, price)
 
+    # ── V7.1: فلتر 15m إجباري (BUG FIX #2) ──
+    allow_execution, filter_15m_reason = check_15m_mandatory_filter(data)
+
     # ── ALPACA AUTO-EXECUTE ───────────────────────────────────────────────────
     alpaca_status_msg = None
-    stars = safe_get(data, "stars", "1")
     in_window, window_msg = is_trading_window()
 
-    if in_window:
-        try:
-            stars_int = int(stars)
-        except:
-            stars_int = 1
-
-        if stars_int >= MIN_STARS_TO_EXECUTE:
-            exec_ok, order_id, exec_msg = execute_trade(signal, price, stars, primary_opt)
+    if in_window and allow_execution:
+        if stars_adjusted >= MIN_STARS_TO_EXECUTE:
+            exec_ok, order_id, exec_msg = execute_trade(signal, price, stars_adjusted, primary_opt)
             if exec_ok:
                 alpaca_status_msg = "تم التنفيذ ✅"
-                # Send separate Alpaca notification
                 send_telegram(exec_msg)
                 logger.info(f"Alpaca trade executed: {order_id}")
             else:
-                alpaca_status_msg = f"فشل التنفيذ ❌ ({exec_msg})"
+                alpaca_status_msg = f"فشل ❌ ({exec_msg})"
                 logger.error(f"Alpaca execution failed: {exec_msg}")
         else:
-            alpaca_status_msg = f"لم يُنفَّذ — النجوم أقل من {MIN_STARS_TO_EXECUTE} ({stars_int}⭐)"
+            alpaca_status_msg = f"لم يُنفَّذ — {stars_adjusted}⭐ (أقل من {MIN_STARS_TO_EXECUTE})"
+    elif in_window and not allow_execution:
+        alpaca_status_msg = f"⚠️ لم يُنفَّذ — {filter_15m_reason}"
+        logger.info(f"[V7.1] 15m filter blocked execution: {filter_15m_reason}")
     else:
-        alpaca_status_msg = f"خارج نافذة التداول ({window_msg})"
+        alpaca_status_msg = f"خارج نافذة التداول"
 
     # Format and send Telegram alert
-    tg_msg = format_v5_6_trade_alert(data, primary_opt, alt_opt, alpaca_status_msg)
+    tg_msg = format_trade_alert_v71(data, stars_adjusted, primary_opt, alt_opt, alpaca_status_msg)
     tg_ok  = send_telegram(tg_msg)
 
     # Update state
@@ -1685,7 +1765,7 @@ def webhook():
     last_alert_time   = now
     last_alert_price  = price
     last_alert_signal = signal
-    _current_signal_type = signal  # تحديث نوع الأوبشن لـ Options Feed
+    _current_signal_type = signal
     if signal == "CALL":
         last_call_time = now
     elif signal == "PUT":
@@ -1695,33 +1775,35 @@ def webhook():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "signal":    signal,
         "price":     price,
-        "stars":     stars,
-        "alpaca":    alpaca_status_msg
+        "stars":     str(stars_adjusted),
+        "stars_pine": safe_get(data, "stars", "?"),
+        "alpaca":    alpaca_status_msg,
+        "15m_filter": "passed" if allow_execution else filter_15m_reason
     }
     alert_history.insert(0, entry)
     if len(alert_history) > MAX_HISTORY:
         alert_history.pop()
     daily_alerts.append(entry)
 
-    logger.info(f"SENT: {signal} @ ${price} | Stars: {stars} | Alpaca: {alpaca_status_msg}")
+    logger.info(f"[V7.1] SENT: {signal} @ ${price} | Stars: Pine={safe_get(data, 'stars', '?')}→Adj={stars_adjusted} | Alpaca: {alpaca_status_msg}")
 
     return jsonify({
         "status":   "processed",
         "telegram": "sent" if tg_ok else "failed",
-        "alpaca":   alpaca_status_msg
+        "alpaca":   alpaca_status_msg,
+        "stars_adjusted": stars_adjusted
     }), 200
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-## Test & Utility Endpoints
+# Test & Utility Endpoints
 # ──────────────────────────────────────────────────────────────────────────────
+
 @app.route("/reversal_report", methods=["GET"])
 def reversal_report():
-    """تقرير أداء إشارات الانعكاس — نسبة الصدق والتاريخ."""
     if not _RT_AVAILABLE:
         return jsonify({"error": "Reversal Tracker not available"}), 503
     report_text = rt.generate_performance_report()
-    # قراءة الملف مباشرة لإرجاع JSON مفصل
     import csv, os
     rows = []
     tracker_file = "/home/ubuntu/reversal_tracker_log.csv"
@@ -1732,12 +1814,11 @@ def reversal_report():
     return jsonify({
         "summary": report_text,
         "total_evaluated": len(rows),
-        "signals": rows[-20:] if len(rows) > 20 else rows  # آخر 20 إشارة
+        "signals": rows[-20:] if len(rows) > 20 else rows
     })
 
 @app.route("/alpaca_status", methods=["GET"])
 def alpaca_status():
-    """Check Alpaca account status."""
     account = get_alpaca_account()
     in_window, window_msg = is_trading_window()
     if account:
@@ -1757,27 +1838,78 @@ def alpaca_status():
 
 @app.route("/positions", methods=["GET"])
 def positions():
-    """Get current tracked positions."""
     return jsonify({
         "active_positions": len(active_positions),
         "positions": list(active_positions.values())
     })
 
 
+@app.route("/test_trade", methods=["GET"])
+def test_trade():
+    """V7.1: اختبار رسالة تداول بالشكل الجديد."""
+    test_data = {
+        "signal": "CALL", "type": "TRADE_V5_6", "price": "425.00",
+        "stars": "4", "bias": "Bullish", "vol": "Surge",
+        "cond": "Trending (Clear)", "session": "Morning Momentum",
+        "bias_5m": "Bull", "bias_15m": "Bull"
+    }
+    stars_adj = calculate_stars_v71(test_data)
+    primary_opt = {
+        "strike": 425.0, "expiry": get_today(),
+        "last_price": 2.50, "tp": 3.50, "sl": 1.25, "is_0dte": True
+    }
+    tg_msg = format_trade_alert_v71(test_data, stars_adj, primary_opt, None, "اختبار V7.1 ✅")
+    tg_ok = send_telegram(tg_msg)
+    return jsonify({"status": "test_sent", "stars_adjusted": stars_adj, "telegram": "sent" if tg_ok else "failed"})
+
+
+@app.route("/test_reversal", methods=["GET"])
+def test_reversal():
+    """V7.1: اختبار رسالة انعكاس بالشكل الجديد."""
+    test_data = {
+        "signal": "REVERSAL_ALERT", "price": "424.80",
+        "div_type": "BULL", "timeframe": "5m",
+        "vol_confirm": "true", "bias": "Bearish", "bias_15m": "Bear"
+    }
+    fib = calc_fibonacci(445.0, 420.0)
+    tg_msg = format_reversal_alert_v71(test_data, fib)
+    tg_ok = send_telegram(tg_msg)
+    return jsonify({"status": "test_sent", "telegram": "sent" if tg_ok else "failed"})
+
+
+@app.route("/test_choppy", methods=["GET"])
+def test_choppy():
+    """V7.1: اختبار رسالة الشوبي."""
+    tg_msg = format_choppy_warning_v71()
+    tg_ok = send_telegram(tg_msg)
+    return jsonify({"status": "test_sent", "telegram": "sent" if tg_ok else "failed"})
+
+
+@app.route("/test_opening_map", methods=["GET"])
+def test_opening_map():
+    """V7.1: اختبار خريطة الصباح."""
+    test_price = 425.00
+    test_high  = 445.08
+    test_low   = 420.00
+    fib = calc_fibonacci(test_high, test_low)
+    tg_msg = format_opening_map_v71(test_price, test_high, test_low, fib, "هابط 📉", "طبيعية 💧")
+    tg_ok = send_telegram(tg_msg)
+    return jsonify({"status": "test_sent", "fib": fib, "telegram": "sent" if tg_ok else "failed"})
+
+
 @app.route("/test_alpaca", methods=["GET"])
 def test_alpaca_endpoint():
-    """Test Alpaca connection and send Telegram notification."""
     account = get_alpaca_account()
     if account:
         in_window, window_msg = is_trading_window()
         msg = (
-            f"🤖 <b>Alpaca Paper Trading — متصل ✅</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💰 <b>الرصيد:</b> ${float(account.get('cash', 0)):,.2f}\n"
-            f"📊 <b>Portfolio:</b> ${float(account.get('portfolio_value', 0)):,.2f}\n"
-            f"⚡ <b>Buying Power:</b> ${float(account.get('buying_power', 0)):,.2f}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏰ <b>نافذة التداول:</b> {window_msg}\n"
+            f"🤖 <b>ثاقب V7.1 — Alpaca متصل ✅</b>\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"💰 الرصيد: ${float(account.get('cash', 0)):,.2f}\n"
+            f"📊 Portfolio: ${float(account.get('portfolio_value', 0)):,.2f}\n"
+            f"⚡ Buying Power: ${float(account.get('buying_power', 0)):,.2f}\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"⏰ {window_msg}\n"
             f"🕐 {get_et_now().strftime('%I:%M %p')} ET"
         )
         send_telegram(msg)
@@ -1785,42 +1917,14 @@ def test_alpaca_endpoint():
     return jsonify({"status": "error", "message": "Alpaca connection failed"}), 500
 
 
-@app.route("/test_5stars", methods=["GET"])
-def test_5stars():
-    test_data = {
-        "signal": "CALL", "type": "TRADE_V5_6", "price": "392.00",
-        "stars": "5", "bias": "Bullish", "vol": "Surge",
-        "cond": "Trending (Clear)", "session": "Morning Momentum",
-        "bias_5m": "Bull", "bias_15m": "Bull"
-    }
-    primary_opt = {
-        "strike": 392.0, "expiry": get_today(),
-        "last_price": 2.50, "tp": 3.50, "sl": 1.25, "is_0dte": True
-    }
-    in_window, window_msg = is_trading_window()
-    tg_ok = send_telegram(format_v5_6_trade_alert(test_data, primary_opt, None,
-                          f"اختبار — {window_msg}"))
-    return jsonify({"status": "test_sent", "window": window_msg, "telegram": "sent" if tg_ok else "failed"})
-
-
-@app.route("/test_opening_map", methods=["GET"])
-def test_opening_map():
-    test_price = 392.00
-    test_high  = 406.80
-    test_low   = 388.33
-    fib = calc_fibonacci(test_high, test_low)
-    tg_msg = format_opening_map(test_price, test_high, test_low, fib, "هابط 📉", "منخفضة ⚠️")
-    tg_ok = send_telegram(tg_msg)
-    return jsonify({"status": "test_sent", "fib": fib, "telegram": "sent" if tg_ok else "failed"})
-
-
 @app.route("/reset", methods=["GET"])
 def reset():
-    global daily_alerts, daily_date, blocked_today
+    global daily_alerts, daily_date, blocked_today, daily_reversal_count
     global last_call_time, last_put_time, last_alert_price, last_alert_signal, last_alert_time
     global last_reversal_time, consecutive_no_move, loss_cooldown_until
     daily_alerts        = []
     blocked_today       = []
+    daily_reversal_count = 0
     daily_date          = get_today()
     last_call_time      = 0
     last_put_time       = 0
@@ -1830,10 +1934,9 @@ def reset():
     last_reversal_time  = 0
     consecutive_no_move = 0
     loss_cooldown_until = 0
-    # V7.0: إعادة بناء الخريطة
     reversal_map["built"] = False
     reversal_map["levels"] = []
-    return jsonify({"status": "reset", "message": "All counters cleared — V7.0"})
+    return jsonify({"status": "reset", "message": "All counters cleared — V7.1 ثاقب"})
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1842,10 +1945,6 @@ def reset():
 
 @app.route("/position_status", methods=["POST"])
 def position_status():
-    """
-    تحديث حالة الصفقة المفتوحة لوحدة reversal_detector.
-    Body JSON: {"open": true/false}
-    """
     if not _RD_AVAILABLE:
         return jsonify({"status": "error", "message": "reversal_detector not available"}), 503
 
@@ -1853,11 +1952,10 @@ def position_status():
     is_open = bool(data.get("open", False))
     rd.set_position_open(is_open)
 
-    logger.info(f"[position_status] position_open set to: {is_open}")
     return jsonify({
         "status":        "ok",
         "position_open": is_open,
-        "message":       f"Position {'opened' if is_open else 'closed'} — reversal detector {'active' if is_open else 'paused'}"
+        "message":       f"Position {'opened' if is_open else 'closed'}"
     })
 
 
@@ -1866,26 +1964,19 @@ def position_status():
 # ──────────────────────────────────────────────────────────────────────────────
 
 def keep_alive_worker():
-    """Self-ping to prevent Render free tier from sleeping."""
     while True:
         time.sleep(KEEP_ALIVE_INTERVAL)
         try:
             render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://tsla-scalper-bot.onrender.com")
             http_requests.get(f"{render_url}/", timeout=15)
-            logger.debug(f"Keep-alive ping sent to {render_url}")
         except Exception as e:
             logger.debug(f"Keep-alive ping failed: {e}")
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# V6.0: GEX Morning Worker
-# ──────────────────────────────────────────────────────────────────────────────
 def gex_morning_worker():
-    """يسحب بيانات GEX مرة واحدة صباحاً (9:15 AM ET) ويرسل الخريطة على Telegram."""
     while True:
         try:
             now = get_et_now()
-            # انتظر حتى 9:15 AM ET في أيام العمل
             if now.hour == 9 and 15 <= now.minute <= 20 and now.weekday() < 5:
                 if _FA_AVAILABLE:
                     gex_data = fa.fetch_gex()
@@ -1894,7 +1985,6 @@ def gex_morning_worker():
                         if msg:
                             send_telegram(msg)
                             logger.info("[GEX] Morning map sent to Telegram")
-                # انتظر ساعة لتجنب التكرار
                 time.sleep(3600)
             else:
                 time.sleep(60)
@@ -1904,7 +1994,7 @@ def gex_morning_worker():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Startup: launch background threads (works with both gunicorn and direct run)
+# Startup
 # ──────────────────────────────────────────────────────────────────────────────
 _threads_started = False
 
@@ -1916,19 +2006,12 @@ def _start_background_threads():
     threading.Thread(target=keep_alive_worker, daemon=True).start()
     threading.Thread(target=monitor_positions, daemon=True).start()
     logger.info("Background threads started (keep_alive + monitor_positions) ✅")
-    # Start Reversal Detector (if available)
     if _RD_AVAILABLE:
         rd.start_reversal_detector()
-        logger.info("Reversal Detector started as background thread ✅")
-    else:
-        logger.warning("Reversal Detector not available — skipping")
-    # Start Reversal Tracker (if available)
+        logger.info("Reversal Detector started ✅")
     if _RT_AVAILABLE:
         rt.start_reversal_tracker()
-        logger.info("Reversal Tracker started — تتبع وتقييم إشارات الانعكاس ✅")
-    else:
-        logger.warning("Reversal Tracker not available — skipping")
-    # Start Alpaca Options Feed (if available)
+        logger.info("Reversal Tracker started ✅")
     if _AO_AVAILABLE:
         ao.start_options_feed(
             signal_type_fn   = _get_signal_type,
@@ -1936,16 +2019,10 @@ def _start_background_threads():
             update_callback  = _on_option_data_received
         )
         logger.info("Alpaca Options Feed started ✅")
-    else:
-        logger.warning("Alpaca Options Feed not available — skipping")
-    # Start GEX Morning Worker (V6.0)
     if _FA_AVAILABLE:
         threading.Thread(target=gex_morning_worker, daemon=True).start()
         logger.info("FlashAlpha GEX morning worker started ✅")
-    else:
-        logger.warning("FlashAlpha GEX not available — skipping")
 
-# Auto-start threads when module loads (works with gunicorn)
 _start_background_threads()
 
 if __name__ == "__main__":

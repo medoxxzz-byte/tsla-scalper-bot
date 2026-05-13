@@ -1,5 +1,5 @@
 """
-Smart Trading Alert Bot - V7.1 (Mosquito ثاقب)
+Smart Trading Alert Bot - V7.1.1 (Mosquito ثاقب + GEX)
 Webhook Server for TSLA Mosquito Swamp Pine Script
 
 NEW IN V7.1:
@@ -64,13 +64,157 @@ try:
 except ImportError:
     pass
 
-## ── FlashAlpha GEX Integration (V6.0) ────────────────────────────────────
-try:
-    import flashalpha_gex as fa
-    _FA_AVAILABLE = True
-except ImportError:
-    _FA_AVAILABLE = False
-    logging.warning("flashalpha_gex.py not found — GEX filter disabled")
+## ── FlashAlpha GEX Integration (V7.1 — Direct API) ─────────────────────────
+FLASHALPHA_API_KEY = os.environ.get("FLASHALPHA_API_KEY", "srd7RXM1awDGPt6XkSuPpxHVnJD2XQsUu8UeYUZJ")
+FLASHALPHA_BASE_URL = "https://lab.flashalpha.com/v1"
+_FA_AVAILABLE = True  # Always available — direct API
+
+# GEX cache — يتحدث مرتين باليوم (9:25 AM + 10:00 AM ET)
+_gex_cache = {
+    "data": None,
+    "last_fetch": None,
+    "fetch_count_today": 0,
+    "fetch_date": ""
+}
+_GEX_MAX_DAILY_FETCHES = 3  # حد الطلبات اليومية (من 5 المجانية)
+
+
+def fetch_flashalpha_gex():
+    """سحب بيانات GEX من FlashAlpha API (Free tier: 5 requests/day)."""
+    global _gex_cache
+    try:
+        today = get_today()
+    except:
+        today = (datetime.now(timezone.utc) - timedelta(hours=4)).strftime("%Y-%m-%d")
+    
+    # Reset counter for new day
+    if _gex_cache["fetch_date"] != today:
+        _gex_cache["fetch_count_today"] = 0
+        _gex_cache["fetch_date"] = today
+    
+    # Check daily limit
+    if _gex_cache["fetch_count_today"] >= _GEX_MAX_DAILY_FETCHES:
+        logging.info(f"[GEX] Daily fetch limit reached ({_GEX_MAX_DAILY_FETCHES}). Using cache.")
+        return _gex_cache["data"]
+    
+    try:
+        headers = {"X-Api-Key": FLASHALPHA_API_KEY}
+        r = http_requests.get(
+            f"{FLASHALPHA_BASE_URL}/exposure/levels/TSLA",
+            headers=headers,
+            timeout=15
+        )
+        if r.status_code == 200:
+            data = r.json()
+            levels = data.get("levels", {})
+            gex_data = {
+                "gamma_flip": levels.get("gamma_flip"),
+                "call_wall": levels.get("call_wall"),
+                "put_wall": levels.get("put_wall"),
+                "max_positive_gamma": levels.get("max_positive_gamma"),
+                "max_negative_gamma": levels.get("max_negative_gamma"),
+                "highest_oi_strike": levels.get("highest_oi_strike"),
+                "zero_dte_magnet": levels.get("zero_dte_magnet"),
+                "underlying_price": data.get("underlying_price"),
+                "as_of": data.get("as_of")
+            }
+            _gex_cache["data"] = gex_data
+            _gex_cache["last_fetch"] = datetime.now(timezone.utc).isoformat()
+            _gex_cache["fetch_count_today"] += 1
+            logging.info(f"[GEX] FlashAlpha data fetched OK — Gamma Flip: ${gex_data['gamma_flip']:.2f}, "
+                         f"Call Wall: ${gex_data['call_wall']}, Put Wall: ${gex_data['put_wall']} "
+                         f"(fetch {_gex_cache['fetch_count_today']}/{_GEX_MAX_DAILY_FETCHES})")
+            return gex_data
+        elif r.status_code == 429:
+            logging.warning(f"[GEX] FlashAlpha quota exceeded — using cache")
+            return _gex_cache["data"]
+        else:
+            logging.error(f"[GEX] FlashAlpha error: {r.status_code} {r.text[:200]}")
+            return _gex_cache["data"]
+    except Exception as e:
+        logging.error(f"[GEX] FlashAlpha fetch exception: {e}")
+        return _gex_cache["data"]
+
+
+def get_gex_levels():
+    """إرجاع بيانات GEX المخزنة (أو سحبها إذا ما موجودة)."""
+    if _gex_cache["data"]:
+        return _gex_cache["data"]
+    return fetch_flashalpha_gex()
+
+
+def check_gex_alignment(signal, price):
+    """فحص توافق الإشارة مع GEX."""
+    gex = get_gex_levels()
+    if not gex or not gex.get("gamma_flip"):
+        return True, "GEX غير متاح"
+    
+    gamma_flip = float(gex["gamma_flip"])
+    call_wall = float(gex["call_wall"]) if gex.get("call_wall") else None
+    put_wall = float(gex["put_wall"]) if gex.get("put_wall") else None
+    price = float(price)
+    
+    if signal == "CALL":
+        # CALL قرب Call Wall = خطر
+        if call_wall and abs(price - call_wall) / call_wall < 0.005:
+            return False, f"السعر عند Call Wall ${call_wall} — مقاومة قوية"
+        # CALL تحت Gamma Flip = ضد التيار
+        if price < gamma_flip * 0.99:
+            return True, f"⚠️ تحت Gamma Flip ${gamma_flip:.0f} — حذر"
+        return True, f"✅ فوق Gamma Flip ${gamma_flip:.0f}"
+    
+    elif signal == "PUT":
+        # PUT قرب Put Wall = خطر
+        if put_wall and abs(price - put_wall) / put_wall < 0.005:
+            return False, f"السعر عند Put Wall ${put_wall} — دعم قوي"
+        # PUT فوق Gamma Flip = ضد التيار
+        if price > gamma_flip * 1.01:
+            return True, f"⚠️ فوق Gamma Flip ${gamma_flip:.0f} — حذر"
+        return True, f"✅ تحت Gamma Flip ${gamma_flip:.0f}"
+    
+    return True, ""
+
+
+def format_gex_telegram():
+    """تنسيق رسالة GEX للتلقرام."""
+    gex = get_gex_levels()
+    if not gex:
+        return None
+    
+    price = gex.get("underlying_price", 0)
+    gamma_flip = gex.get("gamma_flip", 0)
+    call_wall = gex.get("call_wall", 0)
+    put_wall = gex.get("put_wall", 0)
+    max_pos = gex.get("max_positive_gamma", 0)
+    
+    # تحديد النظام
+    if price and gamma_flip:
+        if float(price) > float(gamma_flip):
+            regime = "إيجابي ✅ (فوق Gamma Flip)"
+            regime_icon = "🟢"
+        else:
+            regime = "سلبي ⚠️ (تحت Gamma Flip)"
+            regime_icon = "🔴"
+    else:
+        regime = "غير محدد"
+        regime_icon = "⚪"
+    
+    now_et_str = (datetime.now(timezone.utc) - timedelta(hours=4)).strftime("%I:%M %p")
+    
+    msg = (
+        f"{regime_icon} <b>خريطة GEX — TSLA</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"💰 السعر: <code>${float(price):.2f}</code>\n"
+        f"📊 النظام: {regime}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🟡 Gamma Flip: <code>${float(gamma_flip):.0f}</code> ← المحور\n"
+        f"🔴 Call Wall: <code>${float(call_wall):.0f}</code> ← مقاومة\n"
+        f"🟢 Put Wall: <code>${float(put_wall):.0f}</code> ← دعم\n"
+        f"⭐ Max +Gamma: <code>${float(max_pos):.0f}</code> ← جاذب\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🕐 {now_et_str} ET"
+    )
+    return msg
 
 # ── Reversal Detector Integration ─────────────────────────────────────────
 try:
@@ -259,9 +403,9 @@ def build_reversal_map():
     
     levels = []
     
-    # ── المصدر 1: GEX Levels (FlashAlpha) ────────────────────────────────────
+    # ── المصدر 1: GEX Levels (FlashAlpha Direct API) ─────────────────
     if _FA_AVAILABLE:
-        gex = fa.get_gex_levels()
+        gex = get_gex_levels()
         if gex:
             if gex.get("call_wall"):
                 levels.append({
@@ -1305,6 +1449,21 @@ def format_opening_map_v71(price, d_high, d_low, fib, trend, liquidity):
         f"━━━━━━━━━━━━━━━\n"
     )
 
+    # V7.1: GEX Levels (الأهم)
+    gex = get_gex_levels()
+    if gex and gex.get("gamma_flip"):
+        gf = float(gex["gamma_flip"])
+        cw = float(gex["call_wall"]) if gex.get("call_wall") else 0
+        pw = float(gex["put_wall"]) if gex.get("put_wall") else 0
+        regime = "إيجابي ✅" if price > gf else "سلبي ⚠️"
+        msg += (
+            f"🎯 <b>GEX (سمارت موني):</b>\n"
+            f"   🟡 Gamma Flip: ${gf:.0f} ← المحور ({regime})\n"
+            f"   🔴 Call Wall: ${cw:.0f} ← مقاومة (وقف هنا)\n"
+            f"   🟢 Put Wall: ${pw:.0f} ← دعم (ارتداد محتمل)\n"
+            f"━━━━━━━━━━━━━━━\n"
+        )
+
     # V7.1: خريطة الانعكاسات المختصرة
     if reversal_map["built"] and reversal_map["levels"]:
         msg += "🗺️ <b>مستويات مهمة:</b>\n"
@@ -1444,7 +1603,7 @@ def check_gex_alignment(data):
         price = float(safe_get(data, "price", "0"))
         if not signal or price <= 0:
             return True, ""
-        aligned, reason = fa.check_gex_alignment(signal, price)
+        aligned, reason = check_gex_alignment(signal, price)
         if not aligned:
             return False, f"📊 GEX غير متوافق: {reason}"
         return True, reason
@@ -1531,7 +1690,7 @@ def home():
         "reversals_today": daily_reversal_count,
         "remaining_trades": MAX_DAILY_TRADE_ALERTS - len(daily_alerts),
         "remaining_reversals": MAX_DAILY_REVERSAL_ALERTS - daily_reversal_count,
-        "gex_available":   _FA_AVAILABLE and fa.get_gex_levels() is not None if _FA_AVAILABLE else False,
+        "gex_available":   _gex_cache["data"] is not None,
         "filters":         "ADX + 15m Mandatory + Trend + GEX + Friday + Stars V7.1",
         "reversal_map":    f"{len(reversal_map['levels'])} levels" if reversal_map["built"] else "not built",
         "timestamp":       datetime.now(timezone.utc).isoformat()
@@ -1897,6 +2056,28 @@ def test_opening_map():
     return jsonify({"status": "test_sent", "fib": fib, "telegram": "sent" if tg_ok else "failed"})
 
 
+@app.route("/fetch_gex", methods=["GET"])
+def fetch_gex_endpoint():
+    """V7.1: سحب GEX يدوياً وإرسال الخريطة للتلقرام."""
+    gex_data = fetch_flashalpha_gex()
+    if gex_data:
+        msg = format_gex_telegram()
+        if msg:
+            send_telegram(msg)
+        # إعادة بناء خريطة الانعكاسات
+        reversal_map["built"] = False
+        build_reversal_map()
+        return jsonify({
+            "status": "ok",
+            "gex": gex_data,
+            "reversal_map_levels": len(reversal_map["levels"]),
+            "fetches_today": _gex_cache["fetch_count_today"],
+            "max_daily": _GEX_MAX_DAILY_FETCHES,
+            "telegram": "sent"
+        })
+    return jsonify({"status": "error", "message": "Failed to fetch GEX data"}), 500
+
+
 @app.route("/test_alpaca", methods=["GET"])
 def test_alpaca_endpoint():
     account = get_alpaca_account()
@@ -1974,20 +2155,63 @@ def keep_alive_worker():
 
 
 def gex_morning_worker():
+    """
+    V7.1: سحب GEX مرتين باليوم:
+    1) 9:25 AM ET — قبل السوق (خريطة أساسية)
+    2) 10:00 AM ET — بعد نص ساعة (تحديث بعد تحرك السوق)
+    """
+    _morning_sent = False
+    _update_sent = False
+    _last_date = ""
+    
     while True:
         try:
             now = get_et_now()
-            if now.hour == 9 and 15 <= now.minute <= 20 and now.weekday() < 5:
-                if _FA_AVAILABLE:
-                    gex_data = fa.fetch_gex()
-                    if gex_data:
-                        msg = fa.format_gex_telegram()
-                        if msg:
-                            send_telegram(msg)
-                            logger.info("[GEX] Morning map sent to Telegram")
+            today = now.strftime("%Y-%m-%d")
+            
+            # Reset flags for new day
+            if _last_date != today:
+                _morning_sent = False
+                _update_sent = False
+                _last_date = today
+            
+            # Skip weekends
+            if now.weekday() >= 5:
+                time.sleep(300)
+                continue
+            
+            # Fetch 1: 9:25 AM ET — خريطة الصباح
+            if not _morning_sent and now.hour == 9 and 24 <= now.minute <= 30:
+                gex_data = fetch_flashalpha_gex()
+                if gex_data:
+                    msg = format_gex_telegram()
+                    if msg:
+                        send_telegram(msg)
+                        logger.info("[GEX] Morning map sent to Telegram (Fetch 1/2)")
+                    # بناء خريطة الانعكاسات بعد سحب GEX
+                    reversal_map["built"] = False
+                    build_reversal_map()
+                _morning_sent = True
+                time.sleep(1800)  # انتظر 30 دقيقة
+                continue
+            
+            # Fetch 2: 10:00 AM ET — تحديث بعد تحرك السوق
+            if not _update_sent and now.hour == 10 and 0 <= now.minute <= 5:
+                gex_data = fetch_flashalpha_gex()
+                if gex_data:
+                    msg = format_gex_telegram()
+                    if msg:
+                        update_msg = "🔄 <b>تحديث GEX — بعد نص ساعة</b>\n" + msg[msg.index("━"):]
+                        send_telegram(update_msg)
+                        logger.info("[GEX] 30-min update sent to Telegram (Fetch 2/2)")
+                    # إعادة بناء الخريطة بالبيانات المحدثة
+                    reversal_map["built"] = False
+                    build_reversal_map()
+                _update_sent = True
                 time.sleep(3600)
-            else:
-                time.sleep(60)
+                continue
+            
+            time.sleep(30)
         except Exception as e:
             logger.error(f"[GEX] Morning worker error: {e}")
             time.sleep(300)
@@ -2019,9 +2243,9 @@ def _start_background_threads():
             update_callback  = _on_option_data_received
         )
         logger.info("Alpaca Options Feed started ✅")
-    if _FA_AVAILABLE:
-        threading.Thread(target=gex_morning_worker, daemon=True).start()
-        logger.info("FlashAlpha GEX morning worker started ✅")
+    # V7.1: FlashAlpha GEX Direct API — always start
+    threading.Thread(target=gex_morning_worker, daemon=True).start()
+    logger.info("FlashAlpha GEX morning worker started (Direct API) ✅")
 
 _start_background_threads()
 

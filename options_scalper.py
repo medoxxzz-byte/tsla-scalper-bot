@@ -1,14 +1,19 @@
 """
-ثاقب V8 — Options Scalper Engine
-=================================
+ثاقب V8 — Options Scalper Engine (Enhanced)
+=============================================
 محرك تداول أوبشن تلقائي بالكامل — طبقتين:
   الطبقة 1: سكالبينج ATM (0DTE) — صفقات سريعة متكررة
   الطبقة 2: ITM Pullback — عقد عميق عند البولباك
 
-يعمل كـ background thread مستقل — لا يحتاج webhook للدخول.
-يعتمد على: Alpaca Options API + GEX Map + Trend Detection.
+تحسينات V8.1:
+  - Multi-Timeframe: 15m (اتجاه عام) → 5m (ترند) → 1m (دخول)
+  - Micro S/R: دعم/مقاومة صغيرة من شموع 5 دقائق
+  - VWAP Danger Zone: لا تداول ±0.2% من VWAP
+  - PDH/PDL: هاي/لو أمس كمستويات خطيرة
+  - Psychological Levels: أرقام نفسية ($440, $445, $450...)
+  - Opening Range: هاي/لو أول 40 دقيقة
 
-Author: ثاقب V8
+Author: ثاقب V8.1
 Date: May 2026
 """
 
@@ -55,24 +60,36 @@ ATM_MAX_REINFORCE  = 1      # تعزيز مرة وحدة بس
 
 # ── Layer 2: ITM Pullback ────────────────────────────────────────────────────
 ITM_CONTRACTS      = 1      # عقد واحد ITM
-ITM_DELTA_MIN      = 0.70   # أقل دلتا
-ITM_DELTA_MAX      = 0.88   # أعلى دلتا
+ITM_DELTA_MIN      = 0.70
+ITM_DELTA_MAX      = 0.88
 ITM_ENTRY_BELOW    = 0.015  # يحط الأمر تحت البولباك بـ 1-2%
 ITM_TP_PCT         = 0.40   # +40% جني أرباح
 ITM_SL_PCT         = 0.16   # -16% ستوب
-ITM_MIN_VOLUME     = 100    # حد أدنى حجم العقد
+ITM_MIN_VOLUME     = 100
 
 # ── Risk Management ──────────────────────────────────────────────────────────
-PORTFOLIO_START    = 99408.71  # رصيد البداية (يُحدَّث تلقائياً)
-MAX_PORTFOLIO_LOSS = 7000.0    # حد خسارة المحفظة الكلي
-PAUSE_AFTER_CONSECUTIVE_LOSSES = 2  # خسارتين متتالية = وقف 30 دقيقة
-PAUSE_DURATION_SECONDS = 1800       # 30 دقيقة
+PORTFOLIO_START    = 99408.71
+MAX_PORTFOLIO_LOSS = 7000.0
+PAUSE_AFTER_CONSECUTIVE_LOSSES = 2
+PAUSE_DURATION_SECONDS = 1800
 
-# ── Trend Detection ──────────────────────────────────────────────────────────
-TREND_CHECK_INTERVAL = 30    # يشيك كل 30 ثانية
-TREND_BARS_COUNT     = 20    # آخر 20 شمعة 1-دقيقة
-TREND_MIN_ADX        = 20    # أقل ADX لاعتبار ترند
-TREND_VWAP_CONFIRM   = True  # لازم فوق/تحت VWAP
+# ── Trend Detection (Multi-Timeframe) ────────────────────────────────────────
+TREND_CHECK_INTERVAL = 30
+TREND_MIN_ADX        = 20
+
+# ── Micro S/R ────────────────────────────────────────────────────────────────
+MICRO_SR_LOOKBACK    = 10   # آخر 10 شموع 5 دقائق
+MICRO_SR_PROXIMITY   = 0.003  # 0.3% = قريب جداً
+
+# ── VWAP Danger Zone ─────────────────────────────────────────────────────────
+VWAP_DANGER_PCT      = 0.002  # ±0.2% من VWAP = خطر
+
+# ── Psychological Levels ─────────────────────────────────────────────────────
+PSYCH_LEVEL_INTERVAL = 5.0    # كل $5 ($440, $445, $450...)
+PSYCH_PROXIMITY      = 0.002  # 0.2% = قريب
+
+# ── Opening Range ────────────────────────────────────────────────────────────
+OR_END_MINUTE        = 10     # Opening Range ينتهي 10:10 AM (أول 40 دقيقة)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Logging
@@ -101,21 +118,32 @@ _session = _create_session()
 _state = {
     "running": False,
     "today": "",
-    "trend": None,           # "BULL" / "BEAR" / None
-    "trend_strength": 0,     # 0-100
+    "trend": None,
+    "trend_strength": 0,
+    "trend_15m": None,       # NEW: 15m trend direction
+    "trend_5m": None,        # NEW: 5m trend direction
     "vwap": 0.0,
     "current_price": 0.0,
     "day_high": 0.0,
     "day_low": 0.0,
     
+    # NEW: Enhanced Levels
+    "pdh": 0.0,              # Previous Day High
+    "pdl": 0.0,              # Previous Day Low
+    "opening_range_high": 0.0,
+    "opening_range_low": 0.0,
+    "opening_range_set": False,
+    "micro_resistances": [],  # list of prices
+    "micro_supports": [],     # list of prices
+    
     # Layer 1 (ATM Scalp)
-    "atm_positions": [],     # list of active ATM positions
+    "atm_positions": [],
     "atm_trade_count": 0,
     "atm_reinforced": False,
     
     # Layer 2 (ITM Pullback)
-    "itm_position": None,    # single ITM position
-    "itm_pending_order": None,  # pending limit buy
+    "itm_position": None,
+    "itm_pending_order": None,
     "itm_trade_count": 0,
     
     # Risk
@@ -139,12 +167,10 @@ _reversal_map_ref = None
 _gex_levels_fn = None
 
 def set_reversal_map_ref(ref):
-    """Called from app.py to share reversal map."""
     global _reversal_map_ref
     _reversal_map_ref = ref
 
 def set_gex_fn(fn):
-    """Called from app.py to share GEX fetch function."""
     global _gex_levels_fn
     _gex_levels_fn = fn
 
@@ -160,7 +186,6 @@ def _headers():
     }
 
 def get_account():
-    """Get Alpaca account info."""
     try:
         r = _session.get(f"{ALPACA_BASE_URL}/v2/account", headers=_headers(), timeout=10)
         if r.status_code == 200:
@@ -170,7 +195,6 @@ def get_account():
     return None
 
 def get_tsla_snapshot():
-    """Get TSLA current price via snapshot."""
     try:
         r = _session.get(
             f"{ALPACA_DATA_URL}/v2/stocks/TSLA/snapshot",
@@ -195,7 +219,6 @@ def get_tsla_snapshot():
     return None
 
 def get_tsla_bars(timeframe="1Min", limit=20):
-    """Get recent TSLA bars for trend detection."""
     try:
         r = _session.get(
             f"{ALPACA_DATA_URL}/v2/stocks/TSLA/bars",
@@ -212,11 +235,39 @@ def get_tsla_bars(timeframe="1Min", limit=20):
             data = r.json()
             return data.get("bars", [])
     except Exception as e:
-        logger.error(f"[V8] Bars error: {e}")
+        logger.error(f"[V8] Bars error ({timeframe}): {e}")
     return []
 
+def get_previous_day_bars():
+    """Get previous day's daily bar for PDH/PDL."""
+    try:
+        now = _et_now()
+        end = now.strftime("%Y-%m-%d")
+        start = (now - timedelta(days=5)).strftime("%Y-%m-%d")
+        r = _session.get(
+            f"{ALPACA_DATA_URL}/v2/stocks/TSLA/bars",
+            headers=_headers(),
+            params={
+                "timeframe": "1Day",
+                "start": start,
+                "end": end,
+                "limit": 5,
+                "feed": "iex",
+                "sort": "desc"
+            },
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json()
+            bars = data.get("bars", [])
+            # First bar in desc order is most recent completed day
+            if bars:
+                return bars[0]
+    except Exception as e:
+        logger.error(f"[V8] Previous day bars error: {e}")
+    return None
+
 def get_options_chain(expiry_date, option_type="call", strike_min=None, strike_max=None):
-    """Get TSLA options chain from Alpaca."""
     try:
         params = {
             "underlying_symbols": "TSLA",
@@ -243,7 +294,6 @@ def get_options_chain(expiry_date, option_type="call", strike_min=None, strike_m
     return []
 
 def get_option_quote(symbol):
-    """Get latest quote for an option contract."""
     try:
         r = _session.get(
             f"{ALPACA_DATA_URL}/v1beta1/options/quotes/latest",
@@ -267,7 +317,6 @@ def get_option_quote(symbol):
 def place_option_order(symbol, qty, side, order_type="market",
                        limit_price=None, time_in_force="day",
                        position_intent=None):
-    """Place an options order on Alpaca."""
     payload = {
         "symbol": symbol,
         "qty": str(qty),
@@ -298,7 +347,6 @@ def place_option_order(symbol, qty, side, order_type="market",
     return None
 
 def cancel_order(order_id):
-    """Cancel a pending order."""
     try:
         r = _session.delete(
             f"{ALPACA_BASE_URL}/v2/orders/{order_id}",
@@ -311,7 +359,6 @@ def cancel_order(order_id):
     return False
 
 def get_order_status(order_id):
-    """Check order status."""
     try:
         r = _session.get(
             f"{ALPACA_BASE_URL}/v2/orders/{order_id}",
@@ -325,7 +372,6 @@ def get_order_status(order_id):
     return None
 
 def get_positions():
-    """Get all open positions."""
     try:
         r = _session.get(
             f"{ALPACA_BASE_URL}/v2/positions",
@@ -339,7 +385,6 @@ def get_positions():
     return []
 
 def close_position(symbol):
-    """Close a specific position."""
     try:
         r = _session.delete(
             f"{ALPACA_BASE_URL}/v2/positions/{symbol}",
@@ -356,7 +401,6 @@ def close_position(symbol):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def send_telegram(message):
-    """Send message to Telegram."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return False
     try:
@@ -379,18 +423,15 @@ def send_telegram(message):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _et_now():
-    """Current time in ET."""
     return datetime.now(timezone.utc) - timedelta(hours=4)
 
 def _today_str():
     return _et_now().strftime("%Y-%m-%d")
 
 def _today_expiry():
-    """Get today's date in YYYY-MM-DD for 0DTE."""
     return _today_str()
 
 def _is_scalp_window():
-    """Check if we're in the scalping window (10:10 - 12:40 ET)."""
     now = _et_now()
     mins = now.hour * 60 + now.minute
     start = SCALP_START_HOUR * 60 + SCALP_START_MINUTE
@@ -398,33 +439,63 @@ def _is_scalp_window():
     return start <= mins < end
 
 def _is_force_close_time():
-    """Check if it's time to force close all positions."""
     now = _et_now()
     mins = now.hour * 60 + now.minute
     close_mins = FORCE_CLOSE_HOUR * 60 + FORCE_CLOSE_MINUTE
     return mins >= close_mins
 
-def _is_weekday():
-    """Check if today is a weekday (Mon-Fri)."""
-    return _et_now().weekday() < 5
-
 def _is_0dte_day():
-    """Check if today has 0DTE options for TSLA.
-    TSLA has options expiring Mon, Wed, Fri.
-    But user wants Mon-Thu only (4 days).
-    """
     day = _et_now().weekday()
-    return day < 4  # Mon=0, Tue=1, Wed=2, Thu=3
+    return day < 4  # Mon-Thu
+
+# ──────────────────────────────────────────────────────────────────────────────
+# EMA Calculator (shared utility)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _ema(data, period):
+    if len(data) < period:
+        return data[-1] if data else 0
+    k = 2 / (period + 1)
+    result = sum(data[:period]) / period
+    for val in data[period:]:
+        result = val * k + result * (1 - k)
+    return result
+
+def _adx_calc(highs, lows, closes, period=14):
+    """Calculate ADX, +DI, -DI from price data."""
+    if len(closes) < period + 1:
+        return 0, 0, 0
+    
+    tr_list = []
+    plus_dm = []
+    minus_dm = []
+    for i in range(1, len(closes)):
+        h, l, pc = highs[i], lows[i], closes[i-1]
+        tr = max(h - l, abs(h - pc), abs(l - pc))
+        tr_list.append(tr)
+        up_move = highs[i] - highs[i-1]
+        down_move = lows[i-1] - lows[i]
+        plus_dm.append(max(up_move, 0) if up_move > down_move else 0)
+        minus_dm.append(max(down_move, 0) if down_move > up_move else 0)
+    
+    if len(tr_list) < period:
+        return 0, 0, 0
+    
+    atr = sum(tr_list[-period:]) / period
+    if atr <= 0:
+        return 0, 0, 0
+    
+    plus_di = (sum(plus_dm[-period:]) / period) / atr * 100
+    minus_di = (sum(minus_dm[-period:]) / period) / atr * 100
+    di_sum = plus_di + minus_di
+    dx = abs(plus_di - minus_di) / di_sum * 100 if di_sum > 0 else 0
+    return dx, plus_di, minus_di
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Option Symbol Builder
 # ──────────────────────────────────────────────────────────────────────────────
 
 def build_option_symbol(ticker, expiry_date, option_type, strike):
-    """
-    Build OCC option symbol.
-    Example: TSLA260515C00450000
-    """
     dt = datetime.strptime(expiry_date, "%Y-%m-%d")
     date_part = dt.strftime("%y%m%d")
     type_char = "C" if option_type.upper() in ("CALL", "C") else "P"
@@ -432,111 +503,163 @@ def build_option_symbol(ticker, expiry_date, option_type, strike):
     strike_part = f"{strike_int:08d}"
     return f"{ticker}{date_part}{type_char}{strike_part}"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Trend Detection
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# NEW: Enhanced Level Detection
+# ══════════════════════════════════════════════════════════════════════════════
 
-def detect_trend():
+def load_pdh_pdl():
+    """Load Previous Day High/Low."""
+    prev_bar = get_previous_day_bars()
+    if prev_bar:
+        _state["pdh"] = float(prev_bar.get("h", 0))
+        _state["pdl"] = float(prev_bar.get("l", 0))
+        logger.info(f"[V8 Levels] PDH=${_state['pdh']:.2f} | PDL=${_state['pdl']:.2f}")
+    else:
+        logger.warning("[V8 Levels] Could not load PDH/PDL")
+
+def compute_opening_range():
     """
-    Detect current trend using 1-min bars.
-    Returns: ("BULL", strength) / ("BEAR", strength) / (None, 0)
+    Compute Opening Range from first 40 minutes (9:30-10:10).
+    Uses 5-min bars from market open.
+    """
+    if _state["opening_range_set"]:
+        return
     
-    Uses:
-    1. EMA 9 vs EMA 21 crossover
-    2. Price vs VWAP
-    3. Momentum (last 5 bars direction)
-    4. ADX approximation
+    now = _et_now()
+    if now.hour * 60 + now.minute < SCALP_START_HOUR * 60 + SCALP_START_MINUTE:
+        return  # Not yet 10:10
+    
+    # Get 5-min bars covering 9:30-10:10 (8 bars)
+    bars = get_tsla_bars("5Min", 12)
+    if not bars:
+        return
+    
+    # Filter bars from today's open (9:30 AM) to 10:10 AM
+    or_high = 0
+    or_low = float('inf')
+    for b in bars:
+        h = float(b.get("h", 0))
+        l = float(b.get("l", 0))
+        if h > or_high:
+            or_high = h
+        if l < or_low:
+            or_low = l
+    
+    if or_high > 0 and or_low < float('inf'):
+        _state["opening_range_high"] = or_high
+        _state["opening_range_low"] = or_low
+        _state["opening_range_set"] = True
+        logger.info(f"[V8 Levels] Opening Range: High=${or_high:.2f} | Low=${or_low:.2f}")
+
+def compute_micro_sr():
     """
-    bars = get_tsla_bars("1Min", 30)
-    if not bars or len(bars) < 21:
-        logger.warning("[V8] Not enough bars for trend detection")
+    Compute Micro Support/Resistance from last 10 candles of 5-min chart.
+    Looks for swing highs/lows and high-volume nodes.
+    """
+    bars = get_tsla_bars("5Min", MICRO_SR_LOOKBACK + 2)
+    if not bars or len(bars) < 5:
+        return
+    
+    highs = [float(b["h"]) for b in bars]
+    lows = [float(b["l"]) for b in bars]
+    volumes = [int(b.get("v", 0)) for b in bars]
+    closes = [float(b["c"]) for b in bars]
+    
+    resistances = []
+    supports = []
+    
+    # Find swing highs (local maxima) and swing lows (local minima)
+    for i in range(1, len(highs) - 1):
+        # Swing high: higher than both neighbors
+        if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
+            resistances.append(highs[i])
+        # Swing low: lower than both neighbors
+        if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
+            supports.append(lows[i])
+    
+    # Add high-volume candle levels (top 3 by volume)
+    if volumes:
+        avg_vol = sum(volumes) / len(volumes)
+        for i, v in enumerate(volumes):
+            if v > avg_vol * 1.5:  # 50% above average
+                resistances.append(highs[i])
+                supports.append(lows[i])
+    
+    # Add recent high/low as micro levels
+    recent_high = max(highs[-5:]) if len(highs) >= 5 else max(highs)
+    recent_low = min(lows[-5:]) if len(lows) >= 5 else min(lows)
+    resistances.append(recent_high)
+    supports.append(recent_low)
+    
+    # Deduplicate (merge levels within 0.2% of each other)
+    def dedupe(levels):
+        if not levels:
+            return []
+        levels = sorted(set(levels))
+        result = [levels[0]]
+        for lvl in levels[1:]:
+            if abs(lvl - result[-1]) / result[-1] > 0.002:
+                result.append(lvl)
+            else:
+                # Keep the average
+                result[-1] = (result[-1] + lvl) / 2
+        return result
+    
+    _state["micro_resistances"] = dedupe(resistances)
+    _state["micro_supports"] = dedupe(supports)
+    
+    logger.info(f"[V8 Micro S/R] Resistances: {[f'${r:.2f}' for r in _state['micro_resistances']]} | "
+                f"Supports: {[f'${s:.2f}' for s in _state['micro_supports']]}")
+
+def get_nearest_psych_level(price):
+    """Get nearest psychological level ($5 intervals)."""
+    lower = math.floor(price / PSYCH_LEVEL_INTERVAL) * PSYCH_LEVEL_INTERVAL
+    upper = lower + PSYCH_LEVEL_INTERVAL
+    dist_lower = abs(price - lower) / price
+    dist_upper = abs(price - upper) / price
+    nearest = lower if dist_lower < dist_upper else upper
+    nearest_dist = min(dist_lower, dist_upper)
+    return nearest, nearest_dist
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NEW: Multi-Timeframe Trend Detection
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _analyze_timeframe(timeframe, bar_count):
+    """
+    Analyze a single timeframe for trend direction.
+    Returns: ("BULL", score) / ("BEAR", score) / (None, 0)
+    """
+    bars = get_tsla_bars(timeframe, bar_count)
+    if not bars or len(bars) < 10:
         return None, 0
     
     closes = [float(b["c"]) for b in bars]
     highs = [float(b["h"]) for b in bars]
     lows = [float(b["l"]) for b in bars]
-    volumes = [int(b["v"]) for b in bars]
     
-    # ── EMA Calculation ──
-    def ema(data, period):
-        if len(data) < period:
-            return data[-1]
-        k = 2 / (period + 1)
-        result = sum(data[:period]) / period
-        for val in data[period:]:
-            result = val * k + result * (1 - k)
-        return result
-    
-    ema9 = ema(closes, 9)
-    ema21 = ema(closes, 21)
+    ema9 = _ema(closes, 9)
+    ema21 = _ema(closes, min(21, len(closes)))
     current = closes[-1]
     
-    # ── VWAP from snapshot ──
-    snap = get_tsla_snapshot()
-    vwap = snap["vwap"] if snap and snap.get("vwap", 0) > 0 else 0
-    _state["vwap"] = vwap
-    _state["current_price"] = snap["price"] if snap else current
-    if snap:
-        _state["day_high"] = snap.get("high", 0)
-        _state["day_low"] = snap.get("low", 0)
-    
-    # ── Momentum: last 5 bars ──
+    # Momentum: last 5 bars
     last5 = closes[-5:]
     up_bars = sum(1 for i in range(1, len(last5)) if last5[i] > last5[i-1])
     down_bars = sum(1 for i in range(1, len(last5)) if last5[i] < last5[i-1])
     
-    # ── ADX Approximation (using ATR-based directional movement) ──
-    tr_list = []
-    plus_dm = []
-    minus_dm = []
-    for i in range(1, len(bars)):
-        h = highs[i]
-        l = lows[i]
-        pc = closes[i-1]
-        tr = max(h - l, abs(h - pc), abs(l - pc))
-        tr_list.append(tr)
-        
-        up_move = highs[i] - highs[i-1]
-        down_move = lows[i-1] - lows[i]
-        plus_dm.append(max(up_move, 0) if up_move > down_move else 0)
-        minus_dm.append(max(down_move, 0) if down_move > up_move else 0)
+    # ADX
+    adx, plus_di, minus_di = _adx_calc(highs, lows, closes)
     
-    period = 14
-    if len(tr_list) >= period:
-        atr = sum(tr_list[-period:]) / period
-        if atr > 0:
-            plus_di = (sum(plus_dm[-period:]) / period) / atr * 100
-            minus_di = (sum(minus_dm[-period:]) / period) / atr * 100
-            di_sum = plus_di + minus_di
-            dx = abs(plus_di - minus_di) / di_sum * 100 if di_sum > 0 else 0
-            adx = dx  # simplified
-        else:
-            adx = 0
-            plus_di = 0
-            minus_di = 0
-    else:
-        adx = 0
-        plus_di = 0
-        minus_di = 0
-    
-    # ── Score Calculation ──
     bull_score = 0
     bear_score = 0
     
-    # EMA crossover (weight: 30)
+    # EMA crossover (30 pts)
     if ema9 > ema21:
         bull_score += 30
     elif ema9 < ema21:
         bear_score += 30
     
-    # Price vs VWAP (weight: 25)
-    if vwap > 0:
-        if current > vwap:
-            bull_score += 25
-        elif current < vwap:
-            bear_score += 25
-    
-    # Momentum (weight: 25)
+    # Momentum (25 pts)
     if up_bars >= 4:
         bull_score += 25
     elif up_bars >= 3:
@@ -546,116 +669,279 @@ def detect_trend():
     elif down_bars >= 3:
         bear_score += 15
     
-    # ADX direction (weight: 20)
+    # ADX direction (25 pts)
     if adx >= TREND_MIN_ADX:
         if plus_di > minus_di:
-            bull_score += 20
+            bull_score += 25
         else:
-            bear_score += 20
+            bear_score += 25
     
-    # ── Determine Trend ──
+    # Price vs EMA21 (20 pts)
+    if current > ema21 * 1.001:
+        bull_score += 20
+    elif current < ema21 * 0.999:
+        bear_score += 20
+    
     strength = max(bull_score, bear_score)
+    if bull_score >= 55 and bull_score > bear_score + 10:
+        return "BULL", strength
+    elif bear_score >= 55 and bear_score > bull_score + 10:
+        return "BEAR", strength
+    return None, strength
+
+def detect_trend_multi():
+    """
+    Multi-Timeframe Trend Detection:
+      15m → الاتجاه العام (must agree)
+      5m  → الترند المتوسط (primary signal)
+      1m  → توقيت الدخول (confirmation)
     
-    if bull_score >= 60 and bull_score > bear_score + 15:
-        trend = "BULL"
-    elif bear_score >= 60 and bear_score > bull_score + 15:
-        trend = "BEAR"
-    else:
-        trend = None  # Choppy / No clear trend
+    Returns: (trend, strength, details)
+    """
+    # ── 15-minute: Big picture ──
+    trend_15m, str_15m = _analyze_timeframe("15Min", 20)
+    _state["trend_15m"] = trend_15m
     
-    logger.info(f"[V8 Trend] bull={bull_score} bear={bear_score} adx={adx:.0f} "
-                f"ema9={ema9:.2f} ema21={ema21:.2f} vwap={vwap:.2f} "
-                f"price={current:.2f} → {trend or 'CHOP'} ({strength})")
+    # ── 5-minute: Primary trend ──
+    trend_5m, str_5m = _analyze_timeframe("5Min", 20)
+    _state["trend_5m"] = trend_5m
     
-    return trend, strength
+    # ── 1-minute: Entry timing ──
+    trend_1m, str_1m = _analyze_timeframe("1Min", 30)
+    
+    # ── VWAP confirmation ──
+    snap = get_tsla_snapshot()
+    vwap = 0
+    if snap:
+        vwap = snap.get("vwap", 0)
+        _state["vwap"] = vwap
+        _state["current_price"] = snap["price"]
+        _state["day_high"] = snap.get("high", 0)
+        _state["day_low"] = snap.get("low", 0)
+    
+    price = _state["current_price"]
+    vwap_bull = price > vwap if vwap > 0 else True
+    vwap_bear = price < vwap if vwap > 0 else True
+    
+    # ── Multi-TF Agreement Logic ──
+    # Rule: 15m and 5m MUST agree. 1m is bonus.
+    
+    final_trend = None
+    total_strength = 0
+    
+    if trend_15m == "BULL" and trend_5m == "BULL" and vwap_bull:
+        final_trend = "BULL"
+        total_strength = str_15m + str_5m + (str_1m if trend_1m == "BULL" else 0)
+    elif trend_15m == "BEAR" and trend_5m == "BEAR" and vwap_bear:
+        final_trend = "BEAR"
+        total_strength = str_15m + str_5m + (str_1m if trend_1m == "BEAR" else 0)
+    elif trend_5m and trend_5m == trend_1m:
+        # 5m + 1m agree but 15m neutral — weaker signal, still tradeable
+        if (trend_5m == "BULL" and vwap_bull) or (trend_5m == "BEAR" and vwap_bear):
+            final_trend = trend_5m
+            total_strength = str_5m + str_1m  # Lower strength (no 15m bonus)
+    
+    details = {
+        "15m": trend_15m or "CHOP",
+        "5m": trend_5m or "CHOP",
+        "1m": trend_1m or "CHOP",
+        "vwap": f"${vwap:.2f}",
+        "price": f"${price:.2f}",
+        "vwap_side": "above" if vwap_bull else "below"
+    }
+    
+    logger.info(f"[V8 MTF] 15m={details['15m']}({str_15m}) | 5m={details['5m']}({str_5m}) | "
+                f"1m={details['1m']}({str_1m}) | VWAP={details['vwap']} ({details['vwap_side']}) | "
+                f"→ {final_trend or 'NO TREND'} ({total_strength})")
+    
+    return final_trend, total_strength, details
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NEW: Enhanced Pullback Detection (5-min based)
+# ══════════════════════════════════════════════════════════════════════════════
 
 def detect_pullback(trend):
     """
-    Detect if current price is in a pullback within the trend.
+    Detect pullback on 5-minute chart (more reliable than 1-min).
+    Also checks RSI for oversold/overbought confirmation.
     Returns: (is_pullback: bool, pullback_depth_pct: float)
     """
-    bars = get_tsla_bars("1Min", 10)
+    bars = get_tsla_bars("5Min", 12)
     if not bars or len(bars) < 5:
         return False, 0
     
     closes = [float(b["c"]) for b in bars]
+    highs = [float(b["h"]) for b in bars]
+    lows = [float(b["l"]) for b in bars]
     current = closes[-1]
     
+    # ── RSI (14-period on 5min) ──
+    gains = []
+    losses_list = []
+    for i in range(1, len(closes)):
+        change = closes[i] - closes[i-1]
+        gains.append(max(change, 0))
+        losses_list.append(abs(min(change, 0)))
+    
+    period = min(14, len(gains))
+    if period > 0:
+        avg_gain = sum(gains[-period:]) / period
+        avg_loss = sum(losses_list[-period:]) / period
+        if avg_loss > 0:
+            rs = avg_gain / avg_loss
+            rsi = 100 - (100 / (1 + rs))
+        else:
+            rsi = 100
+    else:
+        rsi = 50
+    
+    # ── EMA 9 on 5min ──
+    ema9 = _ema(closes, 9)
+    
     if trend == "BULL":
-        # In uptrend, pullback = price dipped from recent high
-        recent_high = max(closes[-8:])
-        depth = (recent_high - current) / recent_high
-        # Pullback if price dipped 0.2-0.8% from recent high
-        is_pullback = 0.002 <= depth <= 0.008
-        # Also check: last 2 bars going down but overall trend still up
-        last2_down = closes[-1] < closes[-2] or closes[-2] < closes[-3]
-        return is_pullback and last2_down, depth
+        recent_high = max(highs[-6:])
+        depth = (recent_high - current) / recent_high if recent_high > 0 else 0
+        
+        # Pullback conditions on 5min:
+        # 1. Price dipped 0.3-1.0% from recent high
+        # 2. RSI dropped below 45 (from overbought)
+        # 3. Price near or touching EMA9
+        near_ema9 = abs(current - ema9) / current < 0.003  # within 0.3% of EMA9
+        
+        is_pullback = (
+            0.003 <= depth <= 0.010 and
+            (rsi < 45 or near_ema9) and
+            current > _ema(closes, min(21, len(closes)))  # Still above EMA21
+        )
+        
+        logger.info(f"[V8 PB] BULL pullback check: depth={depth*100:.2f}% rsi={rsi:.1f} "
+                    f"near_ema9={near_ema9} → {is_pullback}")
+        return is_pullback, depth
     
     elif trend == "BEAR":
-        recent_low = min(closes[-8:])
-        depth = (current - recent_low) / recent_low
-        is_pullback = 0.002 <= depth <= 0.008
-        last2_up = closes[-1] > closes[-2] or closes[-2] > closes[-3]
-        return is_pullback and last2_up, depth
+        recent_low = min(lows[-6:])
+        depth = (current - recent_low) / recent_low if recent_low > 0 else 0
+        
+        near_ema9 = abs(current - ema9) / current < 0.003
+        
+        is_pullback = (
+            0.003 <= depth <= 0.010 and
+            (rsi > 55 or near_ema9) and
+            current < _ema(closes, min(21, len(closes)))
+        )
+        
+        logger.info(f"[V8 PB] BEAR pullback check: depth={depth*100:.2f}% rsi={rsi:.1f} "
+                    f"near_ema9={near_ema9} → {is_pullback}")
+        return is_pullback, depth
     
     return False, 0
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Zone Safety Check (using reversal map)
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# NEW: Enhanced Zone Safety (All Levels)
+# ══════════════════════════════════════════════════════════════════════════════
 
 def is_safe_zone(price, trend):
     """
-    Check if current price is NOT near a dangerous support/resistance level.
+    Comprehensive safety check against ALL levels:
+    1. GEX levels (reversal map)
+    2. Micro S/R (5-min swing points)
+    3. VWAP danger zone
+    4. PDH/PDL
+    5. Psychological levels
+    6. Opening Range boundaries
+    
     Returns: (is_safe: bool, reason: str)
     """
-    if not _reversal_map_ref or not _reversal_map_ref.get("built"):
-        return True, "No map available — proceeding"
+    dangers = []
     
-    levels = _reversal_map_ref.get("levels", [])
-    if not levels:
-        return True, "No levels — proceeding"
+    # ── 1. GEX / Reversal Map Levels ──
+    if _reversal_map_ref and _reversal_map_ref.get("built"):
+        levels = _reversal_map_ref.get("levels", [])
+        for lvl in levels:
+            lvl_price = float(lvl["price"])
+            dist_pct = abs(price - lvl_price) / lvl_price
+            if dist_pct <= 0.003:
+                lvl_type = lvl["type"]
+                lvl_name = lvl["name"]
+                if trend == "BULL" and lvl_type == "resistance":
+                    dangers.append(f"GEX مقاومة {lvl_name} ${lvl_price:.2f}")
+                elif trend == "BEAR" and lvl_type == "support":
+                    dangers.append(f"GEX دعم {lvl_name} ${lvl_price:.2f}")
+                elif "Gamma" in lvl_name or "Flip" in lvl_name:
+                    dangers.append(f"Gamma Flip ${lvl_price:.2f}")
     
-    for lvl in levels:
-        lvl_price = float(lvl["price"])
-        dist_pct = abs(price - lvl_price) / lvl_price
-        
-        if dist_pct <= 0.003:  # within 0.3% of a level
-            lvl_type = lvl["type"]
-            lvl_name = lvl["name"]
-            
-            # BULL trend near resistance = dangerous
-            if trend == "BULL" and lvl_type == "resistance":
-                return False, f"قريب من مقاومة {lvl_name} (${lvl_price:.2f})"
-            
-            # BEAR trend near support = dangerous
-            if trend == "BEAR" and lvl_type == "support":
-                return False, f"قريب من دعم {lvl_name} (${lvl_price:.2f})"
-            
-            # Near Gamma Flip = always dangerous
-            if "Gamma" in lvl_name or "Flip" in lvl_name:
-                return False, f"قريب من {lvl_name} (${lvl_price:.2f})"
+    # ── 2. Micro S/R (5-min) ──
+    if trend == "BULL":
+        for r in _state["micro_resistances"]:
+            dist = abs(price - r) / price
+            if dist <= MICRO_SR_PROXIMITY and price < r:
+                dangers.append(f"Micro مقاومة ${r:.2f}")
+                break
+    elif trend == "BEAR":
+        for s in _state["micro_supports"]:
+            dist = abs(price - s) / price
+            if dist <= MICRO_SR_PROXIMITY and price > s:
+                dangers.append(f"Micro دعم ${s:.2f}")
+                break
+    
+    # ── 3. VWAP Danger Zone ──
+    vwap = _state["vwap"]
+    if vwap > 0:
+        vwap_dist = abs(price - vwap) / price
+        if vwap_dist <= VWAP_DANGER_PCT:
+            dangers.append(f"VWAP Zone ${vwap:.2f} (±0.2%)")
+    
+    # ── 4. PDH / PDL ──
+    pdh = _state["pdh"]
+    pdl = _state["pdl"]
+    if pdh > 0:
+        dist = abs(price - pdh) / price
+        if dist <= 0.003:
+            dangers.append(f"PDH ${pdh:.2f}")
+    if pdl > 0:
+        dist = abs(price - pdl) / price
+        if dist <= 0.003:
+            dangers.append(f"PDL ${pdl:.2f}")
+    
+    # ── 5. Psychological Levels ──
+    psych, psych_dist = get_nearest_psych_level(price)
+    if psych_dist <= PSYCH_PROXIMITY:
+        dangers.append(f"رقم نفسي ${psych:.0f}")
+    
+    # ── 6. Opening Range Boundaries ──
+    or_high = _state["opening_range_high"]
+    or_low = _state["opening_range_low"]
+    if or_high > 0:
+        dist_h = abs(price - or_high) / price
+        if dist_h <= 0.002:
+            dangers.append(f"OR High ${or_high:.2f}")
+    if or_low > 0:
+        dist_l = abs(price - or_low) / price
+        if dist_l <= 0.002:
+            dangers.append(f"OR Low ${or_low:.2f}")
+    
+    # ── Decision ──
+    if dangers:
+        reason = " | ".join(dangers)
+        logger.info(f"[V8 Zone] UNSAFE @ ${price:.2f}: {reason}")
+        return False, reason
     
     return True, "Safe zone"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Contract Finder
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Contract Finders (unchanged logic)
+# ══════════════════════════════════════════════════════════════════════════════
 
 def find_atm_contract(price, trend, expiry):
-    """Find the best ATM 0DTE contract."""
     option_type = "call" if trend == "BULL" else "put"
-    
-    # Search near the money
     strike_min = round(price - 3, 0)
     strike_max = round(price + 3, 0)
     
     contracts = get_options_chain(expiry, option_type, strike_min, strike_max)
     if not contracts:
-        logger.warning(f"[V8] No ATM contracts found for {expiry} {option_type}")
+        logger.warning(f"[V8] No ATM contracts for {expiry} {option_type}")
         return None
     
-    # Find closest to current price
     best = None
     min_diff = float('inf')
     for c in contracts:
@@ -668,90 +954,53 @@ def find_atm_contract(price, trend, expiry):
     if best:
         symbol = best.get("symbol", "")
         strike = float(best.get("strike_price", 0))
-        
-        # Get quote for mid price
         quote = get_option_quote(symbol)
         if quote and quote["mid"] > 0:
             return {
-                "symbol": symbol,
-                "strike": strike,
-                "type": option_type,
-                "expiry": expiry,
-                "bid": quote["bid"],
-                "ask": quote["ask"],
-                "mid": quote["mid"],
-                "is_atm": True
+                "symbol": symbol, "strike": strike, "type": option_type,
+                "expiry": expiry, "bid": quote["bid"], "ask": quote["ask"],
+                "mid": quote["mid"], "is_atm": True
             }
         else:
-            # Use contract data if no quote
             return {
-                "symbol": symbol,
-                "strike": strike,
-                "type": option_type,
-                "expiry": expiry,
-                "bid": 0,
-                "ask": 0,
-                "mid": 0,
-                "is_atm": True
+                "symbol": symbol, "strike": strike, "type": option_type,
+                "expiry": expiry, "bid": 0, "ask": 0, "mid": 0, "is_atm": True
             }
-    
     return None
 
 def find_itm_contract(price, trend, expiry):
-    """
-    Find the best ITM contract with delta 0.70-0.88.
-    ITM Call: strike < price (deeper = higher delta)
-    ITM Put: strike > price (deeper = higher delta)
-    """
     option_type = "call" if trend == "BULL" else "put"
     
     if trend == "BULL":
-        # ITM Call: strike below price. Delta ~0.70-0.88 ≈ $3-8 ITM
         strike_min = round(price - 10, 0)
         strike_max = round(price - 3, 0)
     else:
-        # ITM Put: strike above price
         strike_min = round(price + 3, 0)
         strike_max = round(price + 10, 0)
     
     contracts = get_options_chain(expiry, option_type, strike_min, strike_max)
     if not contracts:
-        logger.warning(f"[V8] No ITM contracts found for {expiry} {option_type}")
+        logger.warning(f"[V8] No ITM contracts for {expiry} {option_type}")
         return None
-    
-    # For 0DTE ITM, delta is approximately:
-    # $3 ITM ≈ 0.70 delta
-    # $5 ITM ≈ 0.80 delta
-    # $8 ITM ≈ 0.88 delta
-    # We want $4-7 ITM for delta 0.70-0.88
     
     best = None
     best_score = -1
     
     for c in contracts:
         strike = float(c.get("strike_price", 0))
-        
-        if trend == "BULL":
-            itm_amount = price - strike
-        else:
-            itm_amount = strike - price
+        itm_amount = (price - strike) if trend == "BULL" else (strike - price)
         
         if itm_amount < 3 or itm_amount > 10:
             continue
         
-        # Approximate delta
         approx_delta = min(0.95, 0.50 + itm_amount * 0.05)
         
         if ITM_DELTA_MIN <= approx_delta <= ITM_DELTA_MAX:
-            # Get quote
             symbol = c.get("symbol", "")
             quote = get_option_quote(symbol)
             
             if quote and quote["mid"] > 0:
-                # Prefer contracts with good volume (check via spread)
                 spread_pct = (quote["ask"] - quote["bid"]) / quote["mid"] if quote["mid"] > 0 else 1
-                
-                # Score: prefer tighter spread and delta closer to 0.80
                 delta_score = 1 - abs(approx_delta - 0.80) * 5
                 spread_score = max(0, 1 - spread_pct * 5)
                 score = delta_score + spread_score
@@ -759,29 +1008,19 @@ def find_itm_contract(price, trend, expiry):
                 if score > best_score:
                     best_score = score
                     best = {
-                        "symbol": symbol,
-                        "strike": strike,
-                        "type": option_type,
-                        "expiry": expiry,
-                        "bid": quote["bid"],
-                        "ask": quote["ask"],
-                        "mid": quote["mid"],
-                        "approx_delta": round(approx_delta, 2),
-                        "itm_amount": round(itm_amount, 2),
-                        "is_itm": True
+                        "symbol": symbol, "strike": strike, "type": option_type,
+                        "expiry": expiry, "bid": quote["bid"], "ask": quote["ask"],
+                        "mid": quote["mid"], "approx_delta": round(approx_delta, 2),
+                        "itm_amount": round(itm_amount, 2), "is_itm": True
                     }
     
     return best
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 # Layer 1: ATM Scalp Engine
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 
 def execute_atm_scalp(trend, price, expiry):
-    """
-    Execute Layer 1: Buy 2 ATM contracts.
-    Set TP1 +5%, TP2 +10%, SL -25%.
-    """
     contract = find_atm_contract(price, trend, expiry)
     if not contract:
         return False, "No ATM contract found"
@@ -792,24 +1031,16 @@ def execute_atm_scalp(trend, price, expiry):
     if mid <= 0:
         return False, f"No valid price for {symbol}"
     
-    # Use limit order at mid price
     order = place_option_order(
-        symbol=symbol,
-        qty=ATM_CONTRACTS,
-        side="buy",
-        order_type="limit",
-        limit_price=mid,
+        symbol=symbol, qty=ATM_CONTRACTS, side="buy",
+        order_type="limit", limit_price=mid,
         position_intent="buy_to_open"
     )
     
     if not order:
-        # Retry with ask price
         order = place_option_order(
-            symbol=symbol,
-            qty=ATM_CONTRACTS,
-            side="buy",
-            order_type="limit",
-            limit_price=contract["ask"],
+            symbol=symbol, qty=ATM_CONTRACTS, side="buy",
+            order_type="limit", limit_price=contract["ask"],
             position_intent="buy_to_open"
         )
     
@@ -842,6 +1073,7 @@ def execute_atm_scalp(trend, price, expiry):
     _state["atm_reinforced"] = False
     
     direction = "CALL" if trend == "BULL" else "PUT"
+    tf_info = f"15m={_state['trend_15m'] or 'N/A'} | 5m={_state['trend_5m'] or 'N/A'}"
     msg = (
         f"🤖 <b>V8 سكالب — {direction}</b>\n"
         f"━━━━━━━━━━━━━━━\n"
@@ -852,7 +1084,8 @@ def execute_atm_scalp(trend, price, expiry):
         f"🎯 TP2: ${position['tp2_price']:.2f} (+10%)\n"
         f"🛑 SL: ${position['sl_price']:.2f} (-25%)\n"
         f"🔄 تعزيز: ${position['reinforce_price']:.2f} (-15%)\n"
-        f"📊 TSLA: ${price:.2f} | Trend: {trend}\n"
+        f"📊 TSLA: ${price:.2f} | VWAP: ${_state['vwap']:.2f}\n"
+        f"📈 {tf_info}\n"
         f"🕐 {position['entry_time']} ET"
     )
     send_telegram(msg)
@@ -861,7 +1094,6 @@ def execute_atm_scalp(trend, price, expiry):
     return True, position
 
 def monitor_atm_positions():
-    """Monitor ATM positions for TP/SL/Reinforce."""
     if not _state["atm_positions"]:
         return
     
@@ -884,15 +1116,10 @@ def monitor_atm_positions():
         
         # ── Check Stop Loss ──
         if current_mid <= pos["sl_price"]:
-            # Sell everything
             sell_order = place_option_order(
-                symbol=symbol,
-                qty=remaining_qty,
-                side="sell",
-                order_type="market",
-                position_intent="sell_to_close"
+                symbol=symbol, qty=remaining_qty, side="sell",
+                order_type="market", position_intent="sell_to_close"
             )
-            
             pnl = (current_mid - avg_price) * remaining_qty * 100
             pos["pnl"] = pnl
             pos["status"] = "closed_sl"
@@ -901,6 +1128,10 @@ def monitor_atm_positions():
             _state["consecutive_losses"] += 1
             _state["losses"] += 1
             
+            if _state["consecutive_losses"] >= PAUSE_AFTER_CONSECUTIVE_LOSSES:
+                _state["pause_until"] = time.time() + PAUSE_DURATION_SECONDS
+                send_telegram(f"⏸️ <b>V8 وقف مؤقت</b> — {PAUSE_AFTER_CONSECUTIVE_LOSSES} خسارات متتالية. استراحة 30 دقيقة.")
+            
             msg = (
                 f"🔴 <b>V8 ستوب لوس — ATM</b>\n"
                 f"━━━━━━━━━━━━━━━\n"
@@ -908,57 +1139,45 @@ def monitor_atm_positions():
                 f"📥 دخول: ${avg_price:.2f}\n"
                 f"📤 خروج: ${current_mid:.2f}\n"
                 f"💸 P&L: <b>${pnl:+.2f}</b>\n"
+                f"📊 خسارات متتالية: {_state['consecutive_losses']}\n"
                 f"🕐 {_et_now().strftime('%I:%M %p')} ET"
             )
             send_telegram(msg)
             _record_trade(pos, "SL", pnl)
-            
-            # Check pause
-            if _state["consecutive_losses"] >= PAUSE_AFTER_CONSECUTIVE_LOSSES:
-                _state["pause_until"] = time.time() + PAUSE_DURATION_SECONDS
-                send_telegram(
-                    f"⏸️ <b>V8 وقف مؤقت — {PAUSE_AFTER_CONSECUTIVE_LOSSES} خسارات متتالية</b>\n"
-                    f"يستأنف بعد 30 دقيقة"
-                )
             continue
         
         # ── Check Reinforce (-15%) ──
-        if (not pos["reinforced"] and 
-            current_mid <= pos["reinforce_price"] and
-            _state["trend"] == pos["trend"]):  # Trend still valid
-            
-            # Check if zone is safe
-            safe, reason = is_safe_zone(_state["current_price"], pos["trend"])
+        if (not pos["reinforced"] and current_mid <= pos["reinforce_price"]
+                and _state["trend"] == pos["trend"]):
+            # Check if trend still valid before reinforcing
+            safe, _ = is_safe_zone(_state["current_price"], _state["trend"])
             if safe:
                 reinforce_order = place_option_order(
-                    symbol=symbol,
-                    qty=ATM_CONTRACTS,
-                    side="buy",
-                    order_type="limit",
-                    limit_price=current_mid,
+                    symbol=symbol, qty=ATM_CONTRACTS, side="buy",
+                    order_type="limit", limit_price=current_mid,
                     position_intent="buy_to_open"
                 )
-                
                 if reinforce_order:
-                    # Update average price
-                    old_total = avg_price * pos["total_qty"]
-                    new_total = old_total + current_mid * ATM_CONTRACTS
-                    pos["total_qty"] += ATM_CONTRACTS
-                    pos["avg_price"] = round(new_total / pos["total_qty"], 2)
+                    old_total = pos["total_qty"]
+                    new_total = old_total + ATM_CONTRACTS
+                    pos["avg_price"] = round(
+                        (avg_price * old_total + current_mid * ATM_CONTRACTS) / new_total, 2
+                    )
+                    pos["total_qty"] = new_total
                     pos["reinforced"] = True
                     pos["sl_price"] = round(pos["avg_price"] * (1 - ATM_SL_PCT), 2)
                     pos["tp1_price"] = round(pos["avg_price"] * (1 + ATM_REINFORCE_TP), 2)
-                    pos["tp2_price"] = pos["tp1_price"]  # After reinforce, sell all at +5%
-                    _state["atm_reinforced"] = True
+                    pos["tp2_price"] = round(pos["avg_price"] * (1 + ATM_TP2_PCT), 2)
                     
                     msg = (
                         f"🔄 <b>V8 تعزيز — ATM</b>\n"
                         f"━━━━━━━━━━━━━━━\n"
                         f"📋 {symbol}\n"
-                        f"📥 تعزيز: +{ATM_CONTRACTS} عقود @ ${current_mid:.2f}\n"
+                        f"📥 تعزيز +{ATM_CONTRACTS} عقود @ ${current_mid:.2f}\n"
                         f"📊 متوسط جديد: ${pos['avg_price']:.2f}\n"
-                        f"🎯 هدف جديد: ${pos['tp1_price']:.2f} (+5%)\n"
-                        f"🛑 ستوب جديد: ${pos['sl_price']:.2f}\n"
+                        f"📦 إجمالي: {new_total} عقود\n"
+                        f"🎯 TP: ${pos['tp1_price']:.2f}\n"
+                        f"🛑 SL: ${pos['sl_price']:.2f}\n"
                         f"🕐 {_et_now().strftime('%I:%M %p')} ET"
                     )
                     send_telegram(msg)
@@ -968,71 +1187,99 @@ def monitor_atm_positions():
         if pos["qty_sold"] == 0 and current_mid >= pos["tp1_price"]:
             sell_qty = 1
             sell_order = place_option_order(
-                symbol=symbol,
-                qty=sell_qty,
-                side="sell",
-                order_type="market",
-                position_intent="sell_to_close"
+                symbol=symbol, qty=sell_qty, side="sell",
+                order_type="market", position_intent="sell_to_close"
             )
-            
             if sell_order:
-                pnl1 = (current_mid - avg_price) * sell_qty * 100
+                pnl = (current_mid - avg_price) * sell_qty * 100
                 pos["qty_sold"] += sell_qty
-                pos["pnl"] += pnl1
-                _state["daily_pnl"] += pnl1
-                _state["total_pnl"] += pnl1
-                
-                msg = (
-                    f"💰 <b>V8 TP1 — ATM</b>\n"
-                    f"━━━━━━━━━━━━━━━\n"
-                    f"📋 {symbol}\n"
-                    f"📤 بيع 1 عقد @ ${current_mid:.2f} (+5%)\n"
-                    f"💵 ربح: ${pnl1:+.2f}\n"
-                    f"📊 باقي: {pos['total_qty'] - pos['qty_sold']} عقود\n"
-                    f"🕐 {_et_now().strftime('%I:%M %p')} ET"
-                )
-                send_telegram(msg)
-        
-        # ── Check TP2 (+10%) — sell remaining ──
-        remaining = pos["total_qty"] - pos["qty_sold"]
-        if remaining > 0 and current_mid >= pos["tp2_price"]:
-            sell_order = place_option_order(
-                symbol=symbol,
-                qty=remaining,
-                side="sell",
-                order_type="market",
-                position_intent="sell_to_close"
-            )
-            
-            if sell_order:
-                pnl2 = (current_mid - avg_price) * remaining * 100
-                pos["qty_sold"] += remaining
-                pos["pnl"] += pnl2
-                pos["status"] = "closed_tp"
-                _state["daily_pnl"] += pnl2
-                _state["total_pnl"] += pnl2
+                pos["pnl"] += pnl
+                _state["daily_pnl"] += pnl
+                _state["total_pnl"] += pnl
                 _state["consecutive_losses"] = 0
                 _state["wins"] += 1
                 
                 msg = (
-                    f"🎯 <b>V8 TP2 — ATM هدف كامل!</b>\n"
+                    f"💰 <b>V8 TP1 — ATM +5%</b>\n"
                     f"━━━━━━━━━━━━━━━\n"
                     f"📋 {symbol}\n"
-                    f"📤 بيع {remaining} عقود @ ${current_mid:.2f} (+10%)\n"
-                    f"💵 إجمالي الربح: ${pos['pnl']:+.2f}\n"
+                    f"📤 بيع {sell_qty} عقد @ ${current_mid:.2f}\n"
+                    f"💵 P&L: <b>${pnl:+.2f}</b>\n"
+                    f"📦 متبقي: {pos['total_qty'] - pos['qty_sold']} عقود\n"
                     f"🕐 {_et_now().strftime('%I:%M %p')} ET"
                 )
                 send_telegram(msg)
-                _record_trade(pos, "TP", pos["pnl"])
+                _record_trade(pos, "TP1", pnl)
+            continue
+        
+        # ── Check TP2 (+10%) — sell remaining ──
+        if pos["qty_sold"] >= 1 and current_mid >= pos["tp2_price"]:
+            remaining = pos["total_qty"] - pos["qty_sold"]
+            if remaining > 0:
+                sell_order = place_option_order(
+                    symbol=symbol, qty=remaining, side="sell",
+                    order_type="market", position_intent="sell_to_close"
+                )
+                if sell_order:
+                    pnl = (current_mid - avg_price) * remaining * 100
+                    pos["qty_sold"] += remaining
+                    pos["pnl"] += pnl
+                    pos["status"] = "closed_tp"
+                    _state["daily_pnl"] += pnl
+                    _state["total_pnl"] += pnl
+                    _state["wins"] += 1
+                    
+                    msg = (
+                        f"🎯 <b>V8 TP2 — ATM +10%!</b>\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"📋 {symbol}\n"
+                        f"📤 بيع {remaining} عقود @ ${current_mid:.2f}\n"
+                        f"💵 P&L: <b>${pnl:+.2f}</b>\n"
+                        f"✅ صفقة مكتملة\n"
+                        f"🕐 {_et_now().strftime('%I:%M %p')} ET"
+                    )
+                    send_telegram(msg)
+                    _record_trade(pos, "TP2", pnl)
+        
+        # ── Check if trend reversed — exit remaining ──
+        if _state["trend"] and _state["trend"] != pos["trend"]:
+            remaining = pos["total_qty"] - pos["qty_sold"]
+            if remaining > 0:
+                sell_order = place_option_order(
+                    symbol=symbol, qty=remaining, side="sell",
+                    order_type="market", position_intent="sell_to_close"
+                )
+                pnl = (current_mid - avg_price) * remaining * 100
+                pos["qty_sold"] += remaining
+                pos["pnl"] += pnl
+                pos["status"] = "closed_reversal"
+                _state["daily_pnl"] += pnl
+                _state["total_pnl"] += pnl
+                
+                if pnl >= 0:
+                    _state["wins"] += 1
+                    _state["consecutive_losses"] = 0
+                else:
+                    _state["losses"] += 1
+                    _state["consecutive_losses"] += 1
+                
+                msg = (
+                    f"🔄 <b>V8 خروج — انعكاس الترند</b>\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"📋 {symbol}\n"
+                    f"📤 بيع {remaining} عقود @ ${current_mid:.2f}\n"
+                    f"💵 P&L: <b>${pnl:+.2f}</b>\n"
+                    f"📊 الترند انعكس: {pos['trend']} → {_state['trend']}\n"
+                    f"🕐 {_et_now().strftime('%I:%M %p')} ET"
+                )
+                send_telegram(msg)
+                _record_trade(pos, "REVERSAL", pnl)
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 # Layer 2: ITM Pullback Engine
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 
 def execute_itm_pullback(trend, price, expiry):
-    """
-    Execute Layer 2: Place limit buy for ITM contract below pullback.
-    """
     contract = find_itm_contract(price, trend, expiry)
     if not contract:
         return False, "No ITM contract found"
@@ -1047,11 +1294,8 @@ def execute_itm_pullback(trend, price, expiry):
     limit_price = round(mid * (1 - ITM_ENTRY_BELOW), 2)
     
     order = place_option_order(
-        symbol=symbol,
-        qty=ITM_CONTRACTS,
-        side="buy",
-        order_type="limit",
-        limit_price=limit_price,
+        symbol=symbol, qty=ITM_CONTRACTS, side="buy",
+        order_type="limit", limit_price=limit_price,
         position_intent="buy_to_open"
     )
     
@@ -1063,15 +1307,15 @@ def execute_itm_pullback(trend, price, expiry):
         "symbol": symbol,
         "strike": contract["strike"],
         "type": contract["type"],
-        "qty": ITM_CONTRACTS,
+        "approx_delta": contract.get("approx_delta", 0),
+        "itm_amount": contract.get("itm_amount", 0),
         "limit_price": limit_price,
         "current_mid": mid,
-        "tp_price": round(limit_price * (1 + ITM_TP_PCT), 2),
-        "sl_price": round(limit_price * (1 - ITM_SL_PCT), 2),
-        "entry_time": _et_now().strftime("%I:%M:%S %p"),
         "trend": trend,
-        "approx_delta": contract.get("approx_delta", 0),
         "status": "pending",
+        "entry_price": 0,
+        "tp_price": 0,
+        "sl_price": 0,
         "pnl": 0.0
     }
     
@@ -1079,24 +1323,21 @@ def execute_itm_pullback(trend, price, expiry):
     
     direction = "CALL" if trend == "BULL" else "PUT"
     msg = (
-        f"🎯 <b>V8 ITM أمر معلّق — {direction}</b>\n"
+        f"🎯 <b>V8 ITM — أمر معلّق</b>\n"
         f"━━━━━━━━━━━━━━━\n"
-        f"📋 {symbol}\n"
-        f"💵 أمر شراء: ${limit_price:.2f} (تحت السوق {ITM_ENTRY_BELOW*100:.0f}%)\n"
+        f"📋 {symbol} ({direction})\n"
+        f"💵 أمر شراء: ${limit_price:.2f} (تحت السوق {ITM_ENTRY_BELOW*100:.1f}%)\n"
         f"📊 Delta: ~{contract.get('approx_delta', 0):.2f}\n"
-        f"🎯 TP: ${pending['tp_price']:.2f} (+40%)\n"
-        f"🛑 SL: ${pending['sl_price']:.2f} (-16%)\n"
-        f"📊 TSLA: ${price:.2f}\n"
-        f"🕐 {pending['entry_time']} ET"
+        f"📏 ITM: ${contract.get('itm_amount', 0):.2f}\n"
+        f"🎯 TP: +40% | 🛑 SL: -16%\n"
+        f"🕐 {_et_now().strftime('%I:%M %p')} ET"
     )
     send_telegram(msg)
-    logger.info(f"[V8 ITM] Pending: {symbol} limit ${limit_price:.2f}")
+    logger.info(f"[V8 ITM] Pending: {symbol} limit=${limit_price:.2f}")
     
     return True, pending
 
 def monitor_itm_position():
-    """Monitor ITM pending order and open position."""
-    
     # ── Check pending order ──
     pending = _state["itm_pending_order"]
     if pending and pending["status"] == "pending":
@@ -1104,7 +1345,6 @@ def monitor_itm_position():
         if order:
             status = order.get("status", "")
             if status == "filled":
-                # Order filled! Convert to active position
                 fill_price = float(order.get("filled_avg_price", pending["limit_price"]))
                 pending["status"] = "filled"
                 pending["entry_price"] = fill_price
@@ -1131,14 +1371,14 @@ def monitor_itm_position():
                 logger.info(f"[V8 ITM] Pending order {status}")
         
         # Cancel if trend reversed
-        if pending and _state["trend"] != pending["trend"]:
+        if pending and _state["trend"] and _state["trend"] != pending.get("trend"):
             cancel_order(pending["order_id"])
             _state["itm_pending_order"] = None
             logger.info("[V8 ITM] Cancelled pending — trend reversed")
     
     # ── Monitor active ITM position ──
     pos = _state["itm_position"]
-    if not pos or pos["status"] != "filled":
+    if not pos or pos.get("status") != "filled":
         return
     
     quote = get_option_quote(pos["symbol"])
@@ -1151,13 +1391,9 @@ def monitor_itm_position():
     # ── Stop Loss ──
     if current_mid <= pos["sl_price"]:
         sell_order = place_option_order(
-            symbol=pos["symbol"],
-            qty=ITM_CONTRACTS,
-            side="sell",
-            order_type="market",
-            position_intent="sell_to_close"
+            symbol=pos["symbol"], qty=ITM_CONTRACTS, side="sell",
+            order_type="market", position_intent="sell_to_close"
         )
-        
         pnl = (current_mid - entry_price) * ITM_CONTRACTS * 100
         pos["pnl"] = pnl
         pos["status"] = "closed_sl"
@@ -1183,13 +1419,9 @@ def monitor_itm_position():
     # ── Take Profit ──
     if current_mid >= pos["tp_price"]:
         sell_order = place_option_order(
-            symbol=pos["symbol"],
-            qty=ITM_CONTRACTS,
-            side="sell",
-            order_type="market",
-            position_intent="sell_to_close"
+            symbol=pos["symbol"], qty=ITM_CONTRACTS, side="sell",
+            order_type="market", position_intent="sell_to_close"
         )
-        
         pnl = (current_mid - entry_price) * ITM_CONTRACTS * 100
         pos["pnl"] = pnl
         pos["status"] = "closed_tp"
@@ -1210,20 +1442,47 @@ def monitor_itm_position():
         )
         send_telegram(msg)
         _record_trade(pos, "TP", pnl)
+    
+    # ── Trend Reversal — exit ITM too ──
+    if _state["trend"] and _state["trend"] != pos.get("trend"):
+        sell_order = place_option_order(
+            symbol=pos["symbol"], qty=ITM_CONTRACTS, side="sell",
+            order_type="market", position_intent="sell_to_close"
+        )
+        pnl = (current_mid - entry_price) * ITM_CONTRACTS * 100
+        pos["pnl"] = pnl
+        pos["status"] = "closed_reversal"
+        _state["daily_pnl"] += pnl
+        _state["total_pnl"] += pnl
+        _state["itm_position"] = None
+        
+        if pnl >= 0:
+            _state["wins"] += 1
+            _state["consecutive_losses"] = 0
+        else:
+            _state["losses"] += 1
+            _state["consecutive_losses"] += 1
+        
+        msg = (
+            f"🔄 <b>V8 خروج ITM — انعكاس</b>\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"📋 {pos['symbol']}\n"
+            f"📤 خروج: ${current_mid:.2f}\n"
+            f"💵 P&L: <b>${pnl:+.2f}</b>\n"
+            f"🕐 {_et_now().strftime('%I:%M %p')} ET"
+        )
+        send_telegram(msg)
+        _record_trade(pos, "REVERSAL", pnl)
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 # Risk Manager
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 
 def check_risk():
-    """
-    Check all risk conditions.
-    Returns: (can_trade: bool, reason: str)
-    """
-    # Portfolio loss limit
     account = get_account()
     if account:
         portfolio_value = float(account.get("portfolio_value", 0))
+        _state["portfolio_current_value"] = portfolio_value
         if _state["portfolio_start_value"] > 0:
             loss = _state["portfolio_start_value"] - portfolio_value
             if loss >= MAX_PORTFOLIO_LOSS:
@@ -1237,27 +1496,23 @@ def check_risk():
                 )
                 return False, f"Portfolio loss ${loss:,.0f} >= ${MAX_PORTFOLIO_LOSS:,.0f}"
     
-    # Permanent stop
     if _state["stopped_permanent"]:
         return False, "Stopped permanently"
     
-    # Daily stop
     if _state["stopped_for_day"]:
         return False, "Stopped for today"
     
-    # Pause after consecutive losses
     if time.time() < _state["pause_until"]:
         remaining = (_state["pause_until"] - time.time()) / 60
         return False, f"Paused — {remaining:.0f} min remaining"
     
     return True, "OK"
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 # Trade Recorder
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 
 def _record_trade(pos, exit_type, pnl):
-    """Record trade for daily summary."""
     _state["trades_today"].append({
         "symbol": pos.get("symbol", ""),
         "type": pos.get("type", ""),
@@ -1265,34 +1520,27 @@ def _record_trade(pos, exit_type, pnl):
         "exit_type": exit_type,
         "pnl": pnl,
         "time": _et_now().strftime("%I:%M %p"),
-        "layer": "ATM" if pos.get("is_atm") or not pos.get("approx_delta") else "ITM"
+        "layer": "ITM" if pos.get("is_itm") or pos.get("approx_delta") else "ATM"
     })
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 # Force Close All
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 
 def force_close_all():
-    """Force close all open positions at end of window."""
     closed_count = 0
     total_pnl = 0
     
-    # Close ATM positions
     for pos in _state["atm_positions"]:
         if pos["status"] == "open":
             remaining = pos["total_qty"] - pos["qty_sold"]
             if remaining > 0:
                 quote = get_option_quote(pos["symbol"])
                 mid = quote["mid"] if quote else 0
-                
                 sell_order = place_option_order(
-                    symbol=pos["symbol"],
-                    qty=remaining,
-                    side="sell",
-                    order_type="market",
-                    position_intent="sell_to_close"
+                    symbol=pos["symbol"], qty=remaining, side="sell",
+                    order_type="market", position_intent="sell_to_close"
                 )
-                
                 pnl = (mid - pos["avg_price"]) * remaining * 100 if mid > 0 else 0
                 pos["pnl"] += pnl
                 pos["status"] = "closed_eod"
@@ -1302,20 +1550,14 @@ def force_close_all():
                 closed_count += 1
                 _record_trade(pos, "EOD", pnl)
     
-    # Close ITM position
     pos = _state["itm_position"]
-    if pos and pos["status"] == "filled":
+    if pos and pos.get("status") == "filled":
         quote = get_option_quote(pos["symbol"])
         mid = quote["mid"] if quote else 0
-        
         sell_order = place_option_order(
-            symbol=pos["symbol"],
-            qty=ITM_CONTRACTS,
-            side="sell",
-            order_type="market",
-            position_intent="sell_to_close"
+            symbol=pos["symbol"], qty=ITM_CONTRACTS, side="sell",
+            order_type="market", position_intent="sell_to_close"
         )
-        
         pnl = (mid - pos["entry_price"]) * ITM_CONTRACTS * 100 if mid > 0 else 0
         pos["pnl"] = pnl
         pos["status"] = "closed_eod"
@@ -1326,7 +1568,6 @@ def force_close_all():
         _state["itm_position"] = None
         _record_trade(pos, "EOD", pnl)
     
-    # Cancel pending ITM order
     if _state["itm_pending_order"]:
         cancel_order(_state["itm_pending_order"]["order_id"])
         _state["itm_pending_order"] = None
@@ -1343,12 +1584,11 @@ def force_close_all():
     
     return closed_count
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 # Daily Summary
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 
 def send_daily_summary():
-    """Send end-of-day summary to Telegram."""
     trades = _state["trades_today"]
     wins = _state["wins"]
     losses = _state["losses"]
@@ -1363,6 +1603,11 @@ def send_daily_summary():
     
     pnl_icon = "💚" if _state["daily_pnl"] >= 0 else "🔴"
     
+    # Portfolio info
+    port_start = _state["portfolio_start_value"]
+    port_now = _state["portfolio_current_value"]
+    port_change = port_now - port_start if port_start > 0 else 0
+    
     msg = (
         f"📊 <b>V8 ملخص اليوم</b>\n"
         f"━━━━━━━━━━━━━━━\n"
@@ -1375,16 +1620,16 @@ def send_daily_summary():
         f"🟡 ITM: {len(itm_trades)} صفقات | ${itm_pnl:+.2f}\n"
         f"━━━━━━━━━━━━━━━\n"
         f"💰 إجمالي P&L (كلي): ${_state['total_pnl']:+.2f}\n"
+        f"💼 المحفظة: ${port_now:,.2f} ({'+' if port_change >= 0 else ''}{port_change:,.2f})\n"
         f"🕐 {_et_now().strftime('%I:%M %p')} ET"
     )
     send_telegram(msg)
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 # Main Engine Loop
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 
 def _reset_daily():
-    """Reset daily state."""
     today = _today_str()
     if _state["today"] != today:
         _state["today"] = today
@@ -1401,6 +1646,11 @@ def _reset_daily():
         _state["trades_today"] = []
         _state["wins"] = 0
         _state["losses"] = 0
+        _state["opening_range_set"] = False
+        _state["micro_resistances"] = []
+        _state["micro_supports"] = []
+        _state["trend_15m"] = None
+        _state["trend_5m"] = None
         
         # Get starting portfolio value
         account = get_account()
@@ -1408,26 +1658,32 @@ def _reset_daily():
             _state["portfolio_start_value"] = float(account.get("portfolio_value", 0))
             _state["portfolio_current_value"] = _state["portfolio_start_value"]
         
+        # Load previous day levels
+        load_pdh_pdl()
+        
         logger.info(f"[V8] Daily reset for {today} | Portfolio: ${_state['portfolio_start_value']:,.2f}")
 
 def _has_open_atm():
-    """Check if there's an active ATM position."""
     return any(p["status"] == "open" for p in _state["atm_positions"])
 
 def engine_loop():
     """
     Main engine loop — runs every 30 seconds.
+    Enhanced with Multi-Timeframe and all level checks.
     """
-    logger.info("[V8] Options Scalper Engine started! 🚀")
+    logger.info("[V8] Options Scalper Engine V8.1 started! 🚀")
     _state["running"] = True
     _summary_sent = False
     _summary_date = ""
+    _levels_updated = 0
     
-    # Initialize portfolio value
+    # Initialize
     account = get_account()
     if account:
         _state["portfolio_start_value"] = float(account.get("portfolio_value", 0))
         logger.info(f"[V8] Initial portfolio: ${_state['portfolio_start_value']:,.2f}")
+    
+    load_pdh_pdl()
     
     while _state["running"]:
         try:
@@ -1436,7 +1692,6 @@ def engine_loop():
             now = _et_now()
             today = _today_str()
             
-            # Reset summary flag for new day
             if _summary_date != today:
                 _summary_sent = False
                 _summary_date = today
@@ -1446,17 +1701,20 @@ def engine_loop():
                 time.sleep(60)
                 continue
             
-            # Skip non-0DTE days (user wants Mon-Thu only)
+            # Skip non-0DTE days
             if not _is_0dte_day():
                 time.sleep(60)
                 continue
+            
+            # ── Compute Opening Range (before scalp window) ──
+            if not _state["opening_range_set"]:
+                compute_opening_range()
             
             # ── Force Close Time ──
             if _is_force_close_time():
                 if _has_open_atm() or _state["itm_position"]:
                     force_close_all()
                 
-                # Send daily summary once
                 if not _summary_sent and _state["trades_today"]:
                     send_daily_summary()
                     _summary_sent = True
@@ -1466,43 +1724,45 @@ def engine_loop():
             
             # ── Outside Scalp Window ──
             if not _is_scalp_window():
-                # Still monitor existing positions even outside window
                 if _has_open_atm():
                     monitor_atm_positions()
                 if _state["itm_position"] or _state["itm_pending_order"]:
                     monitor_itm_position()
-                
                 time.sleep(30)
                 continue
             
-            # ══════════════════════════════════════════════════════════════════
+            # ══════════════════════════════════════════════════════════════
             # INSIDE SCALP WINDOW (10:10 - 12:40 ET)
-            # ══════════════════════════════════════════════════════════════════
+            # ══════════════════════════════════════════════════════════════
+            
+            # ── Update Micro S/R every 5 minutes ──
+            now_ts = time.time()
+            if now_ts - _levels_updated > 300:  # every 5 min
+                compute_micro_sr()
+                _levels_updated = now_ts
             
             # ── Risk Check ──
             can_trade, risk_reason = check_risk()
             if not can_trade:
-                # Still monitor existing positions
                 monitor_atm_positions()
                 monitor_itm_position()
                 logger.info(f"[V8] Can't trade: {risk_reason}")
                 time.sleep(30)
                 continue
             
-            # ── Detect Trend ──
-            trend, strength = detect_trend()
+            # ── Multi-Timeframe Trend Detection ──
+            trend, strength, details = detect_trend_multi()
             _state["trend"] = trend
             _state["trend_strength"] = strength
             
             if not trend:
-                # No clear trend — monitor existing only
                 monitor_atm_positions()
                 monitor_itm_position()
-                logger.info("[V8] No clear trend — waiting")
+                logger.info("[V8] No clear trend (MTF disagree) — waiting")
                 time.sleep(TREND_CHECK_INTERVAL)
                 continue
             
-            # ── Check Zone Safety ──
+            # ── Zone Safety Check (ALL levels) ──
             price = _state["current_price"]
             safe, zone_reason = is_safe_zone(price, trend)
             
@@ -1517,23 +1777,19 @@ def engine_loop():
             
             # ── Layer 1: ATM Scalp ──
             if not _has_open_atm():
-                logger.info(f"[V8] Trend={trend} ({strength}) | Price=${price:.2f} | Entering ATM scalp")
+                logger.info(f"[V8] Trend={trend} ({strength}) | Price=${price:.2f} | "
+                           f"15m={details['15m']} 5m={details['5m']} | Entering ATM")
                 success, result = execute_atm_scalp(trend, price, expiry)
                 if not success:
                     logger.warning(f"[V8] ATM entry failed: {result}")
             else:
                 monitor_atm_positions()
-                
-                # Check if ATM position closed — can re-enter if trend still valid
-                if not _has_open_atm() and trend == _state["trend"]:
-                    logger.info(f"[V8] ATM closed, trend still {trend} — re-entering")
-                    # Will re-enter next cycle
             
             # ── Layer 2: ITM Pullback ──
             if not _state["itm_position"] and not _state["itm_pending_order"]:
                 is_pb, pb_depth = detect_pullback(trend)
                 if is_pb:
-                    logger.info(f"[V8] Pullback detected ({pb_depth*100:.1f}%) — placing ITM order")
+                    logger.info(f"[V8] Pullback on 5min ({pb_depth*100:.1f}%) — placing ITM order")
                     success, result = execute_itm_pullback(trend, price, expiry)
                     if not success:
                         logger.warning(f"[V8] ITM entry failed: {result}")
@@ -1547,36 +1803,41 @@ def engine_loop():
             logger.error(f"[V8] Engine error: {e}", exc_info=True)
             time.sleep(30)
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 # Public API
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
 
 _engine_thread = None
 
 def start_scalper():
-    """Start the V8 Options Scalper engine in a background thread."""
     global _engine_thread
     if _engine_thread and _engine_thread.is_alive():
         logger.info("[V8] Engine already running")
         return
-    
     _engine_thread = threading.Thread(target=engine_loop, daemon=True, name="V8_Scalper")
     _engine_thread.start()
-    logger.info("[V8] Options Scalper Engine thread started! 🚀")
+    logger.info("[V8] Options Scalper Engine V8.1 thread started! 🚀")
 
 def stop_scalper():
-    """Stop the engine."""
     _state["running"] = False
     logger.info("[V8] Engine stopping...")
 
 def get_scalper_status():
-    """Get current engine status for API."""
     return {
         "running": _state["running"],
+        "version": "V8.1",
         "trend": _state["trend"],
+        "trend_15m": _state["trend_15m"],
+        "trend_5m": _state["trend_5m"],
         "trend_strength": _state["trend_strength"],
         "current_price": _state["current_price"],
         "vwap": _state["vwap"],
+        "pdh": _state["pdh"],
+        "pdl": _state["pdl"],
+        "opening_range_high": _state["opening_range_high"],
+        "opening_range_low": _state["opening_range_low"],
+        "micro_resistances": _state["micro_resistances"],
+        "micro_supports": _state["micro_supports"],
         "atm_positions": len([p for p in _state["atm_positions"] if p["status"] == "open"]),
         "atm_trades_today": _state["atm_trade_count"],
         "itm_position": bool(_state["itm_position"]),
@@ -1591,5 +1852,6 @@ def get_scalper_status():
         "stopped_for_day": _state["stopped_for_day"],
         "stopped_permanent": _state["stopped_permanent"],
         "portfolio_start": _state["portfolio_start_value"],
+        "portfolio_current": _state["portfolio_current_value"],
         "trades_today": len(_state["trades_today"])
     }

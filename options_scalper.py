@@ -42,12 +42,12 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 # ── Trading Window ───────────────────────────────────────────────────────────
-SCALP_START_HOUR   = 10
-SCALP_START_MINUTE = 10   # بعد 40 دقيقة من فتح السوق
-SCALP_END_HOUR     = 12
-SCALP_END_MINUTE   = 40   # ساعتين ونص فقط
-FORCE_CLOSE_HOUR   = 12
-FORCE_CLOSE_MINUTE = 45   # بيع كل شي المتبقي
+SCALP_START_HOUR   = 9
+SCALP_START_MINUTE = 35   # بعد 5 دقائق من فتح السوق
+SCALP_END_HOUR     = 15
+SCALP_END_MINUTE   = 45   # قبل الإغلاق بـ 15 دقيقة
+FORCE_CLOSE_HOUR   = 15
+FORCE_CLOSE_MINUTE = 50   # بيع كل شي المتبقي
 
 # ── Layer 1: ATM Scalp ───────────────────────────────────────────────────────
 ATM_CONTRACTS      = 2      # عقدين ATM

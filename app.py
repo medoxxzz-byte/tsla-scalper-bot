@@ -1,17 +1,17 @@
 """
-Smart Trading Alert Bot - V7.1.1 (Mosquito ثاقب + GEX)
+Smart Trading Alert Bot - V8.0 (Mosquito ثاقب + Options Scalper)
 Webhook Server for TSLA Mosquito Swamp Pine Script
 
-NEW IN V7.1:
-  - إصلاح نظام النجوم: Neutral = -1 نجمة، معاكس = -2 نجمة
-  - فلتر 15 دقيقة إجباري: يمنع التنفيذ إذا 15m ضد الإشارة
-  - فلتر حجم للانعكاسات: لا ترسل إلا إذا vol_confirm = true
-  - إصلاح اتجاه Fibonacci في رسائل الانعكاس
-  - رسائل تلقرام جديدة بالكامل — عملية مباشرة للسكالبينج
-  - تحذير الشوبي: "هالمكان حرق أعصاب وفلوس"
-  - حد يومي: 6 تنبيهات تداول + 3 انعكاسات (بدل 11)
-  - لا تداول يوم الجمعة (0DTE = كازينو)
-  - اسم البوت: ثاقب (Mosquito V7.1)
+NEW IN V8.0:
+  - محرك تداول أوبشن تلقائي بالكامل (Options Scalper)
+  - طبقتين: ATM Scalp (سكالبينج سريع) + ITM Pullback (عقد عميق)
+  - 0DTE فقط — الاثنين للخميس
+  - نافذة التداول: 10:10 AM - 12:40 PM ET
+  - TP/SL تلقائي + تعزيز ذكي
+  - حد خسارة محفظة: $7,000
+  - اكتشاف ترند تلقائي (EMA + VWAP + ADX + Momentum)
+  - خريطة انعكاسات للحماية من المناطق الخطيرة
+  - اسم البوت: ثاقب V8 (Options Scalper)
 
 KEPT FROM V7.0:
   - خريطة الانعكاسات المدمجة مع رسائل التلقرام (Reversal Map Alignment)
@@ -25,6 +25,8 @@ KEPT FROM V7.0:
   - Position tracker with real-time P&L
 
 الهدف: تجربة 3-6 أشهر لإثبات الاستراتيجية قبل التداول الحقيقي.
+
+V8 Architecture: options_scalper.py runs as autonomous background thread.
 """
 
 import os
@@ -2218,6 +2220,43 @@ def gex_morning_worker():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# V8 Options Scalper Integration
+# ──────────────────────────────────────────────────────────────────────────────
+try:
+    from options_scalper import (
+        start_scalper, stop_scalper, get_scalper_status,
+        set_reversal_map_ref, send_telegram as v8_send_telegram
+    )
+    _V8_AVAILABLE = True
+    logger.info("V8 Options Scalper module loaded ✅")
+except ImportError as e:
+    _V8_AVAILABLE = False
+    logger.warning(f"V8 Options Scalper not available: {e}")
+
+# V8 API Endpoints
+@app.route('/v8/status', methods=['GET'])
+def v8_status():
+    if not _V8_AVAILABLE:
+        return jsonify({"error": "V8 not available"}), 503
+    return jsonify(get_scalper_status())
+
+@app.route('/v8/stop', methods=['POST'])
+def v8_stop():
+    if not _V8_AVAILABLE:
+        return jsonify({"error": "V8 not available"}), 503
+    stop_scalper()
+    return jsonify({"status": "stopping"})
+
+@app.route('/v8/start', methods=['POST'])
+def v8_start():
+    if not _V8_AVAILABLE:
+        return jsonify({"error": "V8 not available"}), 503
+    if reversal_map.get("built"):
+        set_reversal_map_ref(reversal_map)
+    start_scalper()
+    return jsonify({"status": "started"})
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Startup
 # ──────────────────────────────────────────────────────────────────────────────
 _threads_started = False
@@ -2246,6 +2285,12 @@ def _start_background_threads():
     # V7.1: FlashAlpha GEX Direct API — always start
     threading.Thread(target=gex_morning_worker, daemon=True).start()
     logger.info("FlashAlpha GEX morning worker started (Direct API) ✅")
+    # V8: Options Scalper — autonomous trading engine
+    if _V8_AVAILABLE:
+        if reversal_map.get("built"):
+            set_reversal_map_ref(reversal_map)
+        start_scalper()
+        logger.info("V8 Options Scalper Engine started ✅ 🚀")
 
 _start_background_threads()
 

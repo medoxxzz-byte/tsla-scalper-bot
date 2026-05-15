@@ -446,7 +446,7 @@ def _is_force_close_time():
 
 def _is_0dte_day():
     day = _et_now().weekday()
-    return day < 4  # Mon-Thu
+    return day < 5  # Mon-Fri (TSLA has daily 0DTE options)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # EMA Calculator (shared utility)

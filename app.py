@@ -2226,7 +2226,9 @@ try:
     from options_scalper import (
         start_scalper, stop_scalper, get_scalper_status,
         set_reversal_map_ref, send_telegram as v8_send_telegram,
-        execute_manual_itm, close_manual_itm, get_manual_status
+        execute_manual_itm, close_manual_itm, get_manual_status,
+        add_journal_entry, update_journal_entry, get_journal_entries,
+        save_journal_image, get_journal_stats
     )
     _V8_AVAILABLE = True
     logger.info("V9 Options Scalper module loaded ✅")
@@ -2331,6 +2333,123 @@ def manual_sell():
         return jsonify({"success": True, **result})
     else:
         return jsonify({"success": False, **result}), 400
+
+# ──────────────────────────────────────────────────────────────────────────────
+# V9.3 Trade Journal Routes — سجل الصفقات
+# ──────────────────────────────────────────────────────────────────────────────
+
+_active_journal_id = None  # ID الصفقة المفتوحة حالياً
+
+@app.route('/journal', methods=['GET'])
+def journal_page():
+    """صفحة سجل الصفقات."""
+    return render_template('journal.html')
+
+
+@app.route('/journal/entries', methods=['GET'])
+def journal_entries():
+    """إرجاع قائمة الصفقات المسجلة."""
+    if not _V8_AVAILABLE:
+        return jsonify({"entries": [], "stats": {}})
+    limit = request.args.get('limit', 50, type=int)
+    entries = get_journal_entries(limit)
+    stats   = get_journal_stats()
+    return jsonify({"entries": entries, "stats": stats})
+
+
+@app.route('/journal/add', methods=['POST'])
+def journal_add():
+    """إضافة صفقة جديدة للسجل (عند الدخول)."""
+    global _active_journal_id
+    if not _V8_AVAILABLE:
+        return jsonify({"success": False}), 503
+    data = request.get_json(force=True, silent=True) or {}
+    # حقول إلزامية
+    entry = {
+        "status":        "open",
+        "direction":     data.get("direction", ""),       # CALL / PUT
+        "symbol":        data.get("symbol", ""),
+        "strike":        data.get("strike", 0),
+        "entry_price":   data.get("entry_price", 0),
+        "tsla_price":    data.get("tsla_price", 0),
+        "delta":         data.get("delta", 0),
+        "gex_position":  data.get("gex_position", ""),    # above/below gamma flip
+        "cheddar_flow":  data.get("cheddar_flow", ""),    # CALL%/PUT%
+        "notes":         data.get("notes", ""),
+        "images":        [],
+        "exit_price":    None,
+        "pnl_dollar":    None,
+        "exit_reason":   None,
+        "exit_time":     None,
+    }
+    entry_id = add_journal_entry(entry)
+    _active_journal_id = entry_id
+    return jsonify({"success": True, "id": entry_id})
+
+
+@app.route('/journal/close/<int:entry_id>', methods=['POST'])
+def journal_close(entry_id):
+    """تحديث صفقة بنتيجة الخروج."""
+    global _active_journal_id
+    if not _V8_AVAILABLE:
+        return jsonify({"success": False}), 503
+    data = request.get_json(force=True, silent=True) or {}
+    updates = {
+        "status":      "closed",
+        "exit_price":  data.get("exit_price"),
+        "pnl_dollar":  data.get("pnl_dollar"),
+        "exit_reason": data.get("exit_reason", ""),
+        "exit_time":   data.get("exit_time", ""),
+    }
+    update_journal_entry(entry_id, updates)
+    if _active_journal_id == entry_id:
+        _active_journal_id = None
+    return jsonify({"success": True})
+
+
+@app.route('/journal/image/<int:entry_id>', methods=['POST'])
+def journal_upload_image(entry_id):
+    """رفع صورة مرتبطة بصفقة."""
+    if not _V8_AVAILABLE:
+        return jsonify({"success": False}), 503
+    if 'image' not in request.files:
+        return jsonify({"success": False, "error": "لا يوجد ملف"}), 400
+    file = request.files['image']
+    if not file or file.filename == '':
+        return jsonify({"success": False, "error": "ملف فارغ"}), 400
+    # تحديد الامتداد
+    ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else 'jpg'
+    if ext not in ('jpg', 'jpeg', 'png', 'webp', 'gif'):
+        ext = 'jpg'
+    image_data = file.read()
+    filename = save_journal_image(entry_id, image_data, ext)
+    # إضافة اسم الصورة لقائمة الصفقة
+    entries = get_journal_entries(200)
+    for e in entries:
+        if e.get('id') == entry_id:
+            if 'images' not in e:
+                e['images'] = []
+            e['images'].append(filename)
+            from options_scalper import _save_journal
+            _save_journal(entries)
+            break
+    return jsonify({"success": True, "filename": filename, "url": f"/journal/img/{filename}"})
+
+
+@app.route('/journal/img/<filename>', methods=['GET'])
+def journal_image(filename):
+    """إرجاع صورة من مجلد السجل."""
+    import os
+    from flask import send_from_directory
+    images_dir = os.path.join(os.path.dirname(__file__), 'static', 'journal_images')
+    return send_from_directory(images_dir, filename)
+
+
+@app.route('/journal/active_id', methods=['GET'])
+def journal_active_id():
+    """إرجاع ID الصفقة المفتوحة حالياً."""
+    return jsonify({"active_id": _active_journal_id})
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Startup

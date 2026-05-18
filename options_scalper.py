@@ -2232,3 +2232,94 @@ def get_manual_status():
         "is_trading_hours": _is_scalp_window(),
         "et_time": _et_now().strftime("%I:%M:%S %p")
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# V9.3 — TRADE JOURNAL (سجل الصفقات)
+# ═══════════════════════════════════════════════════════════════
+
+import json
+import os
+
+_JOURNAL_FILE = os.path.join(os.path.dirname(__file__), "trade_journal.json")
+_IMAGES_DIR   = os.path.join(os.path.dirname(__file__), "static", "journal_images")
+
+# تأكد من وجود المجلد
+os.makedirs(_IMAGES_DIR, exist_ok=True)
+
+
+def _load_journal() -> list:
+    """تحميل سجل الصفقات من الملف."""
+    if os.path.exists(_JOURNAL_FILE):
+        try:
+            with open(_JOURNAL_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return []
+    return []
+
+
+def _save_journal(entries: list):
+    """حفظ سجل الصفقات في الملف."""
+    try:
+        with open(_JOURNAL_FILE, "w", encoding="utf-8") as f:
+            json.dump(entries, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"[Journal] Save error: {e}")
+
+
+def add_journal_entry(entry: dict):
+    """إضافة صفقة جديدة للسجل."""
+    entries = _load_journal()
+    # ID تسلسلي
+    entry["id"] = (entries[-1]["id"] + 1) if entries else 1
+    entry["created_at"] = _et_now().strftime("%Y-%m-%d %H:%M:%S ET")
+    entries.insert(0, entry)  # أحدث أولاً
+    _save_journal(entries)
+    logger.info(f"[Journal] Entry #{entry['id']} saved")
+    return entry["id"]
+
+
+def update_journal_entry(entry_id: int, updates: dict):
+    """تحديث صفقة موجودة (مثلاً إضافة نتيجة الخروج)."""
+    entries = _load_journal()
+    for e in entries:
+        if e.get("id") == entry_id:
+            e.update(updates)
+            break
+    _save_journal(entries)
+
+
+def get_journal_entries(limit: int = 50) -> list:
+    """إرجاع آخر N صفقة."""
+    return _load_journal()[:limit]
+
+
+def save_journal_image(entry_id: int, image_data: bytes, ext: str = "jpg") -> str:
+    """حفظ صورة مرتبطة بصفقة وإرجاع اسم الملف."""
+    filename = f"trade_{entry_id}_{int(time.time())}.{ext}"
+    filepath = os.path.join(_IMAGES_DIR, filename)
+    with open(filepath, "wb") as f:
+        f.write(image_data)
+    return filename
+
+
+def get_journal_stats() -> dict:
+    """إحصائيات السجل الكاملة."""
+    entries = _load_journal()
+    closed = [e for e in entries if e.get("status") == "closed"]
+    wins   = [e for e in closed if (e.get("pnl_dollar") or 0) > 0]
+    losses = [e for e in closed if (e.get("pnl_dollar") or 0) <= 0]
+    total_pnl = sum(e.get("pnl_dollar", 0) for e in closed)
+    win_rate = (len(wins) / len(closed) * 100) if closed else 0
+    return {
+        "total": len(entries),
+        "closed": len(closed),
+        "open": len(entries) - len(closed),
+        "wins": len(wins),
+        "losses": len(losses),
+        "win_rate": round(win_rate, 1),
+        "total_pnl": round(total_pnl, 2),
+        "avg_win": round(sum(e.get("pnl_dollar", 0) for e in wins) / len(wins), 2) if wins else 0,
+        "avg_loss": round(sum(e.get("pnl_dollar", 0) for e in losses) / len(losses), 2) if losses else 0,
+    }

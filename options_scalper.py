@@ -2126,11 +2126,36 @@ def _manual_monitor_loop():
             if not _manual_state["alert1_sent"] and current_price <= pos["alert1_price"]:
                 _manual_state["alert1_sent"] = True
                 logger.warning(f"[V9 Manual] ALERT 1: -$0.30 | ${current_price:.2f}")
+                direction = "CALL 📈" if pos.get("type") == "call" else "PUT 📉"
+                msg = (
+                    f"⚠️ <b>V9 تنبيه 1 — {direction}</b>\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"📋 {pos.get('symbol', '')}\n"
+                    f"💵 السعر الحالي: ${current_price:.2f}\n"
+                    f"📥 دخول: ${pos['entry_price']:.2f}\n"
+                    f"📉 خسارة: <b>-$0.30</b> لكل عقد (-$30)\n"
+                    f"🛑 SL عند: ${pos['sl_price']:.2f} (-$0.65)\n"
+                    f"🕐 {_et_now().strftime('%I:%M %p')} ET"
+                )
+                send_telegram(msg)
             
             # ── تنبيه 2: -$0.50 ──
             if not _manual_state["alert2_sent"] and current_price <= pos["alert2_price"]:
                 _manual_state["alert2_sent"] = True
                 logger.warning(f"[V9 Manual] ALERT 2: -$0.50 | ${current_price:.2f}")
+                direction = "CALL 📈" if pos.get("type") == "call" else "PUT 📉"
+                msg = (
+                    f"🚨 <b>V9 تحذير — {direction}</b>\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"📋 {pos.get('symbol', '')}\n"
+                    f"💵 السعر الحالي: ${current_price:.2f}\n"
+                    f"📥 دخول: ${pos['entry_price']:.2f}\n"
+                    f"📉 خسارة: <b>-$0.50</b> لكل عقد (-$50)\n"
+                    f"🛑 SL تلقائي عند: ${pos['sl_price']:.2f}\n"
+                    f"⏰ <b>قرار مطلوب الآن!</b>\n"
+                    f"🕐 {_et_now().strftime('%I:%M %p')} ET"
+                )
+                send_telegram(msg)
             
             time.sleep(10)
             

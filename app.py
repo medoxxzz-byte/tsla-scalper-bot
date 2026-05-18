@@ -37,10 +37,10 @@ import threading
 from datetime import datetime, timezone, timedelta
 
 try:
-    from flask import Flask, request, jsonify
+    from flask import Flask, request, jsonify, render_template
 except ImportError:
     os.system("pip install flask")
-    from flask import Flask, request, jsonify
+    from flask import Flask, request, jsonify, render_template
 
 try:
     import requests as http_requests
@@ -2225,13 +2225,14 @@ def gex_morning_worker():
 try:
     from options_scalper import (
         start_scalper, stop_scalper, get_scalper_status,
-        set_reversal_map_ref, send_telegram as v8_send_telegram
+        set_reversal_map_ref, send_telegram as v8_send_telegram,
+        execute_manual_itm, close_manual_itm, get_manual_status
     )
     _V8_AVAILABLE = True
-    logger.info("V8 Options Scalper module loaded ✅")
+    logger.info("V9 Options Scalper module loaded ✅")
 except ImportError as e:
     _V8_AVAILABLE = False
-    logger.warning(f"V8 Options Scalper not available: {e}")
+    logger.warning(f"V9 Options Scalper not available: {e}")
 
 # V8 API Endpoints
 @app.route('/v8/status', methods=['GET'])
@@ -2255,6 +2256,81 @@ def v8_start():
         set_reversal_map_ref(reversal_map)
     start_scalper()
     return jsonify({"status": "started"})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# V9 Manual ITM Scalper — الخط 2 اليدوي
+# ──────────────────────────────────────────────────────────────────────────────
+
+# متغير لحفظ آخر نتيجة صفقة مغلقة
+_last_manual_result = {"pnl": 0, "reason": "", "entry_price": 0, "exit_price": 0}
+
+@app.route('/manual', methods=['GET'])
+def manual_page():
+    """Serve the manual ITM scalper web page."""
+    return render_template('manual.html')
+
+
+@app.route('/manual/status', methods=['GET'])
+def manual_status():
+    """Return current status for the manual scalper UI."""
+    if not _V8_AVAILABLE:
+        return jsonify({"error": "V9 not available"}), 503
+    
+    status = get_manual_status()
+    # إضافة آخر نتيجة لو ما فيه صفقة مفتوحة
+    if not status["has_position"]:
+        status["last_pnl"] = _last_manual_result["pnl"]
+        status["last_reason"] = _last_manual_result["reason"]
+    return jsonify(status)
+
+
+@app.route('/manual/buy', methods=['POST'])
+def manual_buy():
+    """Execute manual ITM buy order."""
+    if not _V8_AVAILABLE:
+        return jsonify({"success": False, "error": "V9 not available"}), 503
+    
+    data = request.get_json(force=True, silent=True) or {}
+    option_type = data.get("type", "").lower()
+    
+    if option_type not in ("call", "put"):
+        return jsonify({"success": False, "error": "يجب تحديد call أو put"}), 400
+    
+    success, result = execute_manual_itm(option_type)
+    
+    if success:
+        logger.info(f"[V9 Manual] Buy {option_type.upper()} executed: {result.get('symbol')} @ ${result.get('entry_price')}")
+        return jsonify({"success": True, **result})
+    else:
+        logger.warning(f"[V9 Manual] Buy failed: {result.get('error')}")
+        return jsonify({"success": False, **result}), 400
+
+
+@app.route('/manual/sell', methods=['POST'])
+def manual_sell():
+    """Execute manual ITM sell order (stop loss button)."""
+    global _last_manual_result
+    
+    if not _V8_AVAILABLE:
+        return jsonify({"success": False, "error": "V9 not available"}), 503
+    
+    data = request.get_json(force=True, silent=True) or {}
+    reason = data.get("reason", "manual_stop")
+    
+    success, result = close_manual_itm(reason=reason)
+    
+    if success:
+        _last_manual_result = {
+            "pnl": result.get("pnl", 0),
+            "reason": result.get("reason", ""),
+            "entry_price": result.get("entry_price", 0),
+            "exit_price": result.get("exit_price", 0)
+        }
+        logger.info(f"[V9 Manual] Sell executed: PnL=${result.get('pnl', 0):+.2f} | Reason={reason}")
+        return jsonify({"success": True, **result})
+    else:
+        return jsonify({"success": False, **result}), 400
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Startup

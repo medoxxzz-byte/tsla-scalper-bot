@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>TSLA ITM Scalper — الخط اليدوي</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  
+  body {
+    background: #0a0a0f;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    padding: 12px;
+  }
+  
+  .header {
+    text-align: center;
+    padding: 10px 0 6px;
+    border-bottom: 1px solid #1e1e2e;
+    margin-bottom: 14px;
+  }
+  
+  .header h1 {
+    font-size: 18px;
+    color: #a0a8ff;
+    letter-spacing: 1px;
+  }
+  
+  .tsla-price {
+    text-align: center;
+    margin-bottom: 14px;
+  }
+  
+  .tsla-price .label {
+    font-size: 12px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  
+  .tsla-price .price {
+    font-size: 42px;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1.1;
+  }
+  
+  .tsla-price .time {
+    font-size: 12px;
+    color: #555;
+    margin-top: 2px;
+  }
+  
+  /* ── Suggested Contracts ── */
+  .suggestions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  
+  .suggest-card {
+    background: #111120;
+    border-radius: 10px;
+    padding: 10px;
+    border: 1px solid #1e1e30;
+  }
+  
+  .suggest-card.call { border-top: 3px solid #22c55e; }
+  .suggest-card.put  { border-top: 3px solid #ef4444; }
+  
+  .suggest-card .sc-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+  
+  .suggest-card.call .sc-label { color: #22c55e; }
+  .suggest-card.put  .sc-label { color: #ef4444; }
+  
+  .suggest-card .sc-strike {
+    font-size: 16px;
+    font-weight: 700;
+    color: #fff;
+  }
+  
+  .suggest-card .sc-details {
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+  }
+  
+  /* ── Action Buttons ── */
+  .action-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  
+  .btn {
+    border: none;
+    border-radius: 12px;
+    padding: 18px 10px;
+    font-size: 18px;
+    font-weight: 800;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 1px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  .btn:active { transform: scale(0.96); }
+  
+  .btn-call {
+    background: linear-gradient(135deg, #16a34a, #22c55e);
+    color: #fff;
+    box-shadow: 0 4px 20px rgba(34, 197, 94, 0.3);
+  }
+  
+  .btn-put {
+    background: linear-gradient(135deg, #dc2626, #ef4444);
+    color: #fff;
+    box-shadow: 0 4px 20px rgba(239, 68, 68, 0.3);
+  }
+  
+  .btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+  
+  /* ── Position Card ── */
+  .position-card {
+    background: #111120;
+    border-radius: 14px;
+    padding: 14px;
+    margin-bottom: 14px;
+    border: 1px solid #1e1e30;
+    display: none;
+  }
+  
+  .position-card.visible { display: block; }
+  
+  .pos-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  
+  .pos-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #a0a8ff;
+  }
+  
+  .pos-time {
+    font-size: 11px;
+    color: #555;
+  }
+  
+  .pos-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  
+  .pos-item {
+    background: #0d0d1a;
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
+  
+  .pos-item .pi-label {
+    font-size: 10px;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  
+  .pos-item .pi-value {
+    font-size: 16px;
+    font-weight: 700;
+    color: #fff;
+    margin-top: 1px;
+  }
+  
+  .pos-item.pnl-positive .pi-value { color: #22c55e; }
+  .pos-item.pnl-negative .pi-value { color: #ef4444; }
+  
+  /* ── Alert Bars ── */
+  .alert-bar {
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    margin-bottom: 8px;
+    display: none;
+  }
+  
+  .alert-bar.visible { display: block; }
+  
+  .alert-bar.alert1 {
+    background: rgba(234, 179, 8, 0.15);
+    border: 1px solid rgba(234, 179, 8, 0.4);
+    color: #eab308;
+  }
+  
+  .alert-bar.alert2 {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #ef4444;
+    animation: pulse 1s infinite;
+  }
+  
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+  
+  /* ── Stop Loss Button ── */
+  .btn-stop {
+    width: 100%;
+    background: linear-gradient(135deg, #7c2d12, #dc2626);
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    padding: 16px;
+    font-size: 16px;
+    font-weight: 800;
+    cursor: pointer;
+    letter-spacing: 1px;
+    box-shadow: 0 4px 20px rgba(220, 38, 38, 0.4);
+    -webkit-tap-highlight-color: transparent;
+    display: none;
+    margin-bottom: 14px;
+  }
+  
+  .btn-stop.visible { display: block; }
+  .btn-stop:active { transform: scale(0.97); }
+  
+  /* ── Progress Bar (PnL) ── */
+  .pnl-bar-container {
+    background: #0d0d1a;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+  
+  .pnl-bar-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: #555;
+    margin-bottom: 5px;
+  }
+  
+  .pnl-bar-track {
+    background: #1a1a2e;
+    border-radius: 4px;
+    height: 8px;
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .pnl-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.5s ease, background 0.3s;
+    position: absolute;
+    top: 0;
+  }
+  
+  /* ── Status Footer ── */
+  .status-footer {
+    text-align: center;
+    font-size: 11px;
+    color: #444;
+    padding-top: 8px;
+    border-top: 1px solid #111;
+  }
+  
+  .status-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+  
+  .status-dot.green { background: #22c55e; animation: blink 2s infinite; }
+  .status-dot.red   { background: #ef4444; }
+  .status-dot.gray  { background: #444; }
+  
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  
+  /* ── Closed Result ── */
+  .result-card {
+    background: #111120;
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 14px;
+    text-align: center;
+    display: none;
+  }
+  
+  .result-card.visible { display: block; }
+  .result-card.win { border: 2px solid #22c55e; }
+  .result-card.loss { border: 2px solid #ef4444; }
+  
+  .result-card .rc-label {
+    font-size: 12px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+  
+  .result-card .rc-pnl {
+    font-size: 36px;
+    font-weight: 800;
+  }
+  
+  .result-card.win .rc-pnl { color: #22c55e; }
+  .result-card.loss .rc-pnl { color: #ef4444; }
+  
+  .result-card .rc-detail {
+    font-size: 12px;
+    color: #666;
+    margin-top: 4px;
+  }
+  
+  /* ── Loading Spinner ── */
+  .loading {
+    text-align: center;
+    padding: 20px;
+    color: #555;
+    font-size: 13px;
+    display: none;
+  }
+  
+  .loading.visible { display: block; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>⚡ TSLA ITM Scalper</h1>
+</div>
+
+<!-- TSLA Price -->
+<div class="tsla-price">
+  <div class="label">TSLA</div>
+  <div class="price" id="tslaPrice">---</div>
+  <div class="time" id="etTime">--:-- -- ET</div>
+</div>
+
+<!-- Suggested Contracts -->
+<div class="suggestions" id="suggestionsSection">
+  <div class="suggest-card call" id="callSuggest">
+    <div class="sc-label">📈 CALL</div>
+    <div class="sc-strike" id="callStrike">---</div>
+    <div class="sc-details" id="callDetails">جاري التحميل...</div>
+  </div>
+  <div class="suggest-card put" id="putSuggest">
+    <div class="sc-label">📉 PUT</div>
+    <div class="sc-strike" id="putStrike">---</div>
+    <div class="sc-details" id="putDetails">جاري التحميل...</div>
+  </div>
+</div>
+
+<!-- Action Buttons -->
+<div class="action-buttons" id="actionButtons">
+  <button class="btn btn-call" id="btnCall" onclick="openTrade('call')">
+    📈 CALL
+  </button>
+  <button class="btn btn-put" id="btnPut" onclick="openTrade('put')">
+    📉 PUT
+  </button>
+</div>
+
+<!-- Loading -->
+<div class="loading" id="loadingDiv">⏳ جاري تنفيذ الأمر...</div>
+
+<!-- Result Card (after close) -->
+<div class="result-card" id="resultCard">
+  <div class="rc-label" id="resultLabel">نتيجة الصفقة</div>
+  <div class="rc-pnl" id="resultPnl">---</div>
+  <div class="rc-detail" id="resultDetail">---</div>
+</div>
+
+<!-- Alert Bars -->
+<div class="alert-bar alert1" id="alert1Bar">
+  ⚠️ تنبيه: الخسارة وصلت -$0.30 — راقب الوضع
+</div>
+<div class="alert-bar alert2" id="alert2Bar">
+  🚨 تحذير: الخسارة -$0.50 — قرار مطلوب!
+</div>
+
+<!-- Position Card -->
+<div class="position-card" id="positionCard">
+  <div class="pos-header">
+    <span class="pos-title" id="posTitle">صفقة مفتوحة</span>
+    <span class="pos-time" id="posTime">--:--</span>
+  </div>
+  
+  <!-- PnL Bar -->
+  <div class="pnl-bar-container">
+    <div class="pnl-bar-labels">
+      <span id="slLabel">SL -$0.65</span>
+      <span id="pnlLabel">P&L: $0.00</span>
+      <span id="tpLabel">TP +$0.20</span>
+    </div>
+    <div class="pnl-bar-track">
+      <div class="pnl-bar-fill" id="pnlBarFill" style="width:50%; left:50%; background:#555;"></div>
+    </div>
+  </div>
+  
+  <div class="pos-grid">
+    <div class="pos-item">
+      <div class="pi-label">دخول</div>
+      <div class="pi-value" id="posEntry">---</div>
+    </div>
+    <div class="pos-item" id="posPnlItem">
+      <div class="pi-label">P&L ($)</div>
+      <div class="pi-value" id="posPnl">$0.00</div>
+    </div>
+    <div class="pos-item">
+      <div class="pi-label">السعر الحالي</div>
+      <div class="pi-value" id="posCurrent">---</div>
+    </div>
+    <div class="pos-item">
+      <div class="pi-label">Delta</div>
+      <div class="pi-value" id="posDelta">---</div>
+    </div>
+    <div class="pos-item">
+      <div class="pi-label">TP (+$0.20)</div>
+      <div class="pi-value" style="color:#22c55e" id="posTP">---</div>
+    </div>
+    <div class="pos-item">
+      <div class="pi-label">SL (-$0.65)</div>
+      <div class="pi-value" style="color:#ef4444" id="posSL">---</div>
+    </div>
+  </div>
+  
+  <div class="pos-item" style="margin-bottom:0; background:#0a0a15;">
+    <div class="pi-label">العقد</div>
+    <div class="pi-value" style="font-size:12px; color:#888;" id="posSymbol">---</div>
+  </div>
+</div>
+
+<!-- Stop Loss Button -->
+<button class="btn-stop" id="btnStop" onclick="closeTrade()">
+  🛑 STOP LOSS — بيع فوري
+</button>
+
+<!-- Status Footer -->
+<div class="status-footer">
+  <span class="status-dot" id="statusDot"></span>
+  <span id="statusText">جاري الاتصال...</span>
+</div>
+
+<script>
+// ── State ──
+let hasPosition = false;
+let lastPnl = 0;
+let refreshInterval = null;
+let alertSound1 = false;
+let alertSound2 = false;
+
+// ── Vibrate helper ──
+function vibrate(pattern) {
+  if (navigator.vibrate) navigator.vibrate(pattern);
+}
+
+// ── Format price ──
+function fmt(v) {
+  return v !== null && v !== undefined ? '$' + parseFloat(v).toFixed(2) : '---';
+}
+
+// ── Update PnL bar ──
+function updatePnlBar(pnlDollar, entryPrice) {
+  const fill = document.getElementById('pnlBarFill');
+  const label = document.getElementById('pnlLabel');
+  
+  // Range: -0.65 to +0.20 = 0.85 total
+  const range = 0.85;
+  const zero_pos = 0.65 / range; // 76.5% from left = zero point
+  
+  const pct = pnlDollar / range;
+  
+  if (pnlDollar >= 0) {
+    // Positive: green bar from center going right
+    const width = Math.min(pct * 100, 23.5);
+    fill.style.left = (zero_pos * 100) + '%';
+    fill.style.width = width + '%';
+    fill.style.background = '#22c55e';
+  } else {
+    // Negative: red bar from center going left
+    const width = Math.min(Math.abs(pct) * 100, 76.5);
+    fill.style.left = ((zero_pos - Math.abs(pct)) * 100) + '%';
+    fill.style.width = width + '%';
+    fill.style.background = pnlDollar <= -0.50 ? '#dc2626' : (pnlDollar <= -0.30 ? '#f97316' : '#ef4444');
+  }
+  
+  const sign = pnlDollar >= 0 ? '+' : '';
+  label.textContent = 'P&L: ' + sign + '$' + pnlDollar.toFixed(2);
+}
+
+// ── Refresh data ──
+async function refresh() {
+  try {
+    const resp = await fetch('/manual/status');
+    const data = await resp.json();
+    
+    // TSLA Price
+    const priceEl = document.getElementById('tslaPrice');
+    if (data.tsla_price > 0) {
+      priceEl.textContent = '$' + data.tsla_price.toFixed(2);
+    }
+    document.getElementById('etTime').textContent = data.et_time + ' ET';
+    
+    // Trading hours indicator
+    const dot = document.getElementById('statusDot');
+    const statusTxt = document.getElementById('statusText');
+    if (data.is_trading_hours) {
+      dot.className = 'status-dot green';
+      statusTxt.textContent = 'السوق مفتوح — جاهز للتداول';
+    } else {
+      dot.className = 'status-dot gray';
+      statusTxt.textContent = 'خارج نافذة التداول';
+    }
+    
+    // Suggested contracts (only when no position)
+    if (!data.has_position) {
+      document.getElementById('suggestionsSection').style.display = 'grid';
+      document.getElementById('resultCard').classList.remove('visible');
+      
+      if (data.suggested_call) {
+        const sc = data.suggested_call;
+        document.getElementById('callStrike').textContent = '$' + sc.strike.toFixed(0);
+        document.getElementById('callDetails').textContent = 
+          'Mid: $' + sc.mid.toFixed(2) + ' | Δ' + sc.delta.toFixed(2) + ' | ITM $' + sc.itm.toFixed(1);
+      } else {
+        document.getElementById('callStrike').textContent = 'غير متاح';
+        document.getElementById('callDetails').textContent = 'لا يوجد عقد مناسب';
+      }
+      
+      if (data.suggested_put) {
+        const sp = data.suggested_put;
+        document.getElementById('putStrike').textContent = '$' + sp.strike.toFixed(0);
+        document.getElementById('putDetails').textContent = 
+          'Mid: $' + sp.mid.toFixed(2) + ' | Δ' + sp.delta.toFixed(2) + ' | ITM $' + sp.itm.toFixed(1);
+      } else {
+        document.getElementById('putStrike').textContent = 'غير متاح';
+        document.getElementById('putDetails').textContent = 'لا يوجد عقد مناسب';
+      }
+    }
+    
+    // Position
+    if (data.has_position && data.position) {
+      const pos = data.position;
+      hasPosition = true;
+      
+      document.getElementById('suggestionsSection').style.display = 'none';
+      document.getElementById('actionButtons').style.display = 'none';
+      document.getElementById('positionCard').classList.add('visible');
+      document.getElementById('btnStop').classList.add('visible');
+      
+      const direction = pos.type === 'call' ? '📈 CALL' : '📉 PUT';
+      document.getElementById('posTitle').textContent = direction + ' — صفقة مفتوحة';
+      document.getElementById('posTime').textContent = pos.entry_time;
+      document.getElementById('posEntry').textContent = fmt(pos.entry_price);
+      document.getElementById('posCurrent').textContent = fmt(pos.current_price);
+      document.getElementById('posTP').textContent = fmt(pos.tp_price);
+      document.getElementById('posSL').textContent = fmt(pos.sl_price);
+      document.getElementById('posDelta').textContent = 'Δ' + (pos.approx_delta || '---');
+      document.getElementById('posSymbol').textContent = pos.symbol || '---';
+      
+      // PnL
+      const pnlDollar = data.pnl_dollar || 0;
+      const pnlTotal = pnlDollar * 100;
+      const pnlItem = document.getElementById('posPnlItem');
+      const pnlEl = document.getElementById('posPnl');
+      const sign = pnlDollar >= 0 ? '+' : '';
+      pnlEl.textContent = sign + '$' + pnlTotal.toFixed(2);
+      pnlItem.className = 'pos-item ' + (pnlDollar >= 0 ? 'pnl-positive' : 'pnl-negative');
+      
+      updatePnlBar(pnlDollar, pos.entry_price);
+      
+      // Alerts
+      if (data.alert2_sent) {
+        document.getElementById('alert2Bar').classList.add('visible');
+        document.getElementById('alert1Bar').classList.add('visible');
+        if (!alertSound2) {
+          alertSound2 = true;
+          vibrate([300, 100, 300, 100, 300]);
+        }
+      } else if (data.alert1_sent) {
+        document.getElementById('alert1Bar').classList.add('visible');
+        document.getElementById('alert2Bar').classList.remove('visible');
+        if (!alertSound1) {
+          alertSound1 = true;
+          vibrate([200, 100, 200]);
+        }
+      } else {
+        document.getElementById('alert1Bar').classList.remove('visible');
+        document.getElementById('alert2Bar').classList.remove('visible');
+        alertSound1 = false;
+        alertSound2 = false;
+      }
+      
+    } else if (hasPosition && !data.has_position) {
+      // Position was just closed
+      hasPosition = false;
+      alertSound1 = false;
+      alertSound2 = false;
+      
+      document.getElementById('positionCard').classList.remove('visible');
+      document.getElementById('btnStop').classList.remove('visible');
+      document.getElementById('alert1Bar').classList.remove('visible');
+      document.getElementById('alert2Bar').classList.remove('visible');
+      document.getElementById('suggestionsSection').style.display = 'grid';
+      document.getElementById('actionButtons').style.display = 'grid';
+      
+      // Show result
+      const pnl = data.last_pnl || 0;
+      const rc = document.getElementById('resultCard');
+      rc.className = 'result-card visible ' + (pnl >= 0 ? 'win' : 'loss');
+      const sign = pnl >= 0 ? '+' : '';
+      document.getElementById('resultPnl').textContent = sign + '$' + pnl.toFixed(2);
+      document.getElementById('resultLabel').textContent = pnl >= 0 ? '✅ ربح' : '❌ خسارة';
+      document.getElementById('resultDetail').textContent = data.last_reason || '';
+      
+      vibrate(pnl >= 0 ? [100, 50, 100] : [500]);
+      
+      // Clear result after 10 seconds
+      setTimeout(() => {
+        rc.classList.remove('visible');
+      }, 10000);
+    }
+    
+  } catch(e) {
+    document.getElementById('statusText').textContent = 'خطأ في الاتصال';
+    document.getElementById('statusDot').className = 'status-dot red';
+  }
+}
+
+// ── Open Trade ──
+async function openTrade(type) {
+  if (hasPosition) return;
+  
+  const confirmed = confirm(
+    type === 'call' 
+      ? '📈 شراء CALL ITM؟\nTP: +$0.20 | SL: -$0.65'
+      : '📉 شراء PUT ITM؟\nTP: +$0.20 | SL: -$0.65'
+  );
+  if (!confirmed) return;
+  
+  document.getElementById('loadingDiv').classList.add('visible');
+  document.getElementById('btnCall').disabled = true;
+  document.getElementById('btnPut').disabled = true;
+  
+  try {
+    const resp = await fetch('/manual/buy', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({type: type})
+    });
+    const data = await resp.json();
+    
+    if (data.success) {
+      hasPosition = true;
+      vibrate([100, 50, 100]);
+      await refresh();
+    } else {
+      alert('❌ فشل الشراء:\n' + (data.error || 'خطأ غير معروف'));
+    }
+  } catch(e) {
+    alert('❌ خطأ في الاتصال');
+  } finally {
+    document.getElementById('loadingDiv').classList.remove('visible');
+    document.getElementById('btnCall').disabled = false;
+    document.getElementById('btnPut').disabled = false;
+  }
+}
+
+// ── Close Trade ──
+async function closeTrade() {
+  const confirmed = confirm('🛑 تأكيد البيع الفوري؟\nسيتم البيع بسعر السوق الآن.');
+  if (!confirmed) return;
+  
+  document.getElementById('loadingDiv').classList.add('visible');
+  document.getElementById('btnStop').disabled = true;
+  
+  try {
+    const resp = await fetch('/manual/sell', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({reason: 'manual_stop'})
+    });
+    const data = await resp.json();
+    
+    if (data.success) {
+      vibrate([300]);
+      
+      // Show result immediately
+      const pnl = data.pnl || 0;
+      const rc = document.getElementById('resultCard');
+      rc.className = 'result-card visible ' + (pnl >= 0 ? 'win' : 'loss');
+      const sign = pnl >= 0 ? '+' : '';
+      document.getElementById('resultPnl').textContent = sign + '$' + pnl.toFixed(2);
+      document.getElementById('resultLabel').textContent = pnl >= 0 ? '✅ ربح' : '❌ خسارة';
+      document.getElementById('resultDetail').textContent = 
+        'دخول: $' + data.entry_price.toFixed(2) + ' | خروج: $' + data.exit_price.toFixed(2);
+      
+      hasPosition = false;
+      document.getElementById('positionCard').classList.remove('visible');
+      document.getElementById('btnStop').classList.remove('visible');
+      document.getElementById('alert1Bar').classList.remove('visible');
+      document.getElementById('alert2Bar').classList.remove('visible');
+      document.getElementById('suggestionsSection').style.display = 'grid';
+      document.getElementById('actionButtons').style.display = 'grid';
+      
+      setTimeout(() => rc.classList.remove('visible'), 10000);
+      await refresh();
+    } else {
+      alert('❌ فشل البيع:\n' + (data.error || 'خطأ'));
+    }
+  } catch(e) {
+    alert('❌ خطأ في الاتصال');
+  } finally {
+    document.getElementById('loadingDiv').classList.remove('visible');
+    document.getElementById('btnStop').disabled = false;
+  }
+}
+
+// ── Start auto-refresh ──
+refresh();
+refreshInterval = setInterval(refresh, 5000);
+
+// ── Visibility change (pause when tab hidden) ──
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    clearInterval(refreshInterval);
+  } else {
+    refresh();
+    refreshInterval = setInterval(refresh, 5000);
+  }
+});
+</script>
+</body>
+</html>

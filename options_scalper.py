@@ -49,22 +49,26 @@ SCALP_END_MINUTE   = 45   # قبل الإغلاق بـ 15 دقيقة
 FORCE_CLOSE_HOUR   = 15
 FORCE_CLOSE_MINUTE = 50   # بيع كل شي المتبقي
 
-# ── Layer 1: ATM Scalp ───────────────────────────────────────────────────────
-ATM_CONTRACTS      = 2      # عقدين ATM
-ATM_TP1_PCT        = 0.05   # +5% بيع العقد الأول
-ATM_TP2_PCT        = 0.10   # +10% بيع العقد الثاني
-ATM_SL_PCT         = 0.25   # -25% ستوب
-ATM_REINFORCE_PCT  = 0.15   # -15% = تعزيز (شراء 2 إضافية)
-ATM_REINFORCE_TP   = 0.05   # +5% من المتوسط الجديد = بيع الكل
-ATM_MAX_REINFORCE  = 1      # تعزيز مرة وحدة بس
+# ── Layer 1: ATM Scalp (V9 — 3 Contracts Strategy) ─────────────────────────
+ATM_CONTRACTS      = 3      # 3 عقود ATM
+ATM_TP1_PCT        = 0.05   # +5% بيع C1 + C2 (عقدين)
+ATM_TP2_PCT        = 0.10   # +10% بيع C3 (الـ Runner)
+ATM_SL_PCT         = 0.10   # -10% ستوب للكل
+ATM_REINFORCE_PCT  = 0.15   # غير مستخدم (احتياطي)
+ATM_REINFORCE_TP   = 0.05   # غير مستخدم (احتياطي)
+ATM_MAX_REINFORCE  = 0      # لا تعزيز في الاستراتيجية الجديدة
 
-# ── Layer 2: ITM Pullback ────────────────────────────────────────────────────
+# ── Layer 2: ITM Manual Scalp (V9 — Web Interface) ──────────────────────────
 ITM_CONTRACTS      = 1      # عقد واحد ITM
 ITM_DELTA_MIN      = 0.70
 ITM_DELTA_MAX      = 0.88
-ITM_ENTRY_BELOW    = 0.015  # يحط الأمر تحت البولباك بـ 1-2%
-ITM_TP_PCT         = 0.40   # +40% جني أرباح
-ITM_SL_PCT         = 0.16   # -16% ستوب
+ITM_ENTRY_BELOW    = 0.015  # احتياطي
+ITM_TP_DOLLARS     = 0.20   # +$0.20 جني أرباح (Market Order)
+ITM_SL_DOLLARS     = 0.65   # -$0.65 بيع تلقائي (Market Order)
+ITM_ALERT1_DOLLARS = 0.30   # تنبيه 1 عند -$0.30
+ITM_ALERT2_DOLLARS = 0.50   # تنبيه 2 عند -$0.50
+ITM_TP_PCT         = 0.40   # احتياطي
+ITM_SL_PCT         = 0.16   # احتياطي
 ITM_MIN_VOLUME     = 100
 
 # ── Risk Management ──────────────────────────────────────────────────────────
@@ -1054,9 +1058,9 @@ def execute_atm_scalp(trend, price, expiry):
         "type": contract["type"],
         "qty": ATM_CONTRACTS,
         "entry_price": mid,
-        "tp1_price": round(mid * (1 + ATM_TP1_PCT), 2),
-        "tp2_price": round(mid * (1 + ATM_TP2_PCT), 2),
-        "sl_price": round(mid * (1 - ATM_SL_PCT), 2),
+        "tp1_price": round(mid * (1 + ATM_TP1_PCT), 2),   # +5% بيع C1+C2
+        "tp2_price": round(mid * (1 + ATM_TP2_PCT), 2),   # +10% بيع C3
+        "sl_price": round(mid * (1 - ATM_SL_PCT), 2),     # -10% ستوب
         "reinforce_price": round(mid * (1 - ATM_REINFORCE_PCT), 2),
         "entry_time": _et_now().strftime("%I:%M:%S %p"),
         "trend": trend,
@@ -1065,7 +1069,9 @@ def execute_atm_scalp(trend, price, expiry):
         "reinforced": False,
         "avg_price": mid,
         "total_qty": ATM_CONTRACTS,
-        "pnl": 0.0
+        "pnl": 0.0,
+        "c3_be_stop": mid,   # BE Stop لـ C3 بعد بيع C1+C2
+        "c3_be_active": False
     }
     
     _state["atm_positions"].append(position)
@@ -1075,21 +1081,20 @@ def execute_atm_scalp(trend, price, expiry):
     direction = "CALL" if trend == "BULL" else "PUT"
     tf_info = f"15m={_state['trend_15m'] or 'N/A'} | 5m={_state['trend_5m'] or 'N/A'}"
     msg = (
-        f"🤖 <b>V8 سكالب — {direction}</b>\n"
+        f"🤖 <b>V9 ATM — {direction} (3 عقود)</b>\n"
         f"━━━━━━━━━━━━━━━\n"
-        f"📥 شراء {ATM_CONTRACTS} عقود ATM\n"
+        f"📥 شراء 3 عقود ATM\n"
         f"📋 {symbol}\n"
         f"💵 السعر: ${mid:.2f}\n"
-        f"🎯 TP1: ${position['tp1_price']:.2f} (+5%)\n"
-        f"🎯 TP2: ${position['tp2_price']:.2f} (+10%)\n"
-        f"🛑 SL: ${position['sl_price']:.2f} (-25%)\n"
-        f"🔄 تعزيز: ${position['reinforce_price']:.2f} (-15%)\n"
+        f"🎯 TP1 (+5%): ${position['tp1_price']:.2f} → بيع C1+C2\n"
+        f"🎯 TP2 (+10%): ${position['tp2_price']:.2f} → بيع C3 (Runner)\n"
+        f"🛑 SL (-10%): ${position['sl_price']:.2f}\n"
         f"📊 TSLA: ${price:.2f} | VWAP: ${_state['vwap']:.2f}\n"
         f"📈 {tf_info}\n"
         f"🕐 {position['entry_time']} ET"
     )
     send_telegram(msg)
-    logger.info(f"[V8 ATM] Opened: {symbol} x{ATM_CONTRACTS} @ ${mid:.2f}")
+    logger.info(f"[V9 ATM] Opened: {symbol} x3 @ ${mid:.2f} | TP1={position['tp1_price']} TP2={position['tp2_price']} SL={position['sl_price']}")
     
     return True, position
 
@@ -1146,46 +1151,9 @@ def monitor_atm_positions():
             _record_trade(pos, "SL", pnl)
             continue
         
-        # ── Check Reinforce (-15%) ──
-        if (not pos["reinforced"] and current_mid <= pos["reinforce_price"]
-                and _state["trend"] == pos["trend"]):
-            # Check if trend still valid before reinforcing
-            safe, _ = is_safe_zone(_state["current_price"], _state["trend"])
-            if safe:
-                reinforce_order = place_option_order(
-                    symbol=symbol, qty=ATM_CONTRACTS, side="buy",
-                    order_type="limit", limit_price=current_mid,
-                    position_intent="buy_to_open"
-                )
-                if reinforce_order:
-                    old_total = pos["total_qty"]
-                    new_total = old_total + ATM_CONTRACTS
-                    pos["avg_price"] = round(
-                        (avg_price * old_total + current_mid * ATM_CONTRACTS) / new_total, 2
-                    )
-                    pos["total_qty"] = new_total
-                    pos["reinforced"] = True
-                    pos["sl_price"] = round(pos["avg_price"] * (1 - ATM_SL_PCT), 2)
-                    pos["tp1_price"] = round(pos["avg_price"] * (1 + ATM_REINFORCE_TP), 2)
-                    pos["tp2_price"] = round(pos["avg_price"] * (1 + ATM_TP2_PCT), 2)
-                    
-                    msg = (
-                        f"🔄 <b>V8 تعزيز — ATM</b>\n"
-                        f"━━━━━━━━━━━━━━━\n"
-                        f"📋 {symbol}\n"
-                        f"📥 تعزيز +{ATM_CONTRACTS} عقود @ ${current_mid:.2f}\n"
-                        f"📊 متوسط جديد: ${pos['avg_price']:.2f}\n"
-                        f"📦 إجمالي: {new_total} عقود\n"
-                        f"🎯 TP: ${pos['tp1_price']:.2f}\n"
-                        f"🛑 SL: ${pos['sl_price']:.2f}\n"
-                        f"🕐 {_et_now().strftime('%I:%M %p')} ET"
-                    )
-                    send_telegram(msg)
-            continue
-        
-        # ── Check TP1 (+5%) — sell first contract ──
+        # ── Check TP1 (+5%) — بيع C1+C2 (عقدين) ──
         if pos["qty_sold"] == 0 and current_mid >= pos["tp1_price"]:
-            sell_qty = 1
+            sell_qty = 2  # بيع C1 + C2
             sell_order = place_option_order(
                 symbol=symbol, qty=sell_qty, side="sell",
                 order_type="market", position_intent="sell_to_close"
@@ -1198,22 +1166,55 @@ def monitor_atm_positions():
                 _state["total_pnl"] += pnl
                 _state["consecutive_losses"] = 0
                 _state["wins"] += 1
+                # تفعيل BE Stop لـ C3
+                pos["c3_be_active"] = True
+                pos["c3_be_stop"] = avg_price  # بيع C3 لو رجع للدخول
                 
                 msg = (
-                    f"💰 <b>V8 TP1 — ATM +5%</b>\n"
+                    f"💰 <b>V9 TP1 — ATM +5%</b>\n"
                     f"━━━━━━━━━━━━━━━\n"
                     f"📋 {symbol}\n"
-                    f"📤 بيع {sell_qty} عقد @ ${current_mid:.2f}\n"
+                    f"📤 بيع C1+C2 (2 عقود) @ ${current_mid:.2f}\n"
                     f"💵 P&L: <b>${pnl:+.2f}</b>\n"
-                    f"📦 متبقي: {pos['total_qty'] - pos['qty_sold']} عقود\n"
+                    f"🏃 C3 Runner متبقي — هدف ${pos['tp2_price']:.2f} (+10%)\n"
+                    f"🛑 BE Stop C3: ${pos['c3_be_stop']:.2f}\n"
                     f"🕐 {_et_now().strftime('%I:%M %p')} ET"
                 )
                 send_telegram(msg)
                 _record_trade(pos, "TP1", pnl)
             continue
         
-        # ── Check TP2 (+10%) — sell remaining ──
-        if pos["qty_sold"] >= 1 and current_mid >= pos["tp2_price"]:
+        # ── Check C3 BE Stop (بعد بيع C1+C2) ──
+        if pos["c3_be_active"] and pos["qty_sold"] == 2:
+            remaining = pos["total_qty"] - pos["qty_sold"]
+            if remaining > 0 and current_mid <= pos["c3_be_stop"]:
+                sell_order = place_option_order(
+                    symbol=symbol, qty=remaining, side="sell",
+                    order_type="market", position_intent="sell_to_close"
+                )
+                if sell_order:
+                    pnl = (current_mid - avg_price) * remaining * 100
+                    pos["qty_sold"] += remaining
+                    pos["pnl"] += pnl
+                    pos["status"] = "closed_be"
+                    _state["daily_pnl"] += pnl
+                    _state["total_pnl"] += pnl
+                    
+                    msg = (
+                        f"🔄 <b>V9 BE Stop — C3 Runner</b>\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"📋 {symbol}\n"
+                        f"📤 بيع C3 @ ${current_mid:.2f} (BE Stop)\n"
+                        f"💵 P&L C3: <b>${pnl:+.2f}</b>\n"
+                        f"✅ الصفقة مكتملة\n"
+                        f"🕐 {_et_now().strftime('%I:%M %p')} ET"
+                    )
+                    send_telegram(msg)
+                    _record_trade(pos, "BE_STOP", pnl)
+            continue
+        
+        # ── Check TP2 (+10%) — بيع C3 Runner ──
+        if pos["qty_sold"] >= 2 and current_mid >= pos["tp2_price"]:
             remaining = pos["total_qty"] - pos["qty_sold"]
             if remaining > 0:
                 sell_order = place_option_order(
@@ -1228,14 +1229,15 @@ def monitor_atm_positions():
                     _state["daily_pnl"] += pnl
                     _state["total_pnl"] += pnl
                     _state["wins"] += 1
+                    pos["c3_be_active"] = False
                     
                     msg = (
-                        f"🎯 <b>V8 TP2 — ATM +10%!</b>\n"
+                        f"🎯 <b>V9 TP2 — C3 Runner +10%! 🚀</b>\n"
                         f"━━━━━━━━━━━━━━━\n"
                         f"📋 {symbol}\n"
-                        f"📤 بيع {remaining} عقود @ ${current_mid:.2f}\n"
-                        f"💵 P&L: <b>${pnl:+.2f}</b>\n"
-                        f"✅ صفقة مكتملة\n"
+                        f"📤 بيع C3 Runner @ ${current_mid:.2f}\n"
+                        f"💵 P&L C3: <b>${pnl:+.2f}</b>\n"
+                        f"✅ الصفقة مكتملة بالكامل\n"
                         f"🕐 {_et_now().strftime('%I:%M %p')} ET"
                     )
                     send_telegram(msg)
@@ -1854,4 +1856,354 @@ def get_scalper_status():
         "portfolio_start": _state["portfolio_start_value"],
         "portfolio_current": _state["portfolio_current_value"],
         "trades_today": len(_state["trades_today"])
+    }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Layer 2: ITM Manual Scalp — Web Interface Engine (V9)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# حالة الخط 2 اليدوي
+_manual_state = {
+    "position": None,      # الصفقة المفتوحة
+    "alert1_sent": False,  # تنبيه -$0.30
+    "alert2_sent": False,  # تنبيه -$0.50
+    "monitor_active": False,
+    "last_price": 0.0,
+    "pnl_dollar": 0.0,
+}
+
+_manual_monitor_thread = None
+
+def find_itm_contract_for_manual(price, option_type):
+    """
+    يجد أفضل عقد ITM بـ Delta 0.70-0.88 لأمر يدوي.
+    option_type: "call" أو "put"
+    """
+    expiry = _today_expiry()
+    
+    if option_type == "call":
+        strike_min = round(price - 15, 0)
+        strike_max = round(price - 2, 0)
+    else:
+        strike_min = round(price + 2, 0)
+        strike_max = round(price + 15, 0)
+    
+    contracts = get_options_chain(expiry, option_type, strike_min, strike_max)
+    if not contracts:
+        logger.warning(f"[V9 Manual] No ITM contracts found for {option_type}")
+        return None
+    
+    best = None
+    best_score = -1
+    
+    for c in contracts:
+        strike = float(c.get("strike_price", 0))
+        
+        if option_type == "call":
+            itm_amount = price - strike
+        else:
+            itm_amount = strike - price
+        
+        if itm_amount <= 0:
+            continue
+        
+        # تقدير Delta بناءً على ITM amount
+        approx_delta = min(0.97, 0.50 + itm_amount * 0.045)
+        
+        if ITM_DELTA_MIN <= approx_delta <= ITM_DELTA_MAX:
+            symbol = c.get("symbol", "")
+            quote = get_option_quote(symbol)
+            
+            if quote and quote["mid"] > 0:
+                spread_pct = (quote["ask"] - quote["bid"]) / quote["mid"] if quote["mid"] > 0 else 1
+                delta_score = 1 - abs(approx_delta - 0.79) * 5  # أفضل delta = 0.79
+                spread_score = max(0, 1 - spread_pct * 3)
+                score = delta_score + spread_score
+                
+                if score > best_score:
+                    best_score = score
+                    best = {
+                        "symbol": symbol,
+                        "strike": strike,
+                        "type": option_type,
+                        "expiry": expiry,
+                        "bid": quote["bid"],
+                        "ask": quote["ask"],
+                        "mid": quote["mid"],
+                        "approx_delta": round(approx_delta, 2),
+                        "itm_amount": round(itm_amount, 2),
+                        "spread_pct": round(spread_pct * 100, 1)
+                    }
+    
+    return best
+
+
+def execute_manual_itm(option_type):
+    """
+    تنفيذ شراء ITM يدوي (من زر CALL أو PUT في الواجهة).
+    Returns: (success: bool, data: dict)
+    """
+    global _manual_state
+    
+    # لا تفتح صفقة جديدة لو في صفقة مفتوحة
+    if _manual_state["position"]:
+        return False, {"error": "يوجد صفقة مفتوحة — أغلقها أولاً"}
+    
+    # جلب سعر TSLA
+    snap = get_tsla_snapshot()
+    if not snap or snap["price"] <= 0:
+        return False, {"error": "لا يمكن جلب سعر TSLA"}
+    
+    price = snap["price"]
+    
+    # إيجاد أفضل عقد ITM
+    contract = find_itm_contract_for_manual(price, option_type)
+    if not contract:
+        return False, {"error": f"لا يوجد عقد ITM مناسب (Delta 0.70-0.88) لـ {option_type.upper()}"}
+    
+    symbol = contract["symbol"]
+    mid = contract["mid"]
+    
+    if mid <= 0:
+        return False, {"error": f"سعر غير صالح للعقد {symbol}"}
+    
+    # شراء Market Order
+    order = place_option_order(
+        symbol=symbol, qty=1, side="buy",
+        order_type="market", position_intent="buy_to_open"
+    )
+    
+    if not order:
+        return False, {"error": "فشل تنفيذ أمر الشراء"}
+    
+    # حساب مستويات TP و SL
+    tp_price = round(mid + ITM_TP_DOLLARS, 2)
+    sl_price = round(mid - ITM_SL_DOLLARS, 2)
+    alert1_price = round(mid - ITM_ALERT1_DOLLARS, 2)
+    alert2_price = round(mid - ITM_ALERT2_DOLLARS, 2)
+    
+    position = {
+        "order_id": order.get("id"),
+        "symbol": symbol,
+        "strike": contract["strike"],
+        "type": option_type,
+        "approx_delta": contract["approx_delta"],
+        "itm_amount": contract["itm_amount"],
+        "entry_price": mid,
+        "current_price": mid,
+        "tp_price": tp_price,
+        "sl_price": sl_price,
+        "alert1_price": alert1_price,
+        "alert2_price": alert2_price,
+        "entry_time": _et_now().strftime("%I:%M:%S %p"),
+        "entry_tsla": price,
+        "status": "open",
+        "pnl": 0.0
+    }
+    
+    _manual_state["position"] = position
+    _manual_state["alert1_sent"] = False
+    _manual_state["alert2_sent"] = False
+    _manual_state["last_price"] = mid
+    _manual_state["pnl_dollar"] = 0.0
+    
+    direction = "CALL 🟢" if option_type == "call" else "PUT 🔴"
+    logger.info(f"[V9 Manual] Opened {direction}: {symbol} @ ${mid:.2f} | "
+                f"TP=${tp_price} SL=${sl_price} Delta={contract['approx_delta']}")
+    
+    # بدء مراقبة الصفقة
+    _start_manual_monitor()
+    
+    return True, {
+        "symbol": symbol,
+        "strike": contract["strike"],
+        "type": option_type,
+        "entry_price": mid,
+        "tp_price": tp_price,
+        "sl_price": sl_price,
+        "alert1_price": alert1_price,
+        "alert2_price": alert2_price,
+        "approx_delta": contract["approx_delta"],
+        "entry_time": position["entry_time"],
+        "entry_tsla": price
+    }
+
+
+def close_manual_itm(reason="manual"):
+    """
+    بيع ITM يدوي (زر STOP LOSS أو بيع تلقائي).
+    Returns: (success: bool, data: dict)
+    """
+    global _manual_state
+    
+    pos = _manual_state["position"]
+    if not pos:
+        return False, {"error": "لا توجد صفقة مفتوحة"}
+    
+    symbol = pos["symbol"]
+    
+    # جلب السعر الحالي
+    quote = get_option_quote(symbol)
+    current_price = quote["mid"] if quote and quote["mid"] > 0 else pos["entry_price"]
+    
+    # بيع Market Order
+    order = place_option_order(
+        symbol=symbol, qty=1, side="sell",
+        order_type="market", position_intent="sell_to_close"
+    )
+    
+    pnl = round((current_price - pos["entry_price"]) * 100, 2)
+    
+    result = {
+        "symbol": symbol,
+        "entry_price": pos["entry_price"],
+        "exit_price": current_price,
+        "pnl": pnl,
+        "reason": reason,
+        "exit_time": _et_now().strftime("%I:%M:%S %p")
+    }
+    
+    pos["status"] = "closed"
+    pos["pnl"] = pnl
+    _manual_state["position"] = None
+    _manual_state["monitor_active"] = False
+    
+    logger.info(f"[V9 Manual] Closed {symbol} @ ${current_price:.2f} | PnL=${pnl:+.2f} | Reason={reason}")
+    
+    return True, result
+
+
+def _manual_monitor_loop():
+    """
+    حلقة مراقبة صفقة الخط 2 اليدوي.
+    تتحقق كل 10 ثواني من:
+    - TP: +$0.20 → بيع تلقائي
+    - SL: -$0.65 → بيع تلقائي
+    - تنبيه 1: -$0.30
+    - تنبيه 2: -$0.50
+    """
+    global _manual_state
+    
+    logger.info("[V9 Manual] Monitor started")
+    
+    while _manual_state["monitor_active"]:
+        try:
+            pos = _manual_state["position"]
+            if not pos or pos.get("status") != "open":
+                _manual_state["monitor_active"] = False
+                break
+            
+            symbol = pos["symbol"]
+            quote = get_option_quote(symbol)
+            
+            if not quote or quote["mid"] <= 0:
+                time.sleep(10)
+                continue
+            
+            current_price = quote["mid"]
+            entry_price = pos["entry_price"]
+            pnl_dollar = round(current_price - entry_price, 2)
+            
+            # تحديث الحالة
+            pos["current_price"] = current_price
+            pos["pnl"] = round(pnl_dollar * 100, 2)
+            _manual_state["last_price"] = current_price
+            _manual_state["pnl_dollar"] = pnl_dollar
+            
+            # ── TP تلقائي: +$0.20 ──
+            if current_price >= pos["tp_price"]:
+                logger.info(f"[V9 Manual] TP hit! ${current_price:.2f} >= ${pos['tp_price']:.2f}")
+                close_manual_itm(reason="TP")
+                break
+            
+            # ── SL تلقائي: -$0.65 ──
+            if current_price <= pos["sl_price"]:
+                logger.info(f"[V9 Manual] SL hit! ${current_price:.2f} <= ${pos['sl_price']:.2f}")
+                close_manual_itm(reason="SL")
+                break
+            
+            # ── تنبيه 1: -$0.30 ──
+            if not _manual_state["alert1_sent"] and current_price <= pos["alert1_price"]:
+                _manual_state["alert1_sent"] = True
+                logger.warning(f"[V9 Manual] ALERT 1: -$0.30 | ${current_price:.2f}")
+            
+            # ── تنبيه 2: -$0.50 ──
+            if not _manual_state["alert2_sent"] and current_price <= pos["alert2_price"]:
+                _manual_state["alert2_sent"] = True
+                logger.warning(f"[V9 Manual] ALERT 2: -$0.50 | ${current_price:.2f}")
+            
+            time.sleep(10)
+            
+        except Exception as e:
+            logger.error(f"[V9 Manual Monitor] Error: {e}")
+            time.sleep(10)
+    
+    logger.info("[V9 Manual] Monitor stopped")
+
+
+def _start_manual_monitor():
+    """تشغيل thread مراقبة الصفقة اليدوية."""
+    global _manual_monitor_thread, _manual_state
+    
+    _manual_state["monitor_active"] = True
+    
+    if _manual_monitor_thread and _manual_monitor_thread.is_alive():
+        return
+    
+    _manual_monitor_thread = threading.Thread(
+        target=_manual_monitor_loop, daemon=True, name="V9_Manual_Monitor"
+    )
+    _manual_monitor_thread.start()
+
+
+def get_manual_status():
+    """إرجاع حالة الخط 2 اليدوي للواجهة."""
+    pos = _manual_state["position"]
+    
+    # جلب سعر TSLA الحالي
+    snap = get_tsla_snapshot()
+    tsla_price = snap["price"] if snap else 0
+    
+    # اقتراح عقد ITM للعرض (قبل الضغط)
+    suggested_call = None
+    suggested_put = None
+    
+    if tsla_price > 0 and not pos:
+        try:
+            c = find_itm_contract_for_manual(tsla_price, "call")
+            if c:
+                suggested_call = {
+                    "symbol": c["symbol"],
+                    "strike": c["strike"],
+                    "mid": c["mid"],
+                    "delta": c["approx_delta"],
+                    "itm": c["itm_amount"]
+                }
+        except:
+            pass
+        
+        try:
+            p = find_itm_contract_for_manual(tsla_price, "put")
+            if p:
+                suggested_put = {
+                    "symbol": p["symbol"],
+                    "strike": p["strike"],
+                    "mid": p["mid"],
+                    "delta": p["approx_delta"],
+                    "itm": p["itm_amount"]
+                }
+        except:
+            pass
+    
+    return {
+        "tsla_price": tsla_price,
+        "has_position": bool(pos),
+        "position": pos,
+        "alert1_sent": _manual_state["alert1_sent"],
+        "alert2_sent": _manual_state["alert2_sent"],
+        "pnl_dollar": _manual_state["pnl_dollar"],
+        "suggested_call": suggested_call,
+        "suggested_put": suggested_put,
+        "is_trading_hours": _is_scalp_window(),
+        "et_time": _et_now().strftime("%I:%M:%S %p")
     }

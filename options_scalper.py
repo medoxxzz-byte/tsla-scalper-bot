@@ -1879,18 +1879,36 @@ def find_itm_contract_for_manual(price, option_type):
     يجد أفضل عقد ITM بـ Delta 0.70-0.88 لأمر يدوي.
     option_type: "call" أو "put"
     """
-    expiry = _today_expiry()
+    # جرب اليوم أولاً ثم الأيام القادمة (fallback)
+    from datetime import datetime, timedelta, timezone
+    et_now = datetime.now(timezone.utc) - timedelta(hours=4)
+    expiry_candidates = []
+    for i in range(0, 8):  # جرب 8 أيام قادمة
+        d = et_now + timedelta(days=i)
+        if d.weekday() < 5:  # Mon-Fri فقط
+            expiry_candidates.append(d.strftime('%Y-%m-%d'))
+        if len(expiry_candidates) >= 4:
+            break
     
     if option_type == "call":
-        strike_min = round(price - 15, 0)
-        strike_max = round(price - 2, 0)
+        strike_min = round(price - 20, 0)
+        strike_max = round(price - 1, 0)
     else:
-        strike_min = round(price + 2, 0)
-        strike_max = round(price + 15, 0)
+        strike_min = round(price + 1, 0)
+        strike_max = round(price + 20, 0)
     
-    contracts = get_options_chain(expiry, option_type, strike_min, strike_max)
+    contracts = []
+    expiry = expiry_candidates[0]
+    for exp in expiry_candidates:
+        c = get_options_chain(exp, option_type, strike_min, strike_max)
+        if c:
+            contracts = c
+            expiry = exp
+            logger.info(f"[V9 Manual] Found {len(c)} contracts for {exp}")
+            break
+    
     if not contracts:
-        logger.warning(f"[V9 Manual] No ITM contracts found for {option_type}")
+        logger.warning(f"[V9 Manual] No ITM contracts found for {option_type} in next 4 trading days")
         return None
     
     best = None

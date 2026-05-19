@@ -2183,17 +2183,35 @@ def _manual_monitor_loop():
             pos["pnl"] = round(pnl_dollar * 100, 2)
             _manual_state["last_price"] = current_price
             _manual_state["pnl_dollar"] = pnl_dollar
+
+            # V11: SSE — بث فوري لجميع العملاء المتصلين
+            try:
+                _sse_broadcast({
+                    "type":          "pnl",
+                    "current_price": current_price,
+                    "entry_price":   pos["entry_price"],
+                    "pnl_dollar":    pnl_dollar,
+                    "pnl_pct":       round(pnl_dollar / pos["entry_price"] * 100, 2),
+                    "tp_price":      pos["tp_price"],
+                    "sl_price":      pos["sl_price"],
+                    "symbol":        pos["symbol"],
+                    "direction":     pos.get("type", "").upper(),
+                })
+            except Exception:
+                pass
             
             # ── TP تلقائي: +$0.20 ──
             if current_price >= pos["tp_price"]:
                 logger.info(f"[V9 Manual] TP hit! ${current_price:.2f} >= ${pos['tp_price']:.2f}")
                 close_manual_itm(reason="TP")
+                _sse_broadcast({"type": "closed", "reason": "TP", "pnl_dollar": pnl_dollar})
                 break
             
             # ── SL تلقائي: -$0.65 ──
             if current_price <= pos["sl_price"]:
                 logger.info(f"[V9 Manual] SL hit! ${current_price:.2f} <= ${pos['sl_price']:.2f}")
                 close_manual_itm(reason="SL")
+                _sse_broadcast({"type": "closed", "reason": "SL", "pnl_dollar": pnl_dollar})
                 break
             
             # ── تنبيه 1: -$0.30 ──
@@ -2238,6 +2256,49 @@ def _manual_monitor_loop():
             time.sleep(5)
     
     logger.info("[V9 Manual] Monitor stopped")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# V11 — SSE (Server-Sent Events) broadcaster
+# كل عميل متصل يحصل على queue خاصة به — الخادم يبث التحديثات فور حدوثها
+# ══════════════════════════════════════════════════════════════════════════════
+import queue as _queue_module
+
+_sse_clients: list = []          # قائمة queues للعملاء المتصلين
+_sse_lock = threading.Lock()
+
+
+def sse_subscribe() -> _queue_module.Queue:
+    """تسجيل عميل جديد — يُرجع queue يستقبل منها التحديثات."""
+    q: _queue_module.Queue = _queue_module.Queue(maxsize=50)
+    with _sse_lock:
+        _sse_clients.append(q)
+    return q
+
+
+def sse_unsubscribe(q: _queue_module.Queue) -> None:
+    """إلغاء تسجيل عميل عند قطع الاتصال."""
+    with _sse_lock:
+        try:
+            _sse_clients.remove(q)
+        except ValueError:
+            pass
+
+
+def _sse_broadcast(data: dict) -> None:
+    """إرسال بيانات لجميع العملاء المتصلين."""
+    import json
+    msg = "data: " + json.dumps(data) + "\n\n"
+    dead = []
+    with _sse_lock:
+        clients = list(_sse_clients)
+    for q in clients:
+        try:
+            q.put_nowait(msg)
+        except _queue_module.Full:
+            dead.append(q)
+    for q in dead:
+        sse_unsubscribe(q)
 
 
 def _start_manual_monitor():

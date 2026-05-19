@@ -2309,6 +2309,46 @@ def manual_status():
     return jsonify(status)
 
 
+@app.route('/manual/stream', methods=['GET'])
+def manual_stream():
+    """SSE stream — V11: يبث P&L وحالة الصفقة فورياً لحظة حدوثها."""
+    if not _V8_AVAILABLE:
+        return jsonify({"error": "V9 not available"}), 503
+
+    from options_scalper import sse_subscribe, sse_unsubscribe, get_manual_status
+    import json
+
+    def event_stream():
+        q = sse_subscribe()
+        try:
+            # إرسال الحالة الحالية فور الاتصال
+            status = get_manual_status()
+            yield "data: " + json.dumps({"type": "init", **status}) + "\n\n"
+            # انتظار التحديثات
+            while True:
+                try:
+                    msg = q.get(timeout=25)   # timeout لإرسال heartbeat
+                    yield msg
+                except Exception:
+                    # heartbeat لإبقاء الاتصال حياً
+                    yield ": heartbeat\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            sse_unsubscribe(q)
+
+    from flask import Response, stream_with_context
+    return Response(
+        stream_with_context(event_stream()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Access-Control-Allow-Origin': '*',
+        }
+    )
+
+
 @app.route('/manual/buy', methods=['POST'])
 def manual_buy():
     """Execute manual ITM buy order."""

@@ -1077,11 +1077,63 @@ async function closeTrade() {
 }
 
 // ══════════════════════════════════════════════════════
-// Auto Refresh — V10: كل 2 ثانية
+// V11: SSE — P&L فوري + polling للبيانات الثانوية
 // ══════════════════════════════════════════════════════
+let _sseSource = null;
+let _sseRetries = 0;
+
+function applyPnlUpdate(d) {
+  // تحديث P&L فوري من SSE
+  if (d.type === 'pnl') {
+    document.getElementById('stCurrent').textContent = fmt(d.current_price);
+    updatePnlBig(d.pnl_dollar);
+    updateBar(d.pnl_dollar);
+  } else if (d.type === 'closed') {
+    // الصفقة أغلقت تلقائياً — رفرش كامل
+    refresh();
+  } else if (d.type === 'init') {
+    // حالة أولية عند الاتصال
+    refreshManual();
+  }
+}
+
+function startSSE() {
+  if (_sseSource) { _sseSource.close(); _sseSource = null; }
+  const es = new EventSource('/manual/stream');
+  _sseSource = es;
+
+  es.onmessage = (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      applyPnlUpdate(d);
+      _sseRetries = 0;
+    } catch(err) {}
+  };
+
+  es.onerror = () => {
+    es.close();
+    _sseSource = null;
+    _sseRetries++;
+    // إعادة الاتصال بعد 2-10 ثوانٍ حسب عدد المحاولات
+    const delay = Math.min(2000 * _sseRetries, 10000);
+    setTimeout(startSSE, delay);
+  };
+}
+
+// بدء SSE فور التحميل
+startSSE();
+
+// Polling للبيانات الثانوية (السعر المقترح، PE، Streak) — كل 5 ثوانٍ
 refresh();
-setInterval(refresh, 2000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+setInterval(refresh, 5000);
+
+// عند العودة للتبويب: إعادة الاتصال SSE + رفرش سريع
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    startSSE();
+    refresh();
+  }
+});
 </script>
 </body>
 </html>

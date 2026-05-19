@@ -2025,6 +2025,30 @@ def execute_manual_itm(option_type):
     _manual_state["last_price"] = mid
     _manual_state["pnl_dollar"] = 0.0
     
+    # ── تسجيل تلقائي في السجل عند الفتح ──
+    journal_entry = {
+        "direction": option_type.upper(),
+        "symbol": symbol,
+        "strike": contract["strike"],
+        "expiry": symbol[4:10] if len(symbol) > 10 else "",
+        "entry_price": mid,
+        "entry_tsla": price,
+        "tp_price": tp_price,
+        "sl_price": sl_price,
+        "delta": contract["approx_delta"],
+        "entry_time": _et_now().strftime("%I:%M:%S %p ET"),
+        "status": "open",
+        "pnl_dollar": 0.0,
+        "close_reason": "",
+        "exit_price": None,
+        "exit_time": "",
+        "notes": "",
+        "images": []
+    }
+    journal_id = add_journal_entry(journal_entry)
+    _manual_state["journal_id"] = journal_id
+    logger.info(f"[V9 Manual] Journal entry #{journal_id} created")
+    
     direction = "CALL 🟢" if option_type == "call" else "PUT 🔴"
     logger.info(f"[V9 Manual] Opened {direction}: {symbol} @ ${mid:.2f} | "
                 f"TP=${tp_price} SL=${sl_price} Delta={contract['approx_delta']}")
@@ -2087,6 +2111,20 @@ def close_manual_itm(reason="manual"):
     _manual_state["monitor_active"] = False
     _manual_state["last_reason"] = reason  # TP / SL / MANUAL / ERROR
     _manual_state["last_pnl"] = pnl
+    
+    # ── تحديث تلقائي للسجل عند الإغلاق ──
+    journal_id = _manual_state.get("journal_id")
+    if journal_id:
+        reason_ar = {"TP": "جني أرباح تلقائي", "SL": "ستوب لوس تلقائي", "MANUAL": "إغلاق يدوي", "ERROR": "خطأ تقني"}.get(reason, reason)
+        update_journal_entry(journal_id, {
+            "status": "closed",
+            "exit_price": current_price,
+            "exit_time": _et_now().strftime("%I:%M:%S %p ET"),
+            "pnl_dollar": pnl,
+            "close_reason": reason_ar
+        })
+        _manual_state["journal_id"] = None
+        logger.info(f"[V9 Manual] Journal entry #{journal_id} updated with close data")
     
     # إرسال تنبيه Telegram بسبب الإغلاق
     direction = "CALL 📈" if pos.get("type") == "call" else "PUT 📉"
@@ -2279,7 +2317,9 @@ def get_manual_status():
 import json
 import os
 
-_JOURNAL_FILE = os.path.join(os.path.dirname(__file__), "trade_journal.json")
+# Render يحذف الملفات عند Deploy — نستخدم /tmp للاستمرارية خلال الجلسة
+# أو مجلد static/journal_images للصور (تُحفظ في الكود)
+_JOURNAL_FILE = os.environ.get("JOURNAL_FILE", "/tmp/trade_journal.json")
 _IMAGES_DIR   = os.path.join(os.path.dirname(__file__), "static", "journal_images")
 
 # تأكد من وجود المجلد

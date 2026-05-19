@@ -235,7 +235,7 @@ body {
 .bar-labels { display: flex; justify-content: space-between; font-size: 10px; color: #555; margin-bottom: 5px; }
 .bar-track { background: #1a1a2e; border-radius: 4px; height: 10px; position: relative; overflow: hidden; }
 .bar-fill { height: 100%; border-radius: 4px; position: absolute; top: 0; transition: width 0.4s, left 0.4s, background 0.3s; }
-.bar-center { position: absolute; top: 0; bottom: 0; left: 76.5%; width: 2px; background: #333; }
+.bar-center { position: absolute; top: 0; bottom: 0; right: 23.5%; width: 2px; background: #333; }
 
 /* Stats Grid */
 .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px; }
@@ -429,13 +429,13 @@ body {
   <!-- PnL Bar -->
   <div class="bar-wrap">
     <div class="bar-labels">
-      <span>SL -$0.65</span>
+      <span style="color:#22c55e">TP +$0.20</span>
       <span id="barMid">P&L: $0.00</span>
-      <span>TP +$0.20</span>
+      <span style="color:#ef4444">SL -$0.65</span>
     </div>
     <div class="bar-track">
       <div class="bar-center"></div>
-      <div class="bar-fill" id="barFill" style="width:0%;left:76.5%;background:#555;"></div>
+      <div class="bar-fill" id="barFill" style="width:0%;right:23.5%;background:#555;"></div>
     </div>
   </div>
 
@@ -493,17 +493,21 @@ function updateBar(pnl) {
   const fill = document.getElementById('barFill');
   const mid  = document.getElementById('barMid');
   const range = 0.85;
-  const zeroPos = 76.5;
+  // RTL: نقطة الصفر عند 23.5% من اليمين
+  // ربح → يمتد للأيمن (right ينقص)
+  // خسارة → يمتد للأيسر (right يزيد)
+  const zeroRight = 23.5;
   const sign = pnl >= 0 ? '+' : '';
   mid.textContent = 'P&L: ' + sign + '$' + pnl.toFixed(2);
+  fill.style.left = '';
   if (pnl >= 0) {
     const w = Math.min((pnl / range) * 100, 23.5);
-    fill.style.left  = zeroPos + '%';
+    fill.style.right = (zeroRight - w) + '%';
     fill.style.width = w + '%';
     fill.style.background = '#22c55e';
   } else {
     const w = Math.min((Math.abs(pnl) / range) * 100, 76.5);
-    fill.style.left  = (zeroPos - w) + '%';
+    fill.style.right = zeroRight + '%';
     fill.style.width = w + '%';
     fill.style.background = pnl <= -0.50 ? '#dc2626' : (pnl <= -0.30 ? '#f97316' : '#ef4444');
   }

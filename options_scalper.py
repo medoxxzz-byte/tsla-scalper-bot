@@ -2171,7 +2171,7 @@ def _manual_monitor_loop():
             quote = get_option_quote(symbol)
             
             if not quote or quote["mid"] <= 0:
-                time.sleep(10)
+                time.sleep(5)
                 continue
             
             current_price = quote["mid"]
@@ -2231,11 +2231,11 @@ def _manual_monitor_loop():
                 )
                 send_telegram(msg)
             
-            time.sleep(10)
+            time.sleep(5)  # V10: تقليل من 10 إلى 5 ثوانٍ لتحسين استجابة P&L
             
         except Exception as e:
             logger.error(f"[V9 Manual Monitor] Error: {e}")
-            time.sleep(10)
+            time.sleep(5)
     
     logger.info("[V9 Manual] Monitor stopped")
 
@@ -2383,23 +2383,87 @@ def save_journal_image(entry_id: int, image_data: bytes, ext: str = "jpg") -> st
 
 
 def get_journal_stats() -> dict:
-    """إحصائيات السجل الكاملة."""
+    """إحصائيات السجل الكاملة — V10."""
     entries = _load_journal()
-    closed = [e for e in entries if e.get("status") == "closed"]
-    wins   = [e for e in closed if (e.get("pnl_dollar") or 0) > 0]
-    losses = [e for e in closed if (e.get("pnl_dollar") or 0) <= 0]
+    closed  = [e for e in entries if e.get("status") == "closed"]
+    wins    = [e for e in closed if (e.get("pnl_dollar") or 0) > 0]
+    losses  = [e for e in closed if (e.get("pnl_dollar") or 0) <= 0]
+
     total_pnl = sum(e.get("pnl_dollar", 0) for e in closed)
-    win_rate = (len(wins) / len(closed) * 100) if closed else 0
+    win_rate  = (len(wins) / len(closed) * 100) if closed else 0
+    avg_win   = round(sum(e.get("pnl_dollar", 0) for e in wins)   / len(wins),   2) if wins   else 0
+    avg_loss  = round(sum(e.get("pnl_dollar", 0) for e in losses) / len(losses), 2) if losses else 0
+    rr_ratio  = round(abs(avg_win / avg_loss), 2) if avg_loss != 0 else 0
+
+    # ── نسبة الفوز CALL vs PUT ──────────────────────────────────────────────
+    call_closed = [e for e in closed if e.get("direction") == "CALL"]
+    put_closed  = [e for e in closed if e.get("direction") == "PUT"]
+    call_wins   = [e for e in call_closed if (e.get("pnl_dollar") or 0) > 0]
+    put_wins    = [e for e in put_closed  if (e.get("pnl_dollar") or 0) > 0]
+    call_wr = round(len(call_wins) / len(call_closed) * 100, 1) if call_closed else None
+    put_wr  = round(len(put_wins)  / len(put_closed)  * 100, 1) if put_closed  else None
+
+    # ── أفضل وقت دخول (ساعة ET) ─────────────────────────────────────────────
+    hour_stats: dict = {}  # {"10": {"wins": 0, "total": 0}, ...}
+    for e in closed:
+        ts = e.get("created_at", "")
+        try:
+            # صيغة: "2026-05-19 10:35:22 ET"
+            hour = ts.split(" ")[1].split(":")[0]  # "10"
+            if hour not in hour_stats:
+                hour_stats[hour] = {"wins": 0, "total": 0}
+            hour_stats[hour]["total"] += 1
+            if (e.get("pnl_dollar") or 0) > 0:
+                hour_stats[hour]["wins"] += 1
+        except:
+            pass
+    best_hour = None
+    best_hour_wr = 0
+    for h, s in hour_stats.items():
+        if s["total"] >= 2:  # على الأقل صفقتان
+            wr = s["wins"] / s["total"] * 100
+            if wr > best_hour_wr:
+                best_hour_wr = wr
+                best_hour = h
+
+    # ── Streak (الصفقات الرابحة المتتالية) ──────────────────────────────────
+    # الترتيب: الأقدم أولاً لحساب الـ streak الصحيح
+    sorted_closed = sorted(closed, key=lambda x: x.get("created_at", ""))
+    current_streak = 0
+    longest_streak = 0
+    temp_streak    = 0
+    for e in sorted_closed:
+        if (e.get("pnl_dollar") or 0) > 0:
+            temp_streak += 1
+            longest_streak = max(longest_streak, temp_streak)
+        else:
+            temp_streak = 0
+    # الـ streak الحالي = من آخر صفقة للخلف
+    for e in reversed(sorted_closed):
+        if (e.get("pnl_dollar") or 0) > 0:
+            current_streak += 1
+        else:
+            break
+
     return {
-        "total": len(entries),
-        "closed": len(closed),
-        "open": len(entries) - len(closed),
-        "wins": len(wins),
-        "losses": len(losses),
-        "win_rate": round(win_rate, 1),
-        "total_pnl": round(total_pnl, 2),
-        "avg_win": round(sum(e.get("pnl_dollar", 0) for e in wins) / len(wins), 2) if wins else 0,
-        "avg_loss": round(sum(e.get("pnl_dollar", 0) for e in losses) / len(losses), 2) if losses else 0,
+        "total":          len(entries),
+        "closed":         len(closed),
+        "open":           len(entries) - len(closed),
+        "wins":           len(wins),
+        "losses":         len(losses),
+        "win_rate":       round(win_rate, 1),
+        "total_pnl":      round(total_pnl, 2),
+        "avg_win":        avg_win,
+        "avg_loss":       avg_loss,
+        "rr_ratio":       rr_ratio,          # Risk/Reward الفعلي
+        "call_win_rate":  call_wr,            # نسبة فوز CALL
+        "put_win_rate":   put_wr,             # نسبة فوز PUT
+        "call_count":     len(call_closed),
+        "put_count":      len(put_closed),
+        "best_hour":      best_hour,          # أفضل ساعة دخول
+        "best_hour_wr":   round(best_hour_wr, 1) if best_hour else None,
+        "current_streak": current_streak,     # الـ streak الحالي
+        "longest_streak": longest_streak,     # أطول streak
     }
 
 

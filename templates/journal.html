@@ -29,12 +29,40 @@
     background: #1e3a5f; padding: 5px 10px; border-radius: 6px;
   }
 
-  /* ─── Stats Bar ─── */
+  /* ─── Streak Banner ─── */
+  .streak-banner {
+    margin: 10px 12px 0;
+    border-radius: 14px;
+    padding: 12px 16px;
+    text-align: center;
+    display: none;
+  }
+  .streak-banner.show { display: block; }
+  .streak-banner.hot {
+    background: linear-gradient(135deg, rgba(255,100,0,0.15), rgba(255,200,0,0.1));
+    border: 2px solid rgba(255,150,0,0.5);
+  }
+  .streak-banner.zone {
+    background: linear-gradient(135deg, rgba(34,197,94,0.15), rgba(0,200,150,0.1));
+    border: 2px solid rgba(34,197,94,0.5);
+  }
+  .streak-banner.reset {
+    background: rgba(100,100,100,0.1);
+    border: 1px solid #333;
+  }
+  .streak-fire { font-size: 28px; }
+  .streak-count { font-size: 22px; font-weight: 900; color: #ffd700; margin: 2px 0; }
+  .streak-msg { font-size: 13px; font-weight: 700; }
+  .streak-banner.hot .streak-msg { color: #ff9500; }
+  .streak-banner.zone .streak-msg { color: #22c55e; }
+  .streak-banner.reset .streak-msg { color: #888; }
+
+  /* ─── Stats Bar (4 بطاقات رئيسية) ─── */
   .stats-bar {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 8px;
-    padding: 12px 12px 0;
+    padding: 10px 12px 0;
   }
   .stat-card {
     background: #111827;
@@ -49,9 +77,64 @@
   .red   { color: #f44336; }
   .blue  { color: #64b5f6; }
   .gold  { color: #ffd700; }
+  .orange { color: #ff9500; }
+
+  /* ─── Advanced Stats (صف ثاني) ─── */
+  .stats-bar2 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    padding: 8px 12px 0;
+  }
+  .stat-card2 {
+    background: #0d1117;
+    border: 1px solid #1a2a3a;
+    border-radius: 10px;
+    padding: 9px 8px;
+    text-align: center;
+  }
+  .stat-card2 .val2 { font-size: 15px; font-weight: 700; }
+  .stat-card2 .lbl2 { font-size: 9px; color: #4b5563; margin-top: 2px; }
+
+  /* ─── Direction Stats ─── */
+  .dir-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 8px 12px 0;
+  }
+  .dir-card {
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .dir-card.call-card { background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.3); }
+  .dir-card.put-card  { background: rgba(239,68,68,0.08);  border: 1px solid rgba(239,68,68,0.3); }
+  .dir-lbl { font-size: 12px; font-weight: 700; }
+  .call-card .dir-lbl { color: #22c55e; }
+  .put-card  .dir-lbl { color: #ef4444; }
+  .dir-wr { font-size: 18px; font-weight: 900; }
+  .dir-cnt { font-size: 10px; color: #6b7280; margin-top: 2px; }
+
+  /* ─── Best Hour ─── */
+  .best-hour-bar {
+    margin: 8px 12px 0;
+    background: #0d1117;
+    border: 1px solid #1a2a3a;
+    border-radius: 10px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .bh-lbl { font-size: 11px; color: #6b7280; }
+  .bh-val { font-size: 16px; font-weight: 800; color: #ffd700; }
+  .bh-wr  { font-size: 11px; color: #4caf50; margin-top: 2px; }
 
   /* ─── Add Entry Button ─── */
-  .add-btn-wrap { padding: 12px 12px 0; }
+  .add-btn-wrap { padding: 10px 12px 0; }
   .add-btn {
     width: 100%;
     background: linear-gradient(135deg, #1565c0, #0d47a1);
@@ -219,6 +302,20 @@
     line-height: 1.5;
   }
 
+  /* أسئلة ما قبل الدخول في بطاقة الصفقة */
+  .entry-checklist {
+    margin-top: 8px;
+    background: #0a0f1a;
+    border-radius: 8px;
+    padding: 8px 10px;
+    border: 1px solid #1a2a3a;
+  }
+  .entry-checklist .cl-title {
+    font-size: 10px; color: #4b5563; margin-bottom: 5px; letter-spacing: 0.5px;
+  }
+  .cl-row { font-size: 11px; color: #9ca3af; margin-bottom: 3px; }
+  .cl-row span { color: #64b5f6; }
+
   .entry-images {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -287,7 +384,14 @@
   <a href="/manual">← الخط 2</a>
 </div>
 
-<!-- Stats Bar -->
+<!-- Streak Banner -->
+<div class="streak-banner" id="streakBanner">
+  <div class="streak-fire" id="streakFire">🔥</div>
+  <div class="streak-count" id="streakCount">0</div>
+  <div class="streak-msg" id="streakMsg">—</div>
+</div>
+
+<!-- Stats Bar (4 بطاقات رئيسية) -->
 <div class="stats-bar">
   <div class="stat-card">
     <div class="val blue" id="statTotal">—</div>
@@ -299,12 +403,61 @@
   </div>
   <div class="stat-card">
     <div class="val green" id="statWins">—</div>
-    <div class="lbl">رابح</div>
+    <div class="lbl">ربح/إجمالي</div>
   </div>
   <div class="stat-card">
     <div class="val" id="statPnl">—</div>
     <div class="lbl">صافي P&L</div>
   </div>
+</div>
+
+<!-- Stats Bar 2 (إحصائيات متقدمة) -->
+<div class="stats-bar2">
+  <div class="stat-card2">
+    <div class="val2 green" id="statAvgWin">—</div>
+    <div class="lbl2">متوسط الربح</div>
+  </div>
+  <div class="stat-card2">
+    <div class="val2 red" id="statAvgLoss">—</div>
+    <div class="lbl2">متوسط الخسارة</div>
+  </div>
+  <div class="stat-card2">
+    <div class="val2 gold" id="statRR">—</div>
+    <div class="lbl2">R:R الفعلي</div>
+  </div>
+</div>
+
+<!-- Direction Stats -->
+<div class="dir-stats">
+  <div class="dir-card call-card">
+    <div>
+      <div class="dir-lbl">📈 CALL</div>
+      <div class="dir-cnt" id="callCount">— صفقة</div>
+    </div>
+    <div style="text-align:center;">
+      <div class="dir-wr green" id="callWR">—</div>
+      <div style="font-size:9px;color:#4b5563;">نسبة فوز</div>
+    </div>
+  </div>
+  <div class="dir-card put-card">
+    <div>
+      <div class="dir-lbl">📉 PUT</div>
+      <div class="dir-cnt" id="putCount">— صفقة</div>
+    </div>
+    <div style="text-align:center;">
+      <div class="dir-wr red" id="putWR">—</div>
+      <div style="font-size:9px;color:#4b5563;">نسبة فوز</div>
+    </div>
+  </div>
+</div>
+
+<!-- Best Hour -->
+<div class="best-hour-bar" id="bestHourBar" style="display:none;">
+  <div>
+    <div class="bh-lbl">⏰ أفضل وقت دخول (ET)</div>
+    <div class="bh-wr" id="bestHourWR">—</div>
+  </div>
+  <div class="bh-val" id="bestHourVal">—</div>
 </div>
 
 <!-- Add Entry Button -->
@@ -344,29 +497,67 @@
       <input type="number" id="fTslaPrice" placeholder="مثال: 409.50" step="0.01">
     </div>
 
-    <!-- GEX Position -->
-    <div class="form-group">
-      <label>GEX — موقع السعر</label>
-      <select id="fGex">
-        <option value="">— اختر —</option>
-        <option value="above_gamma_flip">✅ فوق Gamma Flip (آمن)</option>
-        <option value="below_gamma_flip">⚠️ تحت Gamma Flip (خطر)</option>
-        <option value="near_call_wall">🚧 قريب Call Wall (سقف)</option>
-        <option value="near_put_wall">🛡️ قريب Put Wall (دعم)</option>
-        <option value="unknown">غير معروف</option>
-      </select>
-    </div>
+    <!-- ── أسئلة ما قبل الدخول ── -->
+    <div style="background:#0a0f1a;border:1px solid #1a2a3a;border-radius:10px;padding:12px;margin-bottom:14px;">
+      <div style="font-size:11px;color:#64b5f6;font-weight:700;margin-bottom:10px;letter-spacing:0.5px;">📋 تحقق قبل الدخول</div>
 
-    <!-- CheddarFlow -->
-    <div class="form-group">
-      <label>CheddarFlow (نسبة CALL%)</label>
-      <input type="number" id="fCheddar" placeholder="مثال: 72 (يعني 72% CALL)" min="0" max="100">
+      <!-- س١: CheddarFlow -->
+      <div class="form-group" style="margin-bottom:10px;">
+        <label>١. كم نسبة CALL في CheddarFlow الحين؟ (%)</label>
+        <input type="number" id="fCheddar" placeholder="مثال: 72" min="0" max="100">
+      </div>
+
+      <!-- س٢: Gamma Flip -->
+      <div class="form-group" style="margin-bottom:10px;">
+        <label>٢. السعر بالنسبة لـ Gamma Flip؟</label>
+        <select id="fGammaFlip">
+          <option value="">— اختر —</option>
+          <option value="above">✅ فوق</option>
+          <option value="below">⚠️ تحت</option>
+          <option value="unknown">❓ ما أعرف</option>
+        </select>
+      </div>
+
+      <!-- س٣: VWAP -->
+      <div class="form-group" style="margin-bottom:10px;">
+        <label>٣. السعر بالنسبة لـ VWAP؟</label>
+        <select id="fVwap">
+          <option value="">— اختر —</option>
+          <option value="above">📈 فوق</option>
+          <option value="below">📉 تحت</option>
+        </select>
+      </div>
+
+      <!-- س٤: Opening Range -->
+      <div class="form-group" style="margin-bottom:10px;">
+        <label>٤. السعر بالنسبة لـ Opening Range؟</label>
+        <select id="fOR">
+          <option value="">— اختر —</option>
+          <option value="above_high">🚀 فوق OR High</option>
+          <option value="inside">↔️ داخل OR</option>
+          <option value="below_low">⬇️ تحت OR Low</option>
+          <option value="unknown">❓ ما حسبت OR</option>
+        </select>
+      </div>
+
+      <!-- س٥: سبب الدخول -->
+      <div class="form-group" style="margin-bottom:0;">
+        <label>٥. ما سبب دخولك؟</label>
+        <select id="fEntryReason">
+          <option value="">— اختر —</option>
+          <option value="telegram_signal">📡 إشارة التلقرام</option>
+          <option value="cheddar_sweep">🌊 CheddarFlow sweep كبير</option>
+          <option value="key_level_bounce">🎯 ارتداد من مستوى مهم</option>
+          <option value="macd_zero">📊 دخول/خروج من منطقة الصفر للـ MACD</option>
+          <option value="multi_confluence">✅ توافق أكثر من 3 مؤشرات</option>
+        </select>
+      </div>
     </div>
 
     <!-- Notes -->
     <div class="form-group">
-      <label>ملاحظات سبب الدخول</label>
-      <textarea id="fNotes" placeholder="مثال: ترند صاعد قوي، فوق VWAP، ADX=28، بعد بولباك..."></textarea>
+      <label>ملاحظات إضافية</label>
+      <textarea id="fNotes" placeholder="أي تفاصيل إضافية..."></textarea>
     </div>
 
     <!-- Image Upload -->
@@ -413,6 +604,7 @@ async function loadEntries() {
 }
 
 function renderStats(s) {
+  // ── بطاقات رئيسية ──
   document.getElementById('statTotal').textContent   = s.total ?? '0';
   document.getElementById('statWinRate').textContent = s.win_rate != null ? s.win_rate + '%' : '0%';
   document.getElementById('statWins').textContent    = (s.wins ?? 0) + '/' + (s.closed ?? 0);
@@ -420,6 +612,59 @@ function renderStats(s) {
   const el = document.getElementById('statPnl');
   el.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
   el.className = 'val ' + (pnl >= 0 ? 'green' : 'red');
+
+  // ── إحصائيات متقدمة ──
+  const aw = s.avg_win ?? 0;
+  const al = s.avg_loss ?? 0;
+  document.getElementById('statAvgWin').textContent  = aw  ? '+$' + aw.toFixed(2)  : '—';
+  document.getElementById('statAvgLoss').textContent = al  ? '$'  + al.toFixed(2)  : '—';
+  document.getElementById('statRR').textContent      = s.rr_ratio ? s.rr_ratio + ':1' : '—';
+
+  // ── CALL vs PUT ──
+  document.getElementById('callWR').textContent    = s.call_win_rate != null ? s.call_win_rate + '%' : '—';
+  document.getElementById('putWR').textContent     = s.put_win_rate  != null ? s.put_win_rate  + '%' : '—';
+  document.getElementById('callCount').textContent = (s.call_count ?? 0) + ' صفقة';
+  document.getElementById('putCount').textContent  = (s.put_count  ?? 0) + ' صفقة';
+
+  // ── أفضل وقت ──
+  if (s.best_hour) {
+    const h = parseInt(s.best_hour);
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12  = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+    document.getElementById('bestHourVal').textContent = h12 + ':00 ' + ampm + ' ET';
+    document.getElementById('bestHourWR').textContent  = 'نسبة الفوز: ' + s.best_hour_wr + '%';
+    document.getElementById('bestHourBar').style.display = 'flex';
+  }
+
+  // ── Streak ──
+  const streak = s.current_streak ?? 0;
+  const longest = s.longest_streak ?? 0;
+  const banner = document.getElementById('streakBanner');
+  const fire   = document.getElementById('streakFire');
+  const cnt    = document.getElementById('streakCount');
+  const msg    = document.getElementById('streakMsg');
+
+  if (streak === 0 && (s.closed ?? 0) > 0) {
+    // انقطع الـ streak
+    banner.className = 'streak-banner show reset';
+    fire.textContent = '💪';
+    cnt.textContent  = 'أطول سلسلة: ' + longest;
+    msg.textContent  = 'ابدأ من جديد، التاجر الحقيقي يتعافى';
+  } else if (streak >= 3) {
+    // في المنطقة
+    banner.className = 'streak-banner show zone';
+    fire.textContent = '🎯';
+    cnt.textContent  = '🔥 ' + streak + ' متتالية';
+    msg.textContent  = 'أنت في المنطقة 🎯 — حافظ على التركيز';
+  } else if (streak >= 1) {
+    // streak نشط
+    banner.className = 'streak-banner show hot';
+    fire.textContent = '🔥';
+    cnt.textContent  = streak + ' متتالية';
+    msg.textContent  = 'أطول سلسلة: ' + longest + ' | استمر!';
+  } else {
+    banner.className = 'streak-banner';
+  }
 }
 
 function renderEntries(entries) {
@@ -430,6 +675,32 @@ function renderEntries(entries) {
   }
   wrap.innerHTML = entries.map(e => entryHTML(e)).join('');
 }
+
+// ── ترجمات ──
+const GEX_LABELS = {
+  'above_gamma_flip': '✅ فوق Gamma Flip',
+  'below_gamma_flip': '⚠️ تحت Gamma Flip',
+  'near_call_wall':   '🚧 قريب Call Wall',
+  'near_put_wall':    '🛡️ قريب Put Wall',
+  'unknown': '—', '': '—'
+};
+const GF_LABELS  = { 'above': '✅ فوق', 'below': '⚠️ تحت', 'unknown': '❓ ما أعرف', '': '—' };
+const VWAP_LABELS = { 'above': '📈 فوق', 'below': '📉 تحت', '': '—' };
+const OR_LABELS  = {
+  'above_high': '🚀 فوق OR High',
+  'inside':     '↔️ داخل OR',
+  'below_low':  '⬇️ تحت OR Low',
+  'unknown':    '❓ ما حسبت OR',
+  '': '—'
+};
+const REASON_LABELS = {
+  'telegram_signal':  '📡 إشارة التلقرام',
+  'cheddar_sweep':    '🌊 CheddarFlow sweep',
+  'key_level_bounce': '🎯 ارتداد من مستوى',
+  'macd_zero':        '📊 MACD منطقة الصفر',
+  'multi_confluence': '✅ توافق 3+ مؤشرات',
+  '': '—'
+};
 
 function entryHTML(e) {
   const isOpen  = e.status === 'open';
@@ -444,15 +715,6 @@ function entryHTML(e) {
     ? '<span class="open-badge">● مفتوحة</span>'
     : `<span class="entry-pnl ${isWin ? 'green' : 'red'}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</span>`;
 
-  const gexLabels = {
-    'above_gamma_flip': '✅ فوق Gamma Flip',
-    'below_gamma_flip': '⚠️ تحت Gamma Flip',
-    'near_call_wall':   '🚧 قريب Call Wall',
-    'near_put_wall':    '🛡️ قريب Put Wall',
-    'unknown':          '—',
-    '': '—'
-  };
-
   const imagesHtml = (e.images && e.images.length)
     ? `<div class="entry-images">${e.images.map(img =>
         `<img src="/journal/img/${img}" onclick="openLightbox('/journal/img/${img}', event)">`
@@ -462,6 +724,18 @@ function entryHTML(e) {
   const notesHtml = e.notes
     ? `<div class="entry-notes">💬 ${e.notes}</div>`
     : '';
+
+  // أسئلة ما قبل الدخول
+  const hasChecklist = e.gamma_flip || e.vwap_position || e.or_position || e.entry_reason || e.cheddar_flow;
+  const checklistHtml = hasChecklist ? `
+  <div class="entry-checklist">
+    <div class="cl-title">📋 تحقق قبل الدخول</div>
+    ${e.cheddar_flow ? `<div class="cl-row">CheddarFlow: <span>${e.cheddar_flow}% CALL</span></div>` : ''}
+    ${e.gamma_flip   ? `<div class="cl-row">Gamma Flip: <span>${GF_LABELS[e.gamma_flip] || e.gamma_flip}</span></div>` : ''}
+    ${e.vwap_position? `<div class="cl-row">VWAP: <span>${VWAP_LABELS[e.vwap_position] || e.vwap_position}</span></div>` : ''}
+    ${e.or_position  ? `<div class="cl-row">Opening Range: <span>${OR_LABELS[e.or_position] || e.or_position}</span></div>` : ''}
+    ${e.entry_reason ? `<div class="cl-row">السبب: <span>${REASON_LABELS[e.entry_reason] || e.entry_reason}</span></div>` : ''}
+  </div>` : '';
 
   return `
   <div class="entry-card ${cardCls}">
@@ -473,24 +747,22 @@ function entryHTML(e) {
     <div class="entry-row">
       <div class="entry-field">دخول: <span>$${e.entry_price || '—'}</span></div>
       <div class="entry-field">TSLA: <span>$${e.tsla_price || '—'}</span></div>
-      <div class="entry-field">GEX: <span>${gexLabels[e.gex_position] || '—'}</span></div>
-      <div class="entry-field">CheddarFlow: <span>${e.cheddar_flow ? e.cheddar_flow + '% CALL' : '—'}</span></div>
-      ${e.exit_price ? `<div class="entry-field">خروج: <span>$${e.exit_price}</span></div>` : ''}
+      ${e.exit_price  ? `<div class="entry-field">خروج: <span>$${e.exit_price}</span></div>` : ''}
       ${e.exit_reason ? `<div class="entry-field">سبب: <span>${exitLabel(e.exit_reason)}</span></div>` : ''}
     </div>
+    ${checklistHtml}
     ${notesHtml}
     ${imagesHtml}
   </div>`;
 }
 
 function exitLabel(r) {
-  const m = { tp: '✅ TP', sl: '❌ SL', manual_stop: '🛑 يدوي', auto_tp: '✅ TP تلقائي', auto_sl: '❌ SL تلقائي' };
+  const m = { tp: '✅ TP', sl: '❌ SL', manual_stop: '🛑 يدوي', auto_tp: '✅ TP تلقائي', auto_sl: '❌ SL تلقائي', TP: '✅ TP', SL: '❌ SL', MANUAL: '🛑 يدوي', ERROR: '⚠️ خطأ' };
   return m[r] || r;
 }
 
 // ── Modal ──
 function openModal() {
-  // جلب سعر TSLA الحالي تلقائياً
   fetch('/manual/status').then(r => r.json()).then(d => {
     if (d.tsla_price) document.getElementById('fTslaPrice').value = d.tsla_price;
   }).catch(() => {});
@@ -507,13 +779,16 @@ function resetForm() {
   previewFiles = [];
   document.getElementById('btnCall').className = 'dir-btn';
   document.getElementById('btnPut').className  = 'dir-btn';
-  document.getElementById('fEntryPrice').value = '';
-  document.getElementById('fTslaPrice').value  = '';
-  document.getElementById('fGex').value        = '';
-  document.getElementById('fCheddar').value    = '';
-  document.getElementById('fNotes').value      = '';
+  document.getElementById('fEntryPrice').value  = '';
+  document.getElementById('fTslaPrice').value   = '';
+  document.getElementById('fCheddar').value     = '';
+  document.getElementById('fGammaFlip').value   = '';
+  document.getElementById('fVwap').value        = '';
+  document.getElementById('fOR').value          = '';
+  document.getElementById('fEntryReason').value = '';
+  document.getElementById('fNotes').value       = '';
   document.getElementById('imgPreviewGrid').innerHTML = '';
-  document.getElementById('imgInput').value    = '';
+  document.getElementById('imgInput').value     = '';
 }
 
 function selectDir(dir) {
@@ -543,16 +818,18 @@ async function saveEntry() {
   if (!entryPrice) { alert('أدخل سعر الدخول'); return; }
 
   const payload = {
-    direction:    selectedDir,
-    entry_price:  entryPrice,
-    tsla_price:   parseFloat(document.getElementById('fTslaPrice').value) || 0,
-    gex_position: document.getElementById('fGex').value,
-    cheddar_flow: document.getElementById('fCheddar').value,
-    notes:        document.getElementById('fNotes').value.trim(),
+    direction:     selectedDir,
+    entry_price:   entryPrice,
+    tsla_price:    parseFloat(document.getElementById('fTslaPrice').value) || 0,
+    cheddar_flow:  document.getElementById('fCheddar').value,
+    gamma_flip:    document.getElementById('fGammaFlip').value,
+    vwap_position: document.getElementById('fVwap').value,
+    or_position:   document.getElementById('fOR').value,
+    entry_reason:  document.getElementById('fEntryReason').value,
+    notes:         document.getElementById('fNotes').value.trim(),
   };
 
   try {
-    // 1. حفظ الصفقة
     const res  = await fetch('/journal/add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -562,7 +839,6 @@ async function saveEntry() {
     if (!data.success) { alert('خطأ في الحفظ'); return; }
     const entryId = data.id;
 
-    // 2. رفع الصور
     for (const file of previewFiles) {
       const fd = new FormData();
       fd.append('image', file);

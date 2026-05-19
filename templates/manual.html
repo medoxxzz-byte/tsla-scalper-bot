@@ -35,6 +35,59 @@ body {
   border-radius: 6px;
 }
 
+/* ── Dual Clock ── */
+.dual-clock {
+  background: #0d0d1a;
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid #1a1a2e;
+}
+.clock-item { text-align: center; }
+.clock-label { font-size: 9px; color: #444; letter-spacing: 1px; text-transform: uppercase; }
+.clock-time  { font-size: 15px; font-weight: 800; color: #e0e0e0; font-variant-numeric: tabular-nums; }
+.clock-sep { color: #222; font-size: 20px; }
+
+/* ── Window Warning ── */
+.window-warn {
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 8px;
+  display: none;
+}
+.window-warn.show { display: block; }
+.window-warn.ideal   { background: rgba(34,197,94,0.1);  border: 1px solid rgba(34,197,94,0.4);  color: #22c55e; }
+.window-warn.caution { background: rgba(234,179,8,0.1);  border: 1px solid rgba(234,179,8,0.4);  color: #eab308; }
+.window-warn.outside { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3);  color: #ef4444; }
+
+/* ── Streak Bar ── */
+.streak-bar {
+  background: #0d0d1a;
+  border-radius: 10px;
+  padding: 8px 14px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #1a1a2e;
+  display: none;
+}
+.streak-bar.show { display: flex; }
+.streak-bar.hot  { border-color: rgba(255,150,0,0.4); background: rgba(255,100,0,0.06); }
+.streak-bar.zone { border-color: rgba(34,197,94,0.4); background: rgba(34,197,94,0.06); }
+.streak-left { font-size: 22px; }
+.streak-right { text-align: left; }
+.streak-num { font-size: 16px; font-weight: 900; }
+.streak-bar.hot  .streak-num { color: #ff9500; }
+.streak-bar.zone .streak-num { color: #22c55e; }
+.streak-sub { font-size: 10px; color: #555; margin-top: 1px; }
+
 /* ── TSLA Price ── */
 .price-box {
   text-align: center;
@@ -56,14 +109,8 @@ body {
   animation: pulse 2s infinite;
 }
 #signalBanner.show { display: block; }
-#signalBanner.call {
-  background: rgba(34,197,94,0.12);
-  border: 2px solid rgba(34,197,94,0.5);
-}
-#signalBanner.put {
-  background: rgba(239,68,68,0.12);
-  border: 2px solid rgba(239,68,68,0.5);
-}
+#signalBanner.call { background: rgba(34,197,94,0.12); border: 2px solid rgba(34,197,94,0.5); }
+#signalBanner.put  { background: rgba(239,68,68,0.12);  border: 2px solid rgba(239,68,68,0.5); }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.85} }
 .sig-title { font-size: 16px; font-weight: 800; margin-bottom: 6px; }
 .sig-call .sig-title { color: #22c55e; }
@@ -79,29 +126,14 @@ body {
   margin-bottom: 10px;
   border: 1px solid #1e1e30;
 }
-.levels-title {
-  font-size: 11px;
-  color: #666;
-  letter-spacing: 1px;
-  margin-bottom: 8px;
-  text-transform: uppercase;
-}
-.levels-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 6px;
-}
-.lvl {
-  background: #0d0d1a;
-  border-radius: 8px;
-  padding: 7px 8px;
-  text-align: center;
-}
+.levels-title { font-size: 11px; color: #666; letter-spacing: 1px; margin-bottom: 8px; text-transform: uppercase; }
+.levels-grid  { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+.lvl { background: #0d0d1a; border-radius: 8px; padding: 7px 8px; text-align: center; }
 .lvl .lname { font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
 .lvl .lval  { font-size: 14px; font-weight: 700; color: #fff; margin-top: 2px; }
-.lvl.gf .lval  { color: #a78bfa; }
-.lvl.cw .lval  { color: #f97316; }
-.lvl.pw .lval  { color: #22c55e; }
+.lvl.gf .lval   { color: #a78bfa; }
+.lvl.cw .lval   { color: #f97316; }
+.lvl.pw .lval   { color: #22c55e; }
 .lvl.vwap .lval { color: #60a5fa; }
 .lvl.pdh .lval  { color: #f59e0b; }
 .lvl.pdl .lval  { color: #34d399; }
@@ -130,61 +162,17 @@ body {
   width: 80px;
 }
 .cheddar-row input:focus { border-color: #a0a8ff; }
-.cheddar-bar {
-  flex: 1;
-  background: #0d0d1a;
-  border-radius: 6px;
-  height: 28px;
-  position: relative;
-  overflow: hidden;
-}
-.cheddar-fill-c {
-  position: absolute;
-  right: 0; top: 0; bottom: 0;
-  background: linear-gradient(90deg, #22c55e, #16a34a);
-  border-radius: 6px;
-  transition: width 0.4s;
-}
-.cheddar-fill-p {
-  position: absolute;
-  left: 0; top: 0; bottom: 0;
-  background: linear-gradient(90deg, #dc2626, #ef4444);
-  border-radius: 6px;
-  transition: width 0.4s;
-}
-.cheddar-labels {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  color: #555;
-  margin-top: 4px;
-}
-.btn-cheddar {
-  background: #1e3a5f;
-  color: #64b5f6;
-  border: none;
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-}
+.cheddar-bar { flex: 1; background: #0d0d1a; border-radius: 6px; height: 28px; position: relative; overflow: hidden; }
+.cheddar-fill-c { position: absolute; right: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #22c55e, #16a34a); border-radius: 6px; transition: width 0.4s; }
+.cheddar-fill-p { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #dc2626, #ef4444); border-radius: 6px; transition: width 0.4s; }
+.cheddar-labels { display: flex; justify-content: space-between; font-size: 10px; color: #555; margin-top: 4px; }
+.btn-cheddar { background: #1e3a5f; color: #64b5f6; border: none; border-radius: 8px; padding: 8px 12px; font-size: 13px; font-weight: 700; cursor: pointer; }
 .btn-cheddar:active { opacity: 0.7; }
 #cheddarStatus { font-size: 10px; color: #555; margin-top: 4px; text-align: center; }
 
 /* ── Suggest Cards ── */
-.suggests {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.scard {
-  background: #111120;
-  border-radius: 10px;
-  padding: 10px;
-  border: 1px solid #1e1e30;
-}
+.suggests { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+.scard { background: #111120; border-radius: 10px; padding: 10px; border: 1px solid #1e1e30; }
 .scard.c { border-top: 3px solid #22c55e; }
 .scard.p { border-top: 3px solid #ef4444; }
 .scard .slbl { font-size: 11px; font-weight: 700; letter-spacing: 1px; margin-bottom: 3px; }
@@ -194,20 +182,11 @@ body {
 .scard .sdet { font-size: 10px; color: #666; margin-top: 2px; line-height: 1.4; }
 
 /* ── Buy Buttons ── */
-.buy-btns {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-bottom: 10px;
-}
+.buy-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
 .btn-buy {
-  border: none;
-  border-radius: 12px;
-  padding: 20px 10px;
-  font-size: 20px;
-  font-weight: 900;
-  cursor: pointer;
-  letter-spacing: 1px;
+  border: none; border-radius: 12px;
+  padding: 20px 10px; font-size: 20px; font-weight: 900;
+  cursor: pointer; letter-spacing: 1px;
   -webkit-tap-highlight-color: transparent;
   transition: transform 0.1s;
 }
@@ -217,14 +196,7 @@ body {
 .btn-put  { background: linear-gradient(135deg, #dc2626, #ef4444); color: #fff; box-shadow: 0 4px 20px rgba(239,68,68,0.3); }
 
 /* ── Position Panel ── */
-#posPanel {
-  background: #111120;
-  border-radius: 14px;
-  padding: 14px;
-  margin-bottom: 10px;
-  border: 1px solid #1e1e30;
-  display: none;
-}
+#posPanel { background: #111120; border-radius: 14px; padding: 14px; margin-bottom: 10px; border: 1px solid #1e1e30; display: none; }
 #posPanel.show { display: block; }
 .pos-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .pos-dir { font-size: 15px; font-weight: 800; }
@@ -253,21 +225,13 @@ body {
 
 /* ── STOP LOSS Button ── */
 #btnStop {
-  width: 100%;
-  background: linear-gradient(135deg, #7c2d12, #dc2626);
-  color: #fff;
-  border: none;
-  border-radius: 14px;
-  padding: 20px;
-  font-size: 18px;
-  font-weight: 900;
-  cursor: pointer;
-  letter-spacing: 1px;
+  width: 100%; background: linear-gradient(135deg, #7c2d12, #dc2626);
+  color: #fff; border: none; border-radius: 14px;
+  padding: 20px; font-size: 18px; font-weight: 900;
+  cursor: pointer; letter-spacing: 1px;
   box-shadow: 0 4px 25px rgba(220,38,38,0.5);
   -webkit-tap-highlight-color: transparent;
-  display: none;
-  margin-bottom: 10px;
-  transition: transform 0.1s;
+  display: none; margin-bottom: 10px; transition: transform 0.1s;
 }
 #btnStop.show { display: block; }
 #btnStop:active { transform: scale(0.97); }
@@ -283,11 +247,11 @@ body {
 /* ── Result Card ── */
 #resultCard { border-radius: 14px; padding: 16px; text-align: center; margin-bottom: 10px; display: none; }
 #resultCard.show { display: block; }
-#resultCard.win { background: rgba(34,197,94,0.1); border: 2px solid #22c55e; }
+#resultCard.win  { background: rgba(34,197,94,0.1); border: 2px solid #22c55e; }
 #resultCard.loss { background: rgba(239,68,68,0.1); border: 2px solid #ef4444; }
 .rc-title { font-size: 13px; color: #888; margin-bottom: 4px; }
 .rc-pnl { font-size: 40px; font-weight: 900; }
-#resultCard.win .rc-pnl { color: #22c55e; }
+#resultCard.win  .rc-pnl { color: #22c55e; }
 #resultCard.loss .rc-pnl { color: #ef4444; }
 .rc-detail { font-size: 11px; color: #555; margin-top: 4px; }
 
@@ -302,6 +266,114 @@ body {
 .dot.r  { background: #ef4444; }
 .dot.y  { background: #eab308; }
 .dot.gr { background: #444; }
+
+/* ── Pre-Trade Modal (نظام الأسئلة) ── */
+.pretrade-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.92);
+  z-index: 200;
+  overflow-y: auto;
+  padding: 20px 12px;
+}
+.pretrade-overlay.active { display: block; }
+.pretrade-modal {
+  background: #0d1117;
+  border: 1px solid #1e3a5f;
+  border-radius: 18px;
+  padding: 20px 16px;
+  max-width: 440px;
+  margin: 0 auto;
+}
+.pt-header {
+  text-align: center;
+  margin-bottom: 18px;
+}
+.pt-header .pt-dir {
+  font-size: 22px; font-weight: 900; margin-bottom: 4px;
+}
+.pt-header .pt-dir.call { color: #22c55e; }
+.pt-header .pt-dir.put  { color: #ef4444; }
+.pt-header .pt-sub { font-size: 12px; color: #555; }
+
+.pt-question {
+  margin-bottom: 16px;
+}
+.pt-q-label {
+  font-size: 13px; font-weight: 700; color: #e0e0e0;
+  margin-bottom: 8px;
+  display: flex; align-items: center; gap: 6px;
+}
+.pt-q-num {
+  background: #1e3a5f; color: #64b5f6;
+  font-size: 11px; font-weight: 800;
+  width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.pt-input {
+  width: 100%;
+  background: #0a0f1a;
+  border: 1px solid #1e3a5f;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  padding: 10px 14px;
+  text-align: center;
+  outline: none;
+}
+.pt-input:focus { border-color: #64b5f6; }
+.pt-options { display: grid; gap: 8px; }
+.pt-options.cols2 { grid-template-columns: 1fr 1fr; }
+.pt-options.cols3 { grid-template-columns: 1fr 1fr 1fr; }
+.pt-opt {
+  padding: 11px 8px;
+  border: 2px solid #1e3a5f;
+  border-radius: 10px;
+  background: #0a0f1a;
+  color: #9ca3af;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.pt-opt:active { transform: scale(0.96); }
+.pt-opt.selected { border-color: #64b5f6; color: #64b5f6; background: rgba(100,181,246,0.1); }
+
+.pt-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 20px;
+}
+.pt-confirm {
+  background: linear-gradient(135deg, #1565c0, #0d47a1);
+  color: #fff; border: none; border-radius: 12px;
+  padding: 15px; font-size: 15px; font-weight: 800;
+  cursor: pointer; letter-spacing: 0.5px;
+}
+.pt-confirm.call { background: linear-gradient(135deg, #16a34a, #22c55e); }
+.pt-confirm.put  { background: linear-gradient(135deg, #dc2626, #ef4444); }
+.pt-cancel {
+  background: #1f2937; color: #9ca3af;
+  border: 1px solid #374151; border-radius: 12px;
+  padding: 15px; font-size: 14px; cursor: pointer;
+}
+.pt-fast-track {
+  text-align: center;
+  margin-top: 12px;
+  font-size: 11px;
+  color: #4b5563;
+}
+.pt-fast-track a {
+  color: #6b7280; text-decoration: underline; cursor: pointer;
+}
+.pt-fast-track .ft-count {
+  color: #f59e0b; font-weight: 700;
+}
 </style>
 </head>
 <body>
@@ -315,6 +387,32 @@ body {
   </div>
 </div>
 
+<!-- Dual Clock -->
+<div class="dual-clock">
+  <div class="clock-item">
+    <div class="clock-label">ET (نيويورك)</div>
+    <div class="clock-time" id="clockET">--:--:-- --</div>
+  </div>
+  <div class="clock-sep">|</div>
+  <div class="clock-item">
+    <div class="clock-label">الرياض</div>
+    <div class="clock-time" id="clockRiyadh">--:--:-- --</div>
+  </div>
+</div>
+
+<!-- Window Warning -->
+<div class="window-warn" id="windowWarn"></div>
+
+<!-- Streak Bar -->
+<div class="streak-bar" id="streakBar">
+  <div class="streak-left" id="streakEmoji">🔥</div>
+  <div style="flex:1;padding:0 10px;">
+    <div class="streak-num" id="streakNum">—</div>
+    <div class="streak-sub" id="streakSub">—</div>
+  </div>
+  <div style="font-size:10px;color:#555;" id="streakLongest">—</div>
+</div>
+
 <!-- TSLA Price -->
 <div class="price-box">
   <div class="lbl">TSLA</div>
@@ -322,7 +420,7 @@ body {
   <div class="sub" id="etTime">-- ET</div>
 </div>
 
-<!-- Signal Banner (يظهر عند اكتمال شروط الدخول) -->
+<!-- Signal Banner -->
 <div id="signalBanner">
   <div class="sig-title" id="sigTitle">🟢 إشارة CALL</div>
   <div class="sig-reasons" id="sigReasons">---</div>
@@ -333,30 +431,12 @@ body {
 <div class="levels-box">
   <div class="levels-title">📊 المستويات الحالية</div>
   <div class="levels-grid">
-    <div class="lvl gf">
-      <div class="lname">Gamma Flip</div>
-      <div class="lval" id="lvlGF">---</div>
-    </div>
-    <div class="lvl cw">
-      <div class="lname">Call Wall</div>
-      <div class="lval" id="lvlCW">---</div>
-    </div>
-    <div class="lvl pw">
-      <div class="lname">Put Wall</div>
-      <div class="lval" id="lvlPW">---</div>
-    </div>
-    <div class="lvl vwap">
-      <div class="lname">VWAP</div>
-      <div class="lval" id="lvlVWAP">---</div>
-    </div>
-    <div class="lvl pdh">
-      <div class="lname">PDH</div>
-      <div class="lval" id="lvlPDH">---</div>
-    </div>
-    <div class="lvl pdl">
-      <div class="lname">PDL</div>
-      <div class="lval" id="lvlPDL">---</div>
-    </div>
+    <div class="lvl gf">  <div class="lname">Gamma Flip</div><div class="lval" id="lvlGF">---</div></div>
+    <div class="lvl cw">  <div class="lname">Call Wall</div>  <div class="lval" id="lvlCW">---</div></div>
+    <div class="lvl pw">  <div class="lname">Put Wall</div>   <div class="lval" id="lvlPW">---</div></div>
+    <div class="lvl vwap"><div class="lname">VWAP</div>       <div class="lval" id="lvlVWAP">---</div></div>
+    <div class="lvl pdh"> <div class="lname">PDH</div>        <div class="lval" id="lvlPDH">---</div></div>
+    <div class="lvl pdl"> <div class="lname">PDL</div>        <div class="lval" id="lvlPDL">---</div></div>
   </div>
 </div>
 
@@ -380,7 +460,7 @@ body {
   <div id="cheddarStatus">لم يُحدَّث بعد</div>
 </div>
 
-<!-- Suggested Contracts (no position) -->
+<!-- Suggested Contracts -->
 <div class="suggests" id="suggestDiv">
   <div class="scard p">
     <div class="slbl">📉 PUT</div>
@@ -394,10 +474,10 @@ body {
   </div>
 </div>
 
-<!-- Buy Buttons (no position) -->
+<!-- Buy Buttons -->
 <div class="buy-btns" id="buyDiv">
-  <button class="btn-buy btn-put"  id="btnPut"  onclick="openTrade('put')">📉 PUT</button>
-  <button class="btn-buy btn-call" id="btnCall" onclick="openTrade('call')">📈 CALL</button>
+  <button class="btn-buy btn-put"  id="btnPut"  onclick="startPreTrade('put')">📉 PUT</button>
+  <button class="btn-buy btn-call" id="btnCall" onclick="startPreTrade('call')">📈 CALL</button>
 </div>
 
 <!-- Loading -->
@@ -410,9 +490,8 @@ body {
   <div class="rc-detail" id="rcDetail">---</div>
 </div>
 
-<!-- Alert 2 (أشد) -->
+<!-- Alert 2 -->
 <div class="alert a2" id="alert2">🚨 تحذير: الخسارة -$0.50 — قرار مطلوب الآن!</div>
-
 <!-- Alert 1 -->
 <div class="alert a1" id="alert1">⚠️ تنبيه: الخسارة وصلت -$0.30 — راقب الوضع</div>
 
@@ -422,11 +501,7 @@ body {
     <span class="pos-dir" id="posDir">---</span>
     <span class="pos-time" id="posTime">---</span>
   </div>
-
-  <!-- PnL Big -->
   <div class="pnl-big neu" id="pnlBig">$0.00</div>
-
-  <!-- PnL Bar -->
   <div class="bar-wrap">
     <div class="bar-labels">
       <span style="color:#22c55e">TP +$0.20</span>
@@ -438,42 +513,19 @@ body {
       <div class="bar-fill" id="barFill" style="width:0%;right:23.5%;background:#555;"></div>
     </div>
   </div>
-
-  <!-- Stats -->
   <div class="stats">
-    <div class="stat">
-      <div class="st-lbl">دخول</div>
-      <div class="st-val" id="stEntry">---</div>
-    </div>
-    <div class="stat">
-      <div class="st-lbl">الحالي</div>
-      <div class="st-val" id="stCurrent">---</div>
-    </div>
-    <div class="stat">
-      <div class="st-lbl">Delta</div>
-      <div class="st-val" id="stDelta">---</div>
-    </div>
-    <div class="stat green">
-      <div class="st-lbl">TP</div>
-      <div class="st-val" id="stTP">---</div>
-    </div>
-    <div class="stat red">
-      <div class="st-lbl">SL</div>
-      <div class="st-val" id="stSL">---</div>
-    </div>
-    <div class="stat">
-      <div class="st-lbl">TSLA دخول</div>
-      <div class="st-val" id="stTslaEntry">---</div>
-    </div>
+    <div class="stat"><div class="st-lbl">دخول</div><div class="st-val" id="stEntry">---</div></div>
+    <div class="stat"><div class="st-lbl">الحالي</div><div class="st-val" id="stCurrent">---</div></div>
+    <div class="stat"><div class="st-lbl">Delta</div><div class="st-val" id="stDelta">---</div></div>
+    <div class="stat green"><div class="st-lbl">TP</div><div class="st-val" id="stTP">---</div></div>
+    <div class="stat red">  <div class="st-lbl">SL</div><div class="st-val" id="stSL">---</div></div>
+    <div class="stat"><div class="st-lbl">TSLA دخول</div><div class="st-val" id="stTslaEntry">---</div></div>
   </div>
-
   <div style="font-size:10px;color:#333;text-align:center;padding:4px 0 2px;" id="posSymbol">---</div>
 </div>
 
 <!-- STOP LOSS Button -->
-<button id="btnStop" onclick="closeTrade()">
-  🛑 STOP LOSS — بيع فوري
-</button>
+<button id="btnStop" onclick="closeTrade()">🛑 STOP LOSS — بيع فوري</button>
 
 <!-- Footer -->
 <div class="footer">
@@ -481,21 +533,166 @@ body {
   <span id="statusTxt">جاري الاتصال...</span>
 </div>
 
+<!-- ═══════════════════════════════════════════════════════
+     Pre-Trade Modal — نظام الأسئلة الخمسة
+═══════════════════════════════════════════════════════ -->
+<div class="pretrade-overlay" id="preTradeModal">
+  <div class="pretrade-modal">
+    <!-- Header -->
+    <div class="pt-header">
+      <div class="pt-dir" id="ptDirLabel">📈 CALL</div>
+      <div class="pt-sub">تحقق قبل الدخول — 5 أسئلة سريعة</div>
+    </div>
+
+    <!-- س١: CheddarFlow -->
+    <div class="pt-question">
+      <div class="pt-q-label"><div class="pt-q-num">١</div>كم نسبة CALL في CheddarFlow الحين؟ (%)</div>
+      <input type="number" class="pt-input" id="ptCheddar" placeholder="مثال: 72" min="0" max="100">
+    </div>
+
+    <!-- س٢: Gamma Flip -->
+    <div class="pt-question">
+      <div class="pt-q-label"><div class="pt-q-num">٢</div>السعر بالنسبة لـ Gamma Flip؟</div>
+      <div class="pt-options cols3">
+        <div class="pt-opt" data-q="gf" data-v="above"   onclick="selectOpt(this)">✅ فوق</div>
+        <div class="pt-opt" data-q="gf" data-v="below"   onclick="selectOpt(this)">⚠️ تحت</div>
+        <div class="pt-opt" data-q="gf" data-v="unknown" onclick="selectOpt(this)">❓ ما أعرف</div>
+      </div>
+    </div>
+
+    <!-- س٣: VWAP -->
+    <div class="pt-question">
+      <div class="pt-q-label"><div class="pt-q-num">٣</div>السعر بالنسبة لـ VWAP؟</div>
+      <div class="pt-options cols2">
+        <div class="pt-opt" data-q="vwap" data-v="above" onclick="selectOpt(this)">📈 فوق</div>
+        <div class="pt-opt" data-q="vwap" data-v="below" onclick="selectOpt(this)">📉 تحت</div>
+      </div>
+    </div>
+
+    <!-- س٤: Opening Range -->
+    <div class="pt-question">
+      <div class="pt-q-label"><div class="pt-q-num">٤</div>السعر بالنسبة لـ Opening Range؟</div>
+      <div class="pt-options" style="grid-template-columns:1fr 1fr;">
+        <div class="pt-opt" data-q="or" data-v="above_high" onclick="selectOpt(this)">🚀 فوق OR High</div>
+        <div class="pt-opt" data-q="or" data-v="inside"     onclick="selectOpt(this)">↔️ داخل OR</div>
+        <div class="pt-opt" data-q="or" data-v="below_low"  onclick="selectOpt(this)">⬇️ تحت OR Low</div>
+        <div class="pt-opt" data-q="or" data-v="unknown"    onclick="selectOpt(this)">❓ ما حسبت OR</div>
+      </div>
+    </div>
+
+    <!-- س٥: سبب الدخول -->
+    <div class="pt-question">
+      <div class="pt-q-label"><div class="pt-q-num">٥</div>ما سبب دخولك؟</div>
+      <div class="pt-options" style="grid-template-columns:1fr 1fr;">
+        <div class="pt-opt" data-q="reason" data-v="telegram_signal"  onclick="selectOpt(this)">📡 إشارة التلقرام</div>
+        <div class="pt-opt" data-q="reason" data-v="cheddar_sweep"    onclick="selectOpt(this)">🌊 CheddarFlow sweep</div>
+        <div class="pt-opt" data-q="reason" data-v="key_level_bounce" onclick="selectOpt(this)">🎯 ارتداد من مستوى</div>
+        <div class="pt-opt" data-q="reason" data-v="macd_zero"        onclick="selectOpt(this)">📊 MACD منطقة الصفر</div>
+        <div class="pt-opt" data-q="reason" data-v="multi_confluence" onclick="selectOpt(this)" style="grid-column:1/-1;">✅ توافق أكثر من 3 مؤشرات</div>
+      </div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="pt-btns">
+      <button class="pt-confirm" id="ptConfirmBtn" onclick="confirmPreTrade()">تأكيد الدخول</button>
+      <button class="pt-cancel" onclick="cancelPreTrade()">إلغاء</button>
+    </div>
+
+    <!-- Fast Track -->
+    <div class="pt-fast-track">
+      مسار سريع متبقي اليوم: <span class="ft-count" id="ftCount">3</span> مرات —
+      <a onclick="fastTrack()">تجاوز الأسئلة</a>
+    </div>
+  </div>
+</div>
+
 <script>
+// ══════════════════════════════════════════════════════
+// State
+// ══════════════════════════════════════════════════════
 let hasPos = false;
 let vib1 = false, vib2 = false;
 let lastCheddar = null;
+let pendingTradeType = null;  // 'call' أو 'put'
 
-function fmt(v) { return v != null ? '$' + parseFloat(v).toFixed(2) : '---'; }
+// إجابات الأسئلة
+let ptAnswers = { gf: '', vwap: '', or: '', reason: '' };
+
+// Fast Track — يُحفظ في localStorage
+function getFTCount() {
+  const today = new Date().toDateString();
+  const saved = JSON.parse(localStorage.getItem('ft_data') || '{}');
+  if (saved.date !== today) return 3;
+  return Math.max(0, 3 - (saved.used || 0));
+}
+function useFT() {
+  const today = new Date().toDateString();
+  const saved = JSON.parse(localStorage.getItem('ft_data') || '{}');
+  const used = (saved.date === today ? saved.used : 0) + 1;
+  localStorage.setItem('ft_data', JSON.stringify({ date: today, used }));
+}
+
+// ══════════════════════════════════════════════════════
+// Dual Clock
+// ══════════════════════════════════════════════════════
+function updateClocks() {
+  const now = new Date();
+
+  // ET (UTC-4 صيفي / UTC-5 شتوي — نستخدم Intl)
+  const etStr = now.toLocaleTimeString('en-US', {
+    timeZone: 'America/New_York',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
+  });
+  document.getElementById('clockET').textContent = etStr;
+
+  // الرياض (UTC+3)
+  const ryStr = now.toLocaleTimeString('en-US', {
+    timeZone: 'Asia/Riyadh',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
+  });
+  document.getElementById('clockRiyadh').textContent = ryStr;
+
+  // تحذير النافذة
+  updateWindowWarning(now);
+}
+
+function updateWindowWarning(now) {
+  const etDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const h = etDate.getHours();
+  const m = etDate.getMinutes();
+  const totalMin = h * 60 + m;
+
+  const warn = document.getElementById('windowWarn');
+  // 10:10 = 610 دقيقة | 11:30 = 690 | 12:40 = 760
+  if (totalMin >= 610 && totalMin <= 690) {
+    warn.className = 'window-warn show ideal';
+    warn.textContent = '✅ أنت في النافذة المثالية (10:10 - 11:30 AM ET)';
+  } else if (totalMin > 690 && totalMin <= 760) {
+    warn.className = 'window-warn show caution';
+    warn.textContent = '⚠️ خارج النافذة المثالية — تداول بحذر (11:30 - 12:40 AM ET)';
+  } else if (totalMin >= 570 && totalMin < 610) {
+    warn.className = 'window-warn show caution';
+    warn.textContent = '⏳ قبل النافذة المثالية — انتظر 10:10 AM ET';
+  } else {
+    warn.className = 'window-warn show outside';
+    warn.textContent = '⚠️ خارج نافذة التداول (10:10 AM - 12:40 PM ET)';
+  }
+}
+
+setInterval(updateClocks, 1000);
+updateClocks();
+
+// ══════════════════════════════════════════════════════
+// Helpers
+// ══════════════════════════════════════════════════════
+function fmt(v)  { return v != null ? '$' + parseFloat(v).toFixed(2) : '---'; }
 function fmtL(v) { return v && v > 0 ? '$' + parseFloat(v).toFixed(0) : '---'; }
+function vib(p)  { if (navigator.vibrate) navigator.vibrate(p); }
 
 function updateBar(pnl) {
   const fill = document.getElementById('barFill');
   const mid  = document.getElementById('barMid');
   const range = 0.85;
-  // RTL: نقطة الصفر عند 23.5% من اليمين
-  // ربح → يمتد للأيمن (right ينقص)
-  // خسارة → يمتد للأيسر (right يزيد)
   const zeroRight = 23.5;
   const sign = pnl >= 0 ? '+' : '';
   mid.textContent = 'P&L: ' + sign + '$' + pnl.toFixed(2);
@@ -529,14 +726,49 @@ function updateCheddarBar(callPct) {
   document.getElementById('cheddarPutLbl').textContent  = 'PUT '  + putPct.toFixed(0) + '%';
 }
 
-function vib(p) { if (navigator.vibrate) navigator.vibrate(p); }
+// ══════════════════════════════════════════════════════
+// Streak
+// ══════════════════════════════════════════════════════
+function updateStreak(stats) {
+  const streak  = stats.current_streak ?? 0;
+  const longest = stats.longest_streak ?? 0;
+  const bar     = document.getElementById('streakBar');
+  if (!stats || stats.closed === 0) { bar.className = 'streak-bar'; return; }
 
+  const emoji   = document.getElementById('streakEmoji');
+  const num     = document.getElementById('streakNum');
+  const sub     = document.getElementById('streakSub');
+  const lng     = document.getElementById('streakLongest');
+
+  lng.textContent = 'أطول: ' + longest;
+
+  if (streak === 0) {
+    bar.className = 'streak-bar show';
+    emoji.textContent = '💪';
+    num.textContent   = 'ابدأ من جديد';
+    num.style.color   = '#888';
+    sub.textContent   = 'التاجر الحقيقي يتعافى';
+  } else if (streak >= 3) {
+    bar.className = 'streak-bar show zone';
+    emoji.textContent = '🎯';
+    num.textContent   = '🔥 ' + streak + ' متتالية';
+    num.style.color   = '#22c55e';
+    sub.textContent   = 'أنت في المنطقة 🎯';
+  } else {
+    bar.className = 'streak-bar show hot';
+    emoji.textContent = '🔥';
+    num.textContent   = streak + ' متتالية';
+    num.style.color   = '#ff9500';
+    sub.textContent   = 'استمر!';
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// CheddarFlow
+// ══════════════════════════════════════════════════════
 async function submitCheddar() {
   const val = parseFloat(document.getElementById('cheddarInput').value);
-  if (isNaN(val) || val < 0 || val > 100) {
-    alert('أدخل رقماً بين 0 و 100');
-    return;
-  }
+  if (isNaN(val) || val < 0 || val > 100) { alert('أدخل رقماً بين 0 و 100'); return; }
   try {
     const r = await fetch('/pe/cheddar', {
       method: 'POST',
@@ -557,24 +789,21 @@ async function submitCheddar() {
   }
 }
 
+// ══════════════════════════════════════════════════════
+// PE Refresh
+// ══════════════════════════════════════════════════════
 async function refreshPE() {
   try {
     const r = await fetch('/pe/status');
     const d = await r.json();
-
-    // المستويات
-    document.getElementById('lvlGF').textContent   = d.gex_levels && d.gex_levels.gamma_flip ? '$' + parseFloat(d.gex_levels.gamma_flip).toFixed(0) : '---';
-    document.getElementById('lvlCW').textContent   = d.gex_levels && d.gex_levels.call_wall  ? '$' + parseFloat(d.gex_levels.call_wall).toFixed(0)  : '---';
-    document.getElementById('lvlPW').textContent   = d.gex_levels && d.gex_levels.put_wall   ? '$' + parseFloat(d.gex_levels.put_wall).toFixed(0)   : '---';
-
-    // CheddarFlow من PE state
+    document.getElementById('lvlGF').textContent = d.gex_levels && d.gex_levels.gamma_flip ? '$' + parseFloat(d.gex_levels.gamma_flip).toFixed(0) : '---';
+    document.getElementById('lvlCW').textContent = d.gex_levels && d.gex_levels.call_wall  ? '$' + parseFloat(d.gex_levels.call_wall).toFixed(0)  : '---';
+    document.getElementById('lvlPW').textContent = d.gex_levels && d.gex_levels.put_wall   ? '$' + parseFloat(d.gex_levels.put_wall).toFixed(0)   : '---';
     if (d.cheddar_call_pct != null && d.cheddar_call_pct !== lastCheddar) {
       lastCheddar = d.cheddar_call_pct;
       updateCheddarBar(d.cheddar_call_pct);
       document.getElementById('cheddarInput').value = d.cheddar_call_pct.toFixed(0);
     }
-
-    // إشارة الدخول
     const banner = document.getElementById('signalBanner');
     if (d.signal_active && d.signal_direction) {
       const dir = d.signal_direction;
@@ -588,16 +817,17 @@ async function refreshPE() {
   } catch(e) {}
 }
 
+// ══════════════════════════════════════════════════════
+// Manual Status Refresh
+// ══════════════════════════════════════════════════════
 async function refreshManual() {
   try {
     const r = await fetch('/manual/status');
     const d = await r.json();
 
-    // TSLA price
     if (d.tsla_price > 0) document.getElementById('tslaPrice').textContent = '$' + d.tsla_price.toFixed(2);
     document.getElementById('etTime').textContent = (d.et_time || '--') + ' ET';
 
-    // VWAP & PDH/PDL من scalper status
     try {
       const rs = await fetch('/v8/status');
       const ds = await rs.json();
@@ -606,7 +836,13 @@ async function refreshManual() {
       document.getElementById('lvlPDL').textContent  = ds.pdl  && ds.pdl  > 0 ? '$' + parseFloat(ds.pdl).toFixed(2)  : '---';
     } catch(e) {}
 
-    // Status dot
+    // Streak من السجل
+    try {
+      const rs2 = await fetch('/journal/entries?limit=1');
+      const ds2 = await rs2.json();
+      if (ds2.stats) updateStreak(ds2.stats);
+    } catch(e) {}
+
     const dot = document.getElementById('statusDot');
     const txt = document.getElementById('statusTxt');
     if (d.is_trading_hours) {
@@ -666,7 +902,6 @@ async function refreshManual() {
         document.getElementById('rcTitle').textContent = pnl >= 0 ? '✅ ربح' : '❌ خسارة';
         const sign = pnl >= 0 ? '+' : '';
         document.getElementById('rcPnl').textContent = sign + '$' + pnl.toFixed(2);
-        // ترجمة السبب للعربية
         const reasonMap = {'TP': 'جني أرباح تلقائي ✅', 'SL': 'ستوب لوس تلقائي 🛑', 'MANUAL': 'إغلاق يدوي 👆', 'ERROR': 'خطأ تقني ⚠️'};
         const reasonText = reasonMap[d.last_reason] || d.last_reason || 'غير محدد';
         document.getElementById('rcDetail').textContent = '📌 السبب: ' + reasonText;
@@ -709,20 +944,88 @@ async function refresh() {
   await refreshPE();
 }
 
-async function openTrade(type) {
+// ══════════════════════════════════════════════════════
+// Pre-Trade Modal
+// ══════════════════════════════════════════════════════
+function startPreTrade(type) {
   if (hasPos) return;
-  const label = type === 'call' ? '📈 CALL' : '📉 PUT';
-  if (!confirm(label + ' — تأكيد الشراء؟\nTP: +$0.20 | SL: -$0.65')) return;
+  pendingTradeType = type;
+  ptAnswers = { gf: '', vwap: '', or: '', reason: '' };
 
+  // إعادة تعيين الأزرار
+  document.querySelectorAll('.pt-opt').forEach(el => el.classList.remove('selected'));
+
+  // تحديث CheddarFlow من القيمة الحالية
+  const cv = document.getElementById('cheddarInput').value;
+  document.getElementById('ptCheddar').value = cv || '';
+
+  // تحديث العنوان
+  const label = document.getElementById('ptDirLabel');
+  label.textContent = type === 'call' ? '📈 CALL' : '📉 PUT';
+  label.className = 'pt-dir ' + type;
+
+  // تحديث زر التأكيد
+  const btn = document.getElementById('ptConfirmBtn');
+  btn.className = 'pt-confirm ' + type;
+  btn.textContent = type === 'call' ? '📈 تأكيد CALL' : '📉 تأكيد PUT';
+
+  // Fast Track count
+  document.getElementById('ftCount').textContent = getFTCount();
+
+  document.getElementById('preTradeModal').classList.add('active');
+}
+
+function selectOpt(el) {
+  const q = el.dataset.q;
+  const v = el.dataset.v;
+  // إلغاء تحديد نفس المجموعة
+  document.querySelectorAll(`.pt-opt[data-q="${q}"]`).forEach(o => o.classList.remove('selected'));
+  el.classList.add('selected');
+  ptAnswers[q] = v;
+}
+
+function cancelPreTrade() {
+  document.getElementById('preTradeModal').classList.remove('active');
+  pendingTradeType = null;
+}
+
+async function confirmPreTrade() {
+  if (!pendingTradeType) return;
+  document.getElementById('preTradeModal').classList.remove('active');
+  await executeTrade(pendingTradeType, {
+    cheddar_flow:  document.getElementById('ptCheddar').value,
+    gamma_flip:    ptAnswers.gf,
+    vwap_position: ptAnswers.vwap,
+    or_position:   ptAnswers.or,
+    entry_reason:  ptAnswers.reason,
+  });
+}
+
+function fastTrack() {
+  const remaining = getFTCount();
+  if (remaining <= 0) {
+    alert('انتهى المسار السريع لهذا اليوم (3/3)\nاستخدم الأسئلة للدخول');
+    return;
+  }
+  if (!confirm('مسار سريع — تجاوز الأسئلة؟\nمتبقي: ' + remaining + ' مرات اليوم')) return;
+  useFT();
+  document.getElementById('preTradeModal').classList.remove('active');
+  executeTrade(pendingTradeType, {});
+}
+
+// ══════════════════════════════════════════════════════
+// Execute Trade
+// ══════════════════════════════════════════════════════
+async function executeTrade(type, preTradeData) {
   document.getElementById('loadingDiv').classList.add('show');
   document.getElementById('btnCall').disabled = true;
-  document.getElementById('btnPut').disabled = true;
+  document.getElementById('btnPut').disabled  = true;
 
   try {
     const r = await fetch('/manual/buy', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({type})
+      body: JSON.stringify({ type, pre_trade: preTradeData })
     });
     const d = await r.json();
     if (d.success) { hasPos = true; vib([100,50,100]); await refresh(); }
@@ -731,13 +1034,15 @@ async function openTrade(type) {
   finally {
     document.getElementById('loadingDiv').classList.remove('show');
     document.getElementById('btnCall').disabled = false;
-    document.getElementById('btnPut').disabled = false;
+    document.getElementById('btnPut').disabled  = false;
   }
 }
 
+// ══════════════════════════════════════════════════════
+// Close Trade
+// ══════════════════════════════════════════════════════
 async function closeTrade() {
   if (!confirm('🛑 تأكيد البيع الفوري بسعر السوق؟')) return;
-
   const btn = document.getElementById('btnStop');
   btn.disabled = true;
   btn.textContent = '⏳ جاري البيع...';
@@ -771,9 +1076,11 @@ async function closeTrade() {
   }
 }
 
-// Auto refresh
+// ══════════════════════════════════════════════════════
+// Auto Refresh — V10: كل 2 ثانية
+// ══════════════════════════════════════════════════════
 refresh();
-setInterval(refresh, 5000);
+setInterval(refresh, 2000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 </script>
 </body>

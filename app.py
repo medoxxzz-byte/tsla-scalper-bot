@@ -2315,16 +2315,48 @@ def manual_buy():
     if not _V8_AVAILABLE:
         return jsonify({"success": False, "error": "V9 not available"}), 503
     
+    global _active_journal_id
     data = request.get_json(force=True, silent=True) or {}
     option_type = data.get("type", "").lower()
-    
+    pre_trade   = data.get("pre_trade", {})
+
     if option_type not in ("call", "put"):
         return jsonify({"success": False, "error": "يجب تحديد call أو put"}), 400
-    
+
     success, result = execute_manual_itm(option_type)
-    
+
     if success:
         logger.info(f"[V9 Manual] Buy {option_type.upper()} executed: {result.get('symbol')} @ ${result.get('entry_price')}")
+        # ── تسجيل تلقائي في السجل مع بيانات pre_trade (V10) ──
+        try:
+            from options_scalper import add_journal_entry, get_manual_status
+            ms = get_manual_status()
+            journal_entry = {
+                "status":        "open",
+                "direction":     option_type.upper(),
+                "symbol":        result.get("symbol", ""),
+                "strike":        result.get("strike", 0),
+                "entry_price":   result.get("entry_price", 0),
+                "tsla_price":    ms.get("tsla_price", 0),
+                "delta":         result.get("delta", 0),
+                "gex_position":  "",
+                "cheddar_flow":  pre_trade.get("cheddar_flow", ""),
+                "gamma_flip":    pre_trade.get("gamma_flip", ""),
+                "vwap_position": pre_trade.get("vwap_position", ""),
+                "or_position":   pre_trade.get("or_position", ""),
+                "entry_reason":  pre_trade.get("entry_reason", ""),
+                "notes":         "",
+                "images":        [],
+                "exit_price":    None,
+                "pnl_dollar":    None,
+                "exit_reason":   None,
+                "exit_time":     None,
+            }
+            entry_id = add_journal_entry(journal_entry)
+            _active_journal_id = entry_id
+            result["journal_id"] = entry_id
+        except Exception as je:
+            logger.warning(f"[V10] Journal auto-save failed: {je}")
         return jsonify({"success": True, **result})
     else:
         logger.warning(f"[V9 Manual] Buy failed: {result.get('error')}")
@@ -2386,17 +2418,24 @@ def journal_add():
     if not _V8_AVAILABLE:
         return jsonify({"success": False}), 503
     data = request.get_json(force=True, silent=True) or {}
-    # حقول إلزامية
+    # دعم pre_trade من manual.html
+    pt = data.get("pre_trade", {})
+    # حقول إلزامية + حقول الأسئلة الخمسة (V10)
     entry = {
         "status":        "open",
-        "direction":     data.get("direction", ""),       # CALL / PUT
+        "direction":     data.get("direction", ""),
         "symbol":        data.get("symbol", ""),
         "strike":        data.get("strike", 0),
         "entry_price":   data.get("entry_price", 0),
         "tsla_price":    data.get("tsla_price", 0),
         "delta":         data.get("delta", 0),
-        "gex_position":  data.get("gex_position", ""),    # above/below gamma flip
-        "cheddar_flow":  data.get("cheddar_flow", ""),    # CALL%/PUT%
+        "gex_position":  data.get("gex_position", ""),
+        # ── أسئلة ما قبل الدخول (V10) ──
+        "cheddar_flow":  data.get("cheddar_flow") or pt.get("cheddar_flow", ""),
+        "gamma_flip":    data.get("gamma_flip")   or pt.get("gamma_flip", ""),
+        "vwap_position": data.get("vwap_position") or pt.get("vwap_position", ""),
+        "or_position":   data.get("or_position")  or pt.get("or_position", ""),
+        "entry_reason":  data.get("entry_reason") or pt.get("entry_reason", ""),
         "notes":         data.get("notes", ""),
         "images":        [],
         "exit_price":    None,

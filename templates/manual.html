@@ -662,7 +662,10 @@ async function refreshManual() {
         document.getElementById('rcTitle').textContent = pnl >= 0 ? '✅ ربح' : '❌ خسارة';
         const sign = pnl >= 0 ? '+' : '';
         document.getElementById('rcPnl').textContent = sign + '$' + pnl.toFixed(2);
-        document.getElementById('rcDetail').textContent = d.last_reason || '';
+        // ترجمة السبب للعربية
+        const reasonMap = {'TP': 'جني أرباح تلقائي ✅', 'SL': 'ستوب لوس تلقائي 🛑', 'MANUAL': 'إغلاق يدوي 👆', 'ERROR': 'خطأ تقني ⚠️'};
+        const reasonText = reasonMap[d.last_reason] || d.last_reason || 'غير محدد';
+        document.getElementById('rcDetail').textContent = '📌 السبب: ' + reasonText;
         vib(pnl >= 0 ? [100,50,100] : [500]);
         setTimeout(() => rc.classList.remove('show'), 12000);
       }
@@ -750,7 +753,9 @@ async function closeTrade() {
       document.getElementById('rcTitle').textContent = pnl >= 0 ? '✅ ربح' : '❌ خسارة';
       const sign = pnl >= 0 ? '+' : '';
       document.getElementById('rcPnl').textContent = sign + '$' + pnl.toFixed(2);
-      document.getElementById('rcDetail').textContent = 'دخول: ' + fmt(d.entry_price) + ' | خروج: ' + fmt(d.exit_price);
+      const reasonMap2 = {'TP': 'جني أرباح تلقائي ✅', 'SL': 'ستوب لوس تلقائي 🛑', 'MANUAL': 'إغلاق يدوي 👆', 'ERROR': 'خطأ تقني ⚠️'};
+      const reasonText2 = reasonMap2[d.reason] || d.reason || 'إغلاق يدوي 👆';
+      document.getElementById('rcDetail').textContent = '📌 السبب: ' + reasonText2 + ' | دخول: ' + fmt(d.entry_price) + ' → خروج: ' + fmt(d.exit_price);
       hasPos = false;
       setTimeout(() => rc.classList.remove('show'), 12000);
       await refresh();

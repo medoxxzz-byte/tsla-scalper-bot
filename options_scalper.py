@@ -2085,6 +2085,24 @@ def close_manual_itm(reason="manual"):
     pos["pnl"] = pnl
     _manual_state["position"] = None
     _manual_state["monitor_active"] = False
+    _manual_state["last_reason"] = reason  # TP / SL / MANUAL / ERROR
+    _manual_state["last_pnl"] = pnl
+    
+    # إرسال تنبيه Telegram بسبب الإغلاق
+    direction = "CALL 📈" if pos.get("type") == "call" else "PUT 📉"
+    emoji = "✅" if pnl >= 0 else "🔴"
+    reason_ar = {"TP": "جني أرباح تلقائي ✅", "SL": "ستوب لوس تلقائي 🛑", "MANUAL": "إغلاق يدوي 👆", "ERROR": "خطأ تقني ⚠️"}.get(reason, reason)
+    msg = (
+        f"{emoji} <b>V9 إغلاق — {direction}</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📋 {symbol}\n"
+        f"📥 دخول: ${pos['entry_price']:.2f}\n"
+        f"📤 خروج: ${current_price:.2f}\n"
+        f"💰 P&L: ${pnl:+.2f}\n"
+        f"📌 السبب: {reason_ar}\n"
+        f"🕐 {_et_now().strftime('%I:%M %p')} ET"
+    )
+    send_telegram(msg)
     
     logger.info(f"[V9 Manual] Closed {symbol} @ ${current_price:.2f} | PnL=${pnl:+.2f} | Reason={reason}")
     
@@ -2248,7 +2266,9 @@ def get_manual_status():
         "suggested_call": suggested_call,
         "suggested_put": suggested_put,
         "is_trading_hours": _is_scalp_window(),
-        "et_time": _et_now().strftime("%I:%M:%S %p")
+        "et_time": _et_now().strftime("%I:%M:%S %p"),
+        "last_reason": _manual_state.get("last_reason", ""),
+        "last_pnl": _manual_state.get("last_pnl", 0)
     }
 
 

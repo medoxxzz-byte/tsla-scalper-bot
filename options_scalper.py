@@ -60,8 +60,8 @@ ATM_MAX_REINFORCE  = 0      # لا تعزيز في الاستراتيجية ال
 
 # ── Layer 2: ITM Manual Scalp (V9 — Web Interface) ──────────────────────────
 ITM_CONTRACTS      = 1      # عقد واحد ITM
-ITM_DELTA_MIN      = 0.70
-ITM_DELTA_MAX      = 0.88
+ITM_DELTA_MIN      = 0.60
+ITM_DELTA_MAX      = 0.92
 ITM_ENTRY_BELOW    = 0.015  # احتياطي
 ITM_TP_DOLLARS     = 0.20   # +$0.20 جني أرباح (Market Order)
 ITM_SL_DOLLARS     = 0.65   # -$0.65 بيع تلقائي (Market Order)
@@ -1959,7 +1959,7 @@ def execute_manual_itm(option_type):
     # إيجاد أفضل عقد ITM
     contract = find_itm_contract_for_manual(price, option_type)
     if not contract:
-        return False, {"error": f"لا يوجد عقد ITM مناسب (Delta 0.70-0.88) لـ {option_type.upper()}"}
+        return False, {"error": f"لا يوجد عقد ITM مناسب (Delta 0.60-0.92) لـ {option_type.upper()}"}
     
     symbol = contract["symbol"]
     mid = contract["mid"]

@@ -2323,3 +2323,416 @@ def get_journal_stats() -> dict:
         "avg_win": round(sum(e.get("pnl_dollar", 0) for e in wins) / len(wins), 2) if wins else 0,
         "avg_loss": round(sum(e.get("pnl_dollar", 0) for e in losses) / len(losses), 2) if losses else 0,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# V9.4 — ITM PRECISION ENTRY ENGINE (محرك الدخول الدقيق)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# المنطق:
+#   - يشتغل بعد 40 دقيقة من الافتتاح (10:10 AM ET)
+#   - يفحص شروط الدخول كل 30 ثانية
+#   - إذا اكتملت الشروط → يرسل تنبيه Telegram
+#   - لا يدخل تلقائياً — المتداول يقرر من /manual
+#
+# شروط CALL:
+#   ✅ GEX: فوق Gamma Flip
+#   ✅ VWAP: السعر فوق VWAP
+#   ✅ CheddarFlow: CALL% > 60%
+#   ✅ الموقع: قريب من مستوى دعم (Put Wall / PDL / OR Low / مستوى نفسي)
+#   ❌ لا تدخل: السعر قريب من Call Wall (أقل من $5)
+#
+# شروط PUT:
+#   ✅ GEX: تحت Gamma Flip
+#   ✅ VWAP: السعر تحت VWAP
+#   ✅ CheddarFlow: CALL% < 45% (PUT يسيطر)
+#   ✅ الموقع: قريب من مستوى مقاومة (Call Wall / PDH / OR High)
+#   ❌ لا تدخل: CheddarFlow CALL% > 75%
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import threading as _threading_pe
+import time as _time_pe
+
+# ── إعدادات محرك الدخول الدقيق ──────────────────────────────────────────────
+PE_CHECK_INTERVAL   = 30     # فحص كل 30 ثانية
+PE_CALL_FLOW_MIN    = 60     # CheddarFlow CALL% الحد الأدنى للـ CALL
+PE_PUT_FLOW_MAX     = 45     # CheddarFlow CALL% الحد الأقصى للـ PUT
+PE_FLOW_BLOCK_CALL  = 75     # إذا CALL% > 75% لا تدخل PUT
+PE_SUPPORT_PROX     = 0.008  # 0.8% = قريب من مستوى دعم
+PE_RESIST_PROX      = 0.008  # 0.8% = قريب من مستوى مقاومة
+PE_CALL_WALL_BLOCK  = 5.0    # $5 من Call Wall = لا تدخل CALL
+PE_ALERT_COOLDOWN   = 300    # 5 دقائق بين كل تنبيهين
+
+# ── حالة المحرك ──────────────────────────────────────────────────────────────
+_pe_state = {
+    "running":           False,
+    "last_alert_time":   0,
+    "last_alert_dir":    "",   # "CALL" أو "PUT"
+    "cheddar_call_pct":  None, # آخر قراءة CheddarFlow
+    "cheddar_updated":   0,    # وقت آخر تحديث
+    "gex_levels":        {},   # GEX levels من FlashAlpha
+    "signal_active":     False,
+    "signal_direction":  "",
+    "signal_reasons":    [],
+    "signal_time":       "",
+    "signal_price":      0.0,
+}
+
+_pe_lock = _threading_pe.Lock()
+
+
+def update_cheddar_flow(call_pct: float):
+    """
+    يُستدعى من الخارج (app.py أو يدوياً) لتحديث نسبة CheddarFlow.
+    call_pct: نسبة CALL من 0 إلى 100
+    """
+    with _pe_lock:
+        _pe_state["cheddar_call_pct"] = float(call_pct)
+        _pe_state["cheddar_updated"] = _time_pe.time()
+    logger.info(f"[PE] CheddarFlow updated: CALL={call_pct:.1f}% | PUT={100-call_pct:.1f}%")
+
+
+def update_gex_levels(levels: dict):
+    """
+    يُستدعى من FlashAlpha worker لتحديث مستويات GEX.
+    levels: {
+      "gamma_flip": float,
+      "call_wall": float,
+      "put_wall": float,
+      "max_gamma": float,
+    }
+    """
+    with _pe_lock:
+        _pe_state["gex_levels"] = levels
+    logger.info(f"[PE] GEX levels updated: {levels}")
+
+
+def get_pe_status() -> dict:
+    """إرجاع حالة محرك الدخول الدقيق للواجهة."""
+    with _pe_lock:
+        return dict(_pe_state)
+
+
+def _check_entry_conditions(price: float) -> tuple:
+    """
+    فحص شروط الدخول الدقيقة.
+    Returns: (direction: str|None, reasons: list, warnings: list)
+      direction = "CALL" / "PUT" / None
+    """
+    reasons_call = []
+    reasons_put  = []
+    warnings     = []
+    blocks_call  = []
+    blocks_put   = []
+
+    cheddar_pct  = _pe_state.get("cheddar_call_pct")
+    gex          = _pe_state.get("gex_levels", {})
+    vwap         = _state.get("vwap", 0)
+    pdh          = _state.get("pdh", 0)
+    pdl          = _state.get("pdl", 0)
+    or_high      = _state.get("opening_range_high", 0)
+    or_low       = _state.get("opening_range_low", 0)
+    micro_res    = _state.get("micro_resistances", [])
+    micro_sup    = _state.get("micro_supports", [])
+
+    gamma_flip   = gex.get("gamma_flip", 0)
+    call_wall    = gex.get("call_wall", 0)
+    put_wall     = gex.get("put_wall", 0)
+    max_gamma    = gex.get("max_gamma", 0)
+
+    # ── 1. GEX — Gamma Flip ──────────────────────────────────────────────────
+    if gamma_flip > 0:
+        if price > gamma_flip:
+            reasons_call.append(f"✅ فوق Gamma Flip ${gamma_flip:.2f}")
+        else:
+            reasons_put.append(f"✅ تحت Gamma Flip ${gamma_flip:.2f}")
+            blocks_call.append(f"❌ تحت Gamma Flip — CALL خطر")
+    else:
+        warnings.append("⚠️ GEX غير متاح — تحقق من FlashAlpha")
+
+    # ── 2. VWAP ──────────────────────────────────────────────────────────────
+    if vwap > 0:
+        if price > vwap * 1.001:
+            reasons_call.append(f"✅ فوق VWAP ${vwap:.2f}")
+        elif price < vwap * 0.999:
+            reasons_put.append(f"✅ تحت VWAP ${vwap:.2f}")
+        else:
+            warnings.append(f"⚠️ قريب جداً من VWAP ${vwap:.2f} — انتظر")
+            blocks_call.append("❌ VWAP Danger Zone")
+            blocks_put.append("❌ VWAP Danger Zone")
+
+    # ── 3. CheddarFlow ───────────────────────────────────────────────────────
+    if cheddar_pct is not None:
+        put_pct = 100 - cheddar_pct
+        if cheddar_pct >= PE_CALL_FLOW_MIN:
+            reasons_call.append(f"✅ CheddarFlow CALL {cheddar_pct:.0f}%")
+        else:
+            blocks_call.append(f"❌ CheddarFlow CALL ضعيف ({cheddar_pct:.0f}%)")
+
+        if cheddar_pct <= PE_PUT_FLOW_MAX:
+            reasons_put.append(f"✅ CheddarFlow PUT {put_pct:.0f}%")
+        else:
+            blocks_put.append(f"❌ CheddarFlow PUT ضعيف (CALL={cheddar_pct:.0f}%)")
+
+        # حجب PUT إذا CALL قوي جداً
+        if cheddar_pct > PE_FLOW_BLOCK_CALL:
+            blocks_put.append(f"🚫 CheddarFlow CALL {cheddar_pct:.0f}% — لا تدخل PUT")
+    else:
+        warnings.append("⚠️ CheddarFlow غير محدّث — أدخل النسبة يدوياً")
+
+    # ── 4. موقع السعر من المستويات ───────────────────────────────────────────
+    # دعم قريب (للـ CALL)
+    support_near = False
+    support_name = ""
+
+    # Put Wall
+    if put_wall > 0 and price > put_wall:
+        dist = (price - put_wall) / price
+        if dist <= PE_SUPPORT_PROX:
+            support_near = True
+            support_name = f"Put Wall ${put_wall:.2f}"
+
+    # PDL
+    if pdl > 0 and price > pdl:
+        dist = (price - pdl) / price
+        if dist <= PE_SUPPORT_PROX:
+            support_near = True
+            support_name = f"PDL ${pdl:.2f}"
+
+    # OR Low
+    if or_low > 0 and price > or_low:
+        dist = (price - or_low) / price
+        if dist <= PE_SUPPORT_PROX:
+            support_near = True
+            support_name = f"OR Low ${or_low:.2f}"
+
+    # Micro Support
+    for s in micro_sup:
+        if price > s:
+            dist = (price - s) / price
+            if dist <= PE_SUPPORT_PROX:
+                support_near = True
+                support_name = f"Micro Support ${s:.2f}"
+                break
+
+    # Psychological level (دعم)
+    psych, psych_dist = get_nearest_psych_level(price)
+    if psych_dist <= 0.005 and price >= psych:
+        support_near = True
+        support_name = f"رقم نفسي ${psych:.0f}"
+
+    if support_near:
+        reasons_call.append(f"✅ قريب من دعم: {support_name}")
+    else:
+        warnings.append("⚠️ لا يوجد دعم قريب — انتظر بولباك")
+
+    # مقاومة قريبة (للـ PUT)
+    resist_near = False
+    resist_name = ""
+
+    # Call Wall
+    if call_wall > 0 and price < call_wall:
+        dist = (call_wall - price) / price
+        if dist <= PE_RESIST_PROX:
+            resist_near = True
+            resist_name = f"Call Wall ${call_wall:.2f}"
+
+    # PDH
+    if pdh > 0 and price < pdh:
+        dist = (pdh - price) / price
+        if dist <= PE_RESIST_PROX:
+            resist_near = True
+            resist_name = f"PDH ${pdh:.2f}"
+
+    # OR High
+    if or_high > 0 and price < or_high:
+        dist = (or_high - price) / price
+        if dist <= PE_RESIST_PROX:
+            resist_near = True
+            resist_name = f"OR High ${or_high:.2f}"
+
+    # Micro Resistance
+    for r in micro_res:
+        if price < r:
+            dist = (r - price) / price
+            if dist <= PE_RESIST_PROX:
+                resist_near = True
+                resist_name = f"Micro Resistance ${r:.2f}"
+                break
+
+    if resist_near:
+        reasons_put.append(f"✅ قريب من مقاومة: {resist_name}")
+    else:
+        warnings.append("⚠️ لا توجد مقاومة قريبة للـ PUT")
+
+    # ── 5. حجب CALL إذا قريب من Call Wall ───────────────────────────────────
+    if call_wall > 0:
+        dist_to_wall = call_wall - price
+        if 0 < dist_to_wall < PE_CALL_WALL_BLOCK:
+            blocks_call.append(f"🚫 قريب من Call Wall ${call_wall:.2f} (فرق ${dist_to_wall:.2f})")
+
+    # ── 6. Max Gamma كمعلومة إضافية ──────────────────────────────────────────
+    if max_gamma > 0:
+        dist_mg = abs(price - max_gamma) / price
+        if dist_mg <= 0.01:
+            warnings.append(f"🧲 قريب من Max Gamma ${max_gamma:.2f} (مغناطيس)")
+
+    # ── القرار النهائي ────────────────────────────────────────────────────────
+    # CALL: يحتاج 3 شروط أساسية (GEX + VWAP + CheddarFlow) + لا حجب
+    call_score = len(reasons_call)
+    put_score  = len(reasons_put)
+
+    if call_score >= 3 and not blocks_call:
+        return "CALL", reasons_call, warnings
+    elif put_score >= 3 and not blocks_put:
+        return "PUT", reasons_put, warnings
+    else:
+        return None, [], warnings + blocks_call + blocks_put
+
+
+def _build_alert_message(direction: str, price: float, reasons: list, warnings: list) -> str:
+    """بناء رسالة تنبيه Telegram منظمة."""
+    now_str = _et_now().strftime("%I:%M %p ET")
+    arrow   = "📈" if direction == "CALL" else "📉"
+    color   = "🟢" if direction == "CALL" else "🔴"
+
+    gex    = _pe_state.get("gex_levels", {})
+    vwap   = _state.get("vwap", 0)
+    cheddar = _pe_state.get("cheddar_call_pct")
+
+    lines = [
+        f"{color} {arrow} *إشارة دخول {direction}*",
+        f"━━━━━━━━━━━━━━━━━",
+        f"💵 TSLA: *${price:.2f}*",
+        f"🕐 {now_str}",
+        "",
+        "*الشروط المكتملة:*",
+    ]
+    for r in reasons:
+        lines.append(f"  {r}")
+
+    if warnings:
+        lines.append("")
+        lines.append("*ملاحظات:*")
+        for w in warnings:
+            lines.append(f"  {w}")
+
+    lines.append("")
+    lines.append("*المستويات الحالية:*")
+    if gex.get("gamma_flip"):
+        lines.append(f"  Gamma Flip: ${gex['gamma_flip']:.2f}")
+    if gex.get("call_wall"):
+        lines.append(f"  Call Wall: ${gex['call_wall']:.2f}")
+    if gex.get("put_wall"):
+        lines.append(f"  Put Wall: ${gex['put_wall']:.2f}")
+    if vwap > 0:
+        lines.append(f"  VWAP: ${vwap:.2f}")
+    if cheddar is not None:
+        lines.append(f"  CheddarFlow: CALL {cheddar:.0f}% | PUT {100-cheddar:.0f}%")
+
+    lines.append("")
+    lines.append("👆 *افتح /manual للدخول*")
+
+    return "\n".join(lines)
+
+
+def _pe_engine_loop():
+    """حلقة محرك الدخول الدقيق — تعمل كـ background thread."""
+    logger.info("[PE] ITM Precision Entry Engine started ✅")
+
+    while _pe_state["running"]:
+        try:
+            now = _et_now()
+            now_minutes = now.hour * 60 + now.minute
+
+            # نافذة التداول: 10:10 AM - 12:40 PM ET
+            window_start = 10 * 60 + 10
+            window_end   = 12 * 60 + 40
+
+            if not (window_start <= now_minutes <= window_end):
+                # خارج النافذة — انتظر
+                with _pe_lock:
+                    _pe_state["signal_active"]    = False
+                    _pe_state["signal_direction"] = ""
+                    _pe_state["signal_reasons"]   = []
+                _time_pe.sleep(PE_CHECK_INTERVAL)
+                continue
+
+            # جلب سعر TSLA
+            snap = get_tsla_snapshot()
+            if not snap or snap["price"] <= 0:
+                _time_pe.sleep(PE_CHECK_INTERVAL)
+                continue
+
+            price = snap["price"]
+
+            # تحديث VWAP
+            bars_1m = get_tsla_bars("1Min", 60)
+            if bars_1m:
+                cum_pv = sum(float(b["c"]) * int(b.get("v", 0)) for b in bars_1m)
+                cum_v  = sum(int(b.get("v", 0)) for b in bars_1m)
+                if cum_v > 0:
+                    _state["vwap"] = cum_pv / cum_v
+
+            # تحديث Micro S/R
+            compute_micro_sr()
+
+            # فحص الشروط
+            with _pe_lock:
+                direction, reasons, warnings = _check_entry_conditions(price)
+
+            if direction:
+                now_ts = _time_pe.time()
+                last_alert = _pe_state["last_alert_time"]
+                last_dir   = _pe_state["last_alert_dir"]
+
+                # إرسال تنبيه إذا:
+                # 1. مضت 5 دقائق من آخر تنبيه
+                # 2. أو تغير الاتجاه
+                should_alert = (
+                    (now_ts - last_alert) >= PE_ALERT_COOLDOWN
+                    or last_dir != direction
+                )
+
+                with _pe_lock:
+                    _pe_state["signal_active"]    = True
+                    _pe_state["signal_direction"] = direction
+                    _pe_state["signal_reasons"]   = reasons
+                    _pe_state["signal_time"]      = now.strftime("%I:%M %p")
+                    _pe_state["signal_price"]     = price
+
+                if should_alert:
+                    msg = _build_alert_message(direction, price, reasons, warnings)
+                    send_telegram(msg)
+                    with _pe_lock:
+                        _pe_state["last_alert_time"] = now_ts
+                        _pe_state["last_alert_dir"]  = direction
+                    logger.info(f"[PE] Alert sent: {direction} @ ${price:.2f}")
+            else:
+                with _pe_lock:
+                    _pe_state["signal_active"]    = False
+                    _pe_state["signal_direction"] = ""
+                    _pe_state["signal_reasons"]   = []
+
+        except Exception as e:
+            logger.error(f"[PE] Engine error: {e}")
+
+        _time_pe.sleep(PE_CHECK_INTERVAL)
+
+    logger.info("[PE] ITM Precision Entry Engine stopped.")
+
+
+def start_pe_engine():
+    """تشغيل محرك الدخول الدقيق."""
+    if _pe_state["running"]:
+        return
+    _pe_state["running"] = True
+    t = _threading_pe.Thread(target=_pe_engine_loop, daemon=True)
+    t.start()
+    logger.info("[PE] Precision Entry Engine thread started ✅")
+
+
+def stop_pe_engine():
+    """إيقاف محرك الدخول الدقيق."""
+    _pe_state["running"] = False
+    logger.info("[PE] Precision Entry Engine stopping...")

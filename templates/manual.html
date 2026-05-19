@@ -19,11 +19,21 @@ body {
 
 /* ── Header ── */
 .header {
-  text-align: center;
-  padding: 8px 0 10px;
-  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 4px 10px;
 }
-.header h1 { font-size: 17px; color: #a0a8ff; letter-spacing: 1px; }
+.header h1 { font-size: 16px; color: #a0a8ff; }
+.header-links { display: flex; gap: 6px; }
+.hlink {
+  color: #64b5f6;
+  font-size: 11px;
+  text-decoration: none;
+  background: #1e3a5f;
+  padding: 5px 9px;
+  border-radius: 6px;
+}
 
 /* ── TSLA Price ── */
 .price-box {
@@ -36,6 +46,131 @@ body {
 .price-box .lbl { font-size: 11px; color: #555; letter-spacing: 1px; }
 .price-box .val { font-size: 38px; font-weight: 800; color: #fff; line-height: 1.1; }
 .price-box .sub { font-size: 11px; color: #444; margin-top: 2px; }
+
+/* ── Signal Banner ── */
+#signalBanner {
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  display: none;
+  animation: pulse 2s infinite;
+}
+#signalBanner.show { display: block; }
+#signalBanner.call {
+  background: rgba(34,197,94,0.12);
+  border: 2px solid rgba(34,197,94,0.5);
+}
+#signalBanner.put {
+  background: rgba(239,68,68,0.12);
+  border: 2px solid rgba(239,68,68,0.5);
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.85} }
+.sig-title { font-size: 16px; font-weight: 800; margin-bottom: 6px; }
+.sig-call .sig-title { color: #22c55e; }
+.sig-put  .sig-title { color: #ef4444; }
+.sig-reasons { font-size: 11px; color: #aaa; line-height: 1.7; }
+.sig-time { font-size: 10px; color: #555; margin-top: 4px; }
+
+/* ── Levels Panel ── */
+.levels-box {
+  background: #111120;
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border: 1px solid #1e1e30;
+}
+.levels-title {
+  font-size: 11px;
+  color: #666;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+.levels-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+.lvl {
+  background: #0d0d1a;
+  border-radius: 8px;
+  padding: 7px 8px;
+  text-align: center;
+}
+.lvl .lname { font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
+.lvl .lval  { font-size: 14px; font-weight: 700; color: #fff; margin-top: 2px; }
+.lvl.gf .lval  { color: #a78bfa; }
+.lvl.cw .lval  { color: #f97316; }
+.lvl.pw .lval  { color: #22c55e; }
+.lvl.vwap .lval { color: #60a5fa; }
+.lvl.pdh .lval  { color: #f59e0b; }
+.lvl.pdl .lval  { color: #34d399; }
+
+/* ── CheddarFlow Input ── */
+.cheddar-box {
+  background: #111120;
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border: 1px solid #1e1e30;
+}
+.cheddar-title { font-size: 11px; color: #666; letter-spacing: 1px; margin-bottom: 8px; text-transform: uppercase; }
+.cheddar-row { display: flex; align-items: center; gap: 8px; }
+.cheddar-row input {
+  flex: 1;
+  background: #0d0d1a;
+  border: 1px solid #2a2a40;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  padding: 8px 12px;
+  text-align: center;
+  outline: none;
+  width: 80px;
+}
+.cheddar-row input:focus { border-color: #a0a8ff; }
+.cheddar-bar {
+  flex: 1;
+  background: #0d0d1a;
+  border-radius: 6px;
+  height: 28px;
+  position: relative;
+  overflow: hidden;
+}
+.cheddar-fill-c {
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+  border-radius: 6px;
+  transition: width 0.4s;
+}
+.cheddar-fill-p {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: linear-gradient(90deg, #dc2626, #ef4444);
+  border-radius: 6px;
+  transition: width 0.4s;
+}
+.cheddar-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #555;
+  margin-top: 4px;
+}
+.btn-cheddar {
+  background: #1e3a5f;
+  color: #64b5f6;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.btn-cheddar:active { opacity: 0.7; }
+#cheddarStatus { font-size: 10px; color: #555; margin-top: 4px; text-align: center; }
 
 /* ── Suggest Cards ── */
 .suggests {
@@ -78,16 +213,8 @@ body {
 }
 .btn-buy:active { transform: scale(0.95); }
 .btn-buy:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
-.btn-call {
-  background: linear-gradient(135deg, #16a34a, #22c55e);
-  color: #fff;
-  box-shadow: 0 4px 20px rgba(34,197,94,0.3);
-}
-.btn-put {
-  background: linear-gradient(135deg, #dc2626, #ef4444);
-  color: #fff;
-  box-shadow: 0 4px 20px rgba(239,68,68,0.3);
-}
+.btn-call { background: linear-gradient(135deg, #16a34a, #22c55e); color: #fff; box-shadow: 0 4px 20px rgba(34,197,94,0.3); }
+.btn-put  { background: linear-gradient(135deg, #dc2626, #ef4444); color: #fff; box-shadow: 0 4px 20px rgba(239,68,68,0.3); }
 
 /* ── Position Panel ── */
 #posPanel {
@@ -99,80 +226,27 @@ body {
   display: none;
 }
 #posPanel.show { display: block; }
-
-.pos-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-}
+.pos-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .pos-dir { font-size: 15px; font-weight: 800; }
 .pos-time { font-size: 11px; color: #555; }
 
 /* PnL Bar */
-.bar-wrap {
-  background: #0d0d1a;
-  border-radius: 8px;
-  padding: 10px 12px;
-  margin-bottom: 10px;
-}
-.bar-labels {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  color: #555;
-  margin-bottom: 5px;
-}
-.bar-track {
-  background: #1a1a2e;
-  border-radius: 4px;
-  height: 10px;
-  position: relative;
-  overflow: hidden;
-}
-.bar-fill {
-  height: 100%;
-  border-radius: 4px;
-  position: absolute;
-  top: 0;
-  transition: width 0.4s, left 0.4s, background 0.3s;
-}
-.bar-center {
-  position: absolute;
-  top: 0; bottom: 0;
-  left: 76.5%;
-  width: 2px;
-  background: #333;
-}
+.bar-wrap { background: #0d0d1a; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.bar-labels { display: flex; justify-content: space-between; font-size: 10px; color: #555; margin-bottom: 5px; }
+.bar-track { background: #1a1a2e; border-radius: 4px; height: 10px; position: relative; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; position: absolute; top: 0; transition: width 0.4s, left 0.4s, background 0.3s; }
+.bar-center { position: absolute; top: 0; bottom: 0; left: 76.5%; width: 2px; background: #333; }
 
 /* Stats Grid */
-.stats {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-.stat {
-  background: #0d0d1a;
-  border-radius: 8px;
-  padding: 8px;
-  text-align: center;
-}
+.stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+.stat { background: #0d0d1a; border-radius: 8px; padding: 8px; text-align: center; }
 .stat .st-lbl { font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
 .stat .st-val { font-size: 15px; font-weight: 700; color: #fff; margin-top: 2px; }
 .stat.green .st-val { color: #22c55e; }
 .stat.red   .st-val { color: #ef4444; }
-.stat.yellow .st-val { color: #eab308; }
 
 /* PnL Big */
-.pnl-big {
-  text-align: center;
-  padding: 10px;
-  border-radius: 10px;
-  margin-bottom: 10px;
-  font-size: 28px;
-  font-weight: 900;
-}
+.pnl-big { text-align: center; padding: 10px; border-radius: 10px; margin-bottom: 10px; font-size: 28px; font-weight: 900; }
 .pnl-big.pos { background: rgba(34,197,94,0.1); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
 .pnl-big.neg { background: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
 .pnl-big.neu { background: rgba(100,100,100,0.1); color: #888; border: 1px solid #222; }
@@ -200,37 +274,14 @@ body {
 #btnStop:disabled { opacity: 0.5; }
 
 /* ── Alert Bars ── */
-.alert {
-  border-radius: 10px;
-  padding: 10px 14px;
-  font-size: 13px;
-  font-weight: 700;
-  text-align: center;
-  margin-bottom: 8px;
-  display: none;
-}
+.alert { border-radius: 10px; padding: 10px 14px; font-size: 13px; font-weight: 700; text-align: center; margin-bottom: 8px; display: none; }
 .alert.show { display: block; }
-.alert.a1 {
-  background: rgba(234,179,8,0.15);
-  border: 1px solid rgba(234,179,8,0.5);
-  color: #eab308;
-}
-.alert.a2 {
-  background: rgba(239,68,68,0.2);
-  border: 2px solid rgba(239,68,68,0.6);
-  color: #ef4444;
-  animation: blink 0.8s infinite;
-}
+.alert.a1 { background: rgba(234,179,8,0.15); border: 1px solid rgba(234,179,8,0.5); color: #eab308; }
+.alert.a2 { background: rgba(239,68,68,0.2); border: 2px solid rgba(239,68,68,0.6); color: #ef4444; animation: blink 0.8s infinite; }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.5} }
 
 /* ── Result Card ── */
-#resultCard {
-  border-radius: 14px;
-  padding: 16px;
-  text-align: center;
-  margin-bottom: 10px;
-  display: none;
-}
+#resultCard { border-radius: 14px; padding: 16px; text-align: center; margin-bottom: 10px; display: none; }
 #resultCard.show { display: block; }
 #resultCard.win { background: rgba(34,197,94,0.1); border: 2px solid #22c55e; }
 #resultCard.loss { background: rgba(239,68,68,0.1); border: 2px solid #ef4444; }
@@ -241,41 +292,27 @@ body {
 .rc-detail { font-size: 11px; color: #555; margin-top: 4px; }
 
 /* ── Loading ── */
-#loadingDiv {
-  text-align: center;
-  padding: 14px;
-  color: #666;
-  font-size: 13px;
-  display: none;
-}
+#loadingDiv { text-align: center; padding: 14px; color: #666; font-size: 13px; display: none; }
 #loadingDiv.show { display: block; }
 
 /* ── Footer ── */
-.footer {
-  text-align: center;
-  font-size: 10px;
-  color: #333;
-  padding-top: 8px;
-  border-top: 1px solid #111;
-}
-.dot {
-  display: inline-block;
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  margin-left: 4px;
-  vertical-align: middle;
-}
-.dot.g { background: #22c55e; animation: blink 2s infinite; }
-.dot.r { background: #ef4444; }
-.dot.y { background: #eab308; }
+.footer { text-align: center; font-size: 10px; color: #333; padding-top: 8px; border-top: 1px solid #111; }
+.dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-left: 4px; vertical-align: middle; }
+.dot.g  { background: #22c55e; animation: blink 2s infinite; }
+.dot.r  { background: #ef4444; }
+.dot.y  { background: #eab308; }
 .dot.gr { background: #444; }
 </style>
 </head>
 <body>
 
-<div class="header" style="display:flex;align-items:center;justify-content:space-between;padding:8px 4px 10px;">
-  <h1 style="font-size:16px;color:#a0a8ff;">⚡ TSLA ITM Scalper</h1>
-  <a href="/journal" style="color:#64b5f6;font-size:12px;text-decoration:none;background:#1e3a5f;padding:5px 10px;border-radius:6px;">📓 السجل</a>
+<!-- Header -->
+<div class="header">
+  <h1>⚡ TSLA ITM Scalper</h1>
+  <div class="header-links">
+    <a href="/journal" class="hlink">📓 السجل</a>
+    <a href="/pe/status" class="hlink" target="_blank">🎯 PE</a>
+  </div>
 </div>
 
 <!-- TSLA Price -->
@@ -283,6 +320,64 @@ body {
   <div class="lbl">TSLA</div>
   <div class="val" id="tslaPrice">---</div>
   <div class="sub" id="etTime">-- ET</div>
+</div>
+
+<!-- Signal Banner (يظهر عند اكتمال شروط الدخول) -->
+<div id="signalBanner">
+  <div class="sig-title" id="sigTitle">🟢 إشارة CALL</div>
+  <div class="sig-reasons" id="sigReasons">---</div>
+  <div class="sig-time" id="sigTime">---</div>
+</div>
+
+<!-- Levels Panel -->
+<div class="levels-box">
+  <div class="levels-title">📊 المستويات الحالية</div>
+  <div class="levels-grid">
+    <div class="lvl gf">
+      <div class="lname">Gamma Flip</div>
+      <div class="lval" id="lvlGF">---</div>
+    </div>
+    <div class="lvl cw">
+      <div class="lname">Call Wall</div>
+      <div class="lval" id="lvlCW">---</div>
+    </div>
+    <div class="lvl pw">
+      <div class="lname">Put Wall</div>
+      <div class="lval" id="lvlPW">---</div>
+    </div>
+    <div class="lvl vwap">
+      <div class="lname">VWAP</div>
+      <div class="lval" id="lvlVWAP">---</div>
+    </div>
+    <div class="lvl pdh">
+      <div class="lname">PDH</div>
+      <div class="lval" id="lvlPDH">---</div>
+    </div>
+    <div class="lvl pdl">
+      <div class="lname">PDL</div>
+      <div class="lval" id="lvlPDL">---</div>
+    </div>
+  </div>
+</div>
+
+<!-- CheddarFlow Input -->
+<div class="cheddar-box">
+  <div class="cheddar-title">🌊 CheddarFlow — CALL%</div>
+  <div class="cheddar-row">
+    <input type="number" id="cheddarInput" min="0" max="100" step="1" placeholder="65" />
+    <div style="flex:1;">
+      <div class="cheddar-bar">
+        <div class="cheddar-fill-p" id="cheddarFillP" style="width:50%;"></div>
+        <div class="cheddar-fill-c" id="cheddarFillC" style="width:50%;"></div>
+      </div>
+      <div class="cheddar-labels">
+        <span id="cheddarPutLbl">PUT 50%</span>
+        <span id="cheddarCallLbl">CALL 50%</span>
+      </div>
+    </div>
+    <button class="btn-cheddar" onclick="submitCheddar()">✓</button>
+  </div>
+  <div id="cheddarStatus">لم يُحدَّث بعد</div>
 </div>
 
 <!-- Suggested Contracts (no position) -->
@@ -301,7 +396,7 @@ body {
 
 <!-- Buy Buttons (no position) -->
 <div class="buy-btns" id="buyDiv">
-  <button class="btn-buy btn-put" id="btnPut" onclick="openTrade('put')">📉 PUT</button>
+  <button class="btn-buy btn-put"  id="btnPut"  onclick="openTrade('put')">📉 PUT</button>
   <button class="btn-buy btn-call" id="btnCall" onclick="openTrade('call')">📈 CALL</button>
 </div>
 
@@ -389,18 +484,18 @@ body {
 <script>
 let hasPos = false;
 let vib1 = false, vib2 = false;
+let lastCheddar = null;
 
 function fmt(v) { return v != null ? '$' + parseFloat(v).toFixed(2) : '---'; }
+function fmtL(v) { return v && v > 0 ? '$' + parseFloat(v).toFixed(0) : '---'; }
 
 function updateBar(pnl) {
   const fill = document.getElementById('barFill');
   const mid  = document.getElementById('barMid');
-  const range = 0.85; // SL=0.65 + TP=0.20
-  const zeroPos = 76.5; // % from left
-
+  const range = 0.85;
+  const zeroPos = 76.5;
   const sign = pnl >= 0 ? '+' : '';
   mid.textContent = 'P&L: ' + sign + '$' + pnl.toFixed(2);
-
   if (pnl >= 0) {
     const w = Math.min((pnl / range) * 100, 23.5);
     fill.style.left  = zeroPos + '%';
@@ -422,9 +517,74 @@ function updatePnlBig(pnl) {
   el.className = 'pnl-big ' + (pnl > 0.01 ? 'pos' : pnl < -0.01 ? 'neg' : 'neu');
 }
 
+function updateCheddarBar(callPct) {
+  const putPct = 100 - callPct;
+  document.getElementById('cheddarFillC').style.width = callPct + '%';
+  document.getElementById('cheddarFillP').style.width = putPct + '%';
+  document.getElementById('cheddarCallLbl').textContent = 'CALL ' + callPct.toFixed(0) + '%';
+  document.getElementById('cheddarPutLbl').textContent  = 'PUT '  + putPct.toFixed(0) + '%';
+}
+
 function vib(p) { if (navigator.vibrate) navigator.vibrate(p); }
 
-async function refresh() {
+async function submitCheddar() {
+  const val = parseFloat(document.getElementById('cheddarInput').value);
+  if (isNaN(val) || val < 0 || val > 100) {
+    alert('أدخل رقماً بين 0 و 100');
+    return;
+  }
+  try {
+    const r = await fetch('/pe/cheddar', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({call_pct: val})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      lastCheddar = val;
+      updateCheddarBar(val);
+      const now = new Date().toLocaleTimeString('ar-SA');
+      document.getElementById('cheddarStatus').textContent = '✅ محدّث: CALL ' + val.toFixed(0) + '% | ' + now;
+      document.getElementById('cheddarStatus').style.color = '#22c55e';
+    }
+  } catch(e) {
+    document.getElementById('cheddarStatus').textContent = '❌ خطأ في التحديث';
+    document.getElementById('cheddarStatus').style.color = '#ef4444';
+  }
+}
+
+async function refreshPE() {
+  try {
+    const r = await fetch('/pe/status');
+    const d = await r.json();
+
+    // المستويات
+    document.getElementById('lvlGF').textContent   = d.gex_levels && d.gex_levels.gamma_flip ? '$' + parseFloat(d.gex_levels.gamma_flip).toFixed(0) : '---';
+    document.getElementById('lvlCW').textContent   = d.gex_levels && d.gex_levels.call_wall  ? '$' + parseFloat(d.gex_levels.call_wall).toFixed(0)  : '---';
+    document.getElementById('lvlPW').textContent   = d.gex_levels && d.gex_levels.put_wall   ? '$' + parseFloat(d.gex_levels.put_wall).toFixed(0)   : '---';
+
+    // CheddarFlow من PE state
+    if (d.cheddar_call_pct != null && d.cheddar_call_pct !== lastCheddar) {
+      lastCheddar = d.cheddar_call_pct;
+      updateCheddarBar(d.cheddar_call_pct);
+      document.getElementById('cheddarInput').value = d.cheddar_call_pct.toFixed(0);
+    }
+
+    // إشارة الدخول
+    const banner = document.getElementById('signalBanner');
+    if (d.signal_active && d.signal_direction) {
+      const dir = d.signal_direction;
+      banner.className = 'show ' + (dir === 'CALL' ? 'call sig-call' : 'put sig-put');
+      document.getElementById('sigTitle').textContent = dir === 'CALL' ? '🟢 إشارة دخول CALL 📈' : '🔴 إشارة دخول PUT 📉';
+      document.getElementById('sigReasons').textContent = (d.signal_reasons || []).join('\n');
+      document.getElementById('sigTime').textContent = 'آخر تحديث: ' + (d.signal_time || '');
+    } else {
+      banner.className = '';
+    }
+  } catch(e) {}
+}
+
+async function refreshManual() {
   try {
     const r = await fetch('/manual/status');
     const d = await r.json();
@@ -432,6 +592,15 @@ async function refresh() {
     // TSLA price
     if (d.tsla_price > 0) document.getElementById('tslaPrice').textContent = '$' + d.tsla_price.toFixed(2);
     document.getElementById('etTime').textContent = (d.et_time || '--') + ' ET';
+
+    // VWAP & PDH/PDL من scalper status
+    try {
+      const rs = await fetch('/v8/status');
+      const ds = await rs.json();
+      document.getElementById('lvlVWAP').textContent = ds.vwap && ds.vwap > 0 ? '$' + parseFloat(ds.vwap).toFixed(2) : '---';
+      document.getElementById('lvlPDH').textContent  = ds.pdh  && ds.pdh  > 0 ? '$' + parseFloat(ds.pdh).toFixed(2)  : '---';
+      document.getElementById('lvlPDL').textContent  = ds.pdl  && ds.pdl  > 0 ? '$' + parseFloat(ds.pdl).toFixed(2)  : '---';
+    } catch(e) {}
 
     // Status dot
     const dot = document.getElementById('statusDot');
@@ -445,7 +614,6 @@ async function refresh() {
     }
 
     if (d.has_position && d.position) {
-      // ── Has position ──
       hasPos = true;
       const pos = d.position;
       const pnl = d.pnl_dollar || 0;
@@ -459,7 +627,6 @@ async function refresh() {
       const dir = pos.type === 'call' ? '📈 CALL — صفقة مفتوحة' : '📉 PUT — صفقة مفتوحة';
       document.getElementById('posDir').textContent = dir;
       document.getElementById('posTime').textContent = pos.entry_time || '';
-
       document.getElementById('stEntry').textContent   = fmt(pos.entry_price);
       document.getElementById('stCurrent').textContent = fmt(pos.current_price);
       document.getElementById('stTP').textContent      = fmt(pos.tp_price);
@@ -471,7 +638,6 @@ async function refresh() {
       updatePnlBig(pnl);
       updateBar(pnl);
 
-      // Alerts
       if (d.alert2_sent) {
         document.getElementById('alert2').classList.add('show');
         document.getElementById('alert1').classList.add('show');
@@ -487,9 +653,7 @@ async function refresh() {
       }
 
     } else {
-      // ── No position ──
       if (hasPos) {
-        // Just closed
         hasPos = false;
         vib1 = false; vib2 = false;
         const pnl = d.last_pnl || 0;
@@ -510,7 +674,6 @@ async function refresh() {
       document.getElementById('suggestDiv').style.display = 'grid';
       document.getElementById('buyDiv').style.display = 'grid';
 
-      // Suggested contracts
       if (d.suggested_call) {
         const sc = d.suggested_call;
         document.getElementById('callStrike').textContent = '$' + sc.strike.toFixed(0);
@@ -532,6 +695,11 @@ async function refresh() {
     document.getElementById('statusDot').className = 'dot r';
     document.getElementById('statusTxt').textContent = 'خطأ في الاتصال';
   }
+}
+
+async function refresh() {
+  await refreshManual();
+  await refreshPE();
 }
 
 async function openTrade(type) {

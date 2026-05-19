@@ -2193,6 +2193,16 @@ def gex_morning_worker():
                     # بناء خريطة الانعكاسات بعد سحب GEX
                     reversal_map["built"] = False
                     build_reversal_map()
+                    # V9.4: تحديث PE Engine بمستويات GEX
+                    if _V8_AVAILABLE:
+                        pe_levels = {
+                            "gamma_flip": float(gex_data.get("gamma_flip") or 0),
+                            "call_wall":  float(gex_data.get("call_wall") or 0),
+                            "put_wall":   float(gex_data.get("put_wall") or 0),
+                            "max_gamma":  float(gex_data.get("zero_dte_magnet") or gex_data.get("max_positive_gamma") or 0),
+                        }
+                        update_gex_levels(pe_levels)
+                        logger.info(f"[PE] GEX levels auto-updated from morning fetch: {pe_levels}")
                 _morning_sent = True
                 time.sleep(1800)  # انتظر 30 دقيقة
                 continue
@@ -2209,6 +2219,16 @@ def gex_morning_worker():
                     # إعادة بناء الخريطة بالبيانات المحدثة
                     reversal_map["built"] = False
                     build_reversal_map()
+                    # V9.4: تحديث PE Engine بمستويات GEX المحدثة
+                    if _V8_AVAILABLE:
+                        pe_levels = {
+                            "gamma_flip": float(gex_data.get("gamma_flip") or 0),
+                            "call_wall":  float(gex_data.get("call_wall") or 0),
+                            "put_wall":   float(gex_data.get("put_wall") or 0),
+                            "max_gamma":  float(gex_data.get("zero_dte_magnet") or gex_data.get("max_positive_gamma") or 0),
+                        }
+                        update_gex_levels(pe_levels)
+                        logger.info(f"[PE] GEX levels auto-updated from 30-min fetch: {pe_levels}")
                 _update_sent = True
                 time.sleep(3600)
                 continue
@@ -2228,7 +2248,9 @@ try:
         set_reversal_map_ref, send_telegram as v8_send_telegram,
         execute_manual_itm, close_manual_itm, get_manual_status,
         add_journal_entry, update_journal_entry, get_journal_entries,
-        save_journal_image, get_journal_stats
+        save_journal_image, get_journal_stats,
+        start_pe_engine, stop_pe_engine, get_pe_status,
+        update_cheddar_flow, update_gex_levels
     )
     _V8_AVAILABLE = True
     logger.info("V9 Options Scalper module loaded ✅")
@@ -2452,6 +2474,62 @@ def journal_active_id():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# V9.4 — ITM Precision Entry Engine Routes
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route('/pe/status', methods=['GET'])
+def pe_status():
+    """إرجاع حالة محرك الدخول الدقيق."""
+    if not _V8_AVAILABLE:
+        return jsonify({"error": "PE not available"}), 503
+    return jsonify(get_pe_status())
+
+
+@app.route('/pe/cheddar', methods=['POST'])
+def pe_update_cheddar():
+    """
+    تحديث نسبة CheddarFlow يدوياً.
+    Body: {"call_pct": 65.5}
+    """
+    if not _V8_AVAILABLE:
+        return jsonify({"error": "PE not available"}), 503
+    data = request.get_json() or {}
+    call_pct = data.get("call_pct")
+    if call_pct is None:
+        return jsonify({"error": "call_pct required"}), 400
+    try:
+        call_pct = float(call_pct)
+        if not (0 <= call_pct <= 100):
+            return jsonify({"error": "call_pct must be 0-100"}), 400
+        update_cheddar_flow(call_pct)
+        return jsonify({"ok": True, "call_pct": call_pct, "put_pct": 100 - call_pct})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/pe/gex', methods=['POST'])
+def pe_update_gex():
+    """
+    تحديث مستويات GEX يدوياً.
+    Body: {"gamma_flip": 410, "call_wall": 430, "put_wall": 390, "max_gamma": 415}
+    """
+    if not _V8_AVAILABLE:
+        return jsonify({"error": "PE not available"}), 503
+    data = request.get_json() or {}
+    try:
+        levels = {
+            "gamma_flip": float(data.get("gamma_flip", 0)),
+            "call_wall":  float(data.get("call_wall", 0)),
+            "put_wall":   float(data.get("put_wall", 0)),
+            "max_gamma":  float(data.get("max_gamma", 0)),
+        }
+        update_gex_levels(levels)
+        return jsonify({"ok": True, "levels": levels})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Startup
 # ──────────────────────────────────────────────────────────────────────────────
 _threads_started = False
@@ -2486,6 +2564,9 @@ def _start_background_threads():
             set_reversal_map_ref(reversal_map)
         start_scalper()
         logger.info("V8 Options Scalper Engine started ✅ 🚀")
+        # V9.4: ITM Precision Entry Engine
+        start_pe_engine()
+        logger.info("V9.4 ITM Precision Entry Engine started ✅ 🎯")
 
 _start_background_threads()
 

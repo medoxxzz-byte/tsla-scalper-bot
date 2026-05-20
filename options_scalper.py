@@ -211,17 +211,12 @@ def get_tsla_snapshot():
             trade = data.get("latestTrade", {})
             price = float(trade.get("p", 0))
             bar = data.get("dailyBar", {})
-            prev_bar = data.get("prevDailyBar", {})
-            # V11.4: fallback للسعر عند السوق المغلق — استخدم prevClose أو dailyBar.c
-            if price <= 0:
-                price = float(bar.get("c", 0)) or float(prev_bar.get("c", 0))
             return {
                 "price": price,
                 "high": float(bar.get("h", 0)),
                 "low": float(bar.get("l", 0)),
                 "vwap": float(bar.get("vw", 0)),
-                "volume": int(bar.get("v", 0)),
-                "prev_close": float(prev_bar.get("c", 0))
+                "volume": int(bar.get("v", 0))
             }
     except Exception as e:
         logger.error(f"[V8] Snapshot error: {e}")
@@ -1875,15 +1870,6 @@ _manual_state = {
     "monitor_active": False,
     "last_price": 0.0,
     "pnl_dollar": 0.0,
-    "last_pnl": 0.0,        # V11.4: آخر P&L بعد الإغلاق
-    "last_reason": "",      # V11.4: سبب الإغلاق
-    "last_tsla_price": 0.0, # V11.4: آخر سعر TSLA معروف (fallback للسوق المغلق)
-    "journal_id": None,
-    # Cache للـ Strike المقترح — يُحدّث كل 30 ثانية فقط
-    "suggested_call_cache": None,
-    "suggested_put_cache": None,
-    "suggested_cache_time": 0.0,
-    "suggested_cache_price": 0.0,
 }
 
 _manual_monitor_thread = None
@@ -2197,37 +2183,17 @@ def _manual_monitor_loop():
             pos["pnl"] = round(pnl_dollar * 100, 2)
             _manual_state["last_price"] = current_price
             _manual_state["pnl_dollar"] = pnl_dollar
-
-            # V11: SSE — بث فوري لجميع العملاء المتصلين
-            try:
-                _sse_broadcast({
-                    "type":          "pnl",
-                    "current_price": current_price,
-                    "entry_price":   pos["entry_price"],
-                    "pnl_dollar":    pnl_dollar,
-                    "pnl_pct":       round(pnl_dollar / pos["entry_price"] * 100, 2),
-                    "tp_price":      pos["tp_price"],
-                    "sl_price":      pos["sl_price"],
-                    "symbol":        pos["symbol"],
-                    "direction":     pos.get("type", "").upper(),
-                })
-            except Exception:
-                pass
             
             # ── TP تلقائي: +$0.20 ──
             if current_price >= pos["tp_price"]:
                 logger.info(f"[V9 Manual] TP hit! ${current_price:.2f} >= ${pos['tp_price']:.2f}")
-                pnl_final = round((current_price - pos["entry_price"]) * 100, 2)
                 close_manual_itm(reason="TP")
-                _sse_broadcast({"type": "closed", "reason": "TP", "pnl_dollar": pnl_final})
                 break
             
             # ── SL تلقائي: -$0.65 ──
             if current_price <= pos["sl_price"]:
                 logger.info(f"[V9 Manual] SL hit! ${current_price:.2f} <= ${pos['sl_price']:.2f}")
-                pnl_final = round((current_price - pos["entry_price"]) * 100, 2)
                 close_manual_itm(reason="SL")
-                _sse_broadcast({"type": "closed", "reason": "SL", "pnl_dollar": pnl_final})
                 break
             
             # ── تنبيه 1: -$0.30 ──
@@ -2274,49 +2240,6 @@ def _manual_monitor_loop():
     logger.info("[V9 Manual] Monitor stopped")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# V11 — SSE (Server-Sent Events) broadcaster
-# كل عميل متصل يحصل على queue خاصة به — الخادم يبث التحديثات فور حدوثها
-# ══════════════════════════════════════════════════════════════════════════════
-import queue as _queue_module
-
-_sse_clients: list = []          # قائمة queues للعملاء المتصلين
-_sse_lock = threading.Lock()
-
-
-def sse_subscribe() -> _queue_module.Queue:
-    """تسجيل عميل جديد — يُرجع queue يستقبل منها التحديثات."""
-    q: _queue_module.Queue = _queue_module.Queue(maxsize=50)
-    with _sse_lock:
-        _sse_clients.append(q)
-    return q
-
-
-def sse_unsubscribe(q: _queue_module.Queue) -> None:
-    """إلغاء تسجيل عميل عند قطع الاتصال."""
-    with _sse_lock:
-        try:
-            _sse_clients.remove(q)
-        except ValueError:
-            pass
-
-
-def _sse_broadcast(data: dict) -> None:
-    """إرسال بيانات لجميع العملاء المتصلين."""
-    import json
-    msg = "data: " + json.dumps(data) + "\n\n"
-    dead = []
-    with _sse_lock:
-        clients = list(_sse_clients)
-    for q in clients:
-        try:
-            q.put_nowait(msg)
-        except _queue_module.Full:
-            dead.append(q)
-    for q in dead:
-        sse_unsubscribe(q)
-
-
 def _start_manual_monitor():
     """تشغيل thread مراقبة الصفقة اليدوية."""
     global _manual_monitor_thread, _manual_state
@@ -2339,49 +2262,38 @@ def get_manual_status():
     # جلب سعر TSLA الحالي
     snap = get_tsla_snapshot()
     tsla_price = snap["price"] if snap else 0
-    # V11.4: fallback للسعر المخزّن إذا كان السوق مغلقاً
-    if tsla_price <= 0 and _manual_state.get("last_tsla_price", 0) > 0:
-        tsla_price = _manual_state["last_tsla_price"]
-    elif tsla_price > 0:
-        _manual_state["last_tsla_price"] = tsla_price
     
-    # اقتراح عقد ITM للعرض — Cache كل 30 ثانية أو عند تغير السعر بـ $1+
-    import time as _time
-    now_ts = _time.time()
-    cache_age = now_ts - _manual_state["suggested_cache_time"]
-    price_moved = abs(tsla_price - _manual_state["suggested_cache_price"]) > 1.0
+    # اقتراح عقد ITM للعرض (قبل الضغط)
+    suggested_call = None
+    suggested_put = None
     
-    if tsla_price > 0 and not pos and (cache_age > 30 or price_moved or _manual_state["suggested_call_cache"] is None):
-        # تحديث الـ Cache في background thread لعدم تعطيل الـ response
-        def _refresh_cache():
-            try:
-                c = find_itm_contract_for_manual(tsla_price, "call")
-                _manual_state["suggested_call_cache"] = {
-                    "symbol": c["symbol"], "strike": c["strike"],
-                    "mid": c["mid"], "delta": c["approx_delta"], "itm": c["itm_amount"]
-                } if c else None
-            except: pass
-            try:
-                p = find_itm_contract_for_manual(tsla_price, "put")
-                _manual_state["suggested_put_cache"] = {
-                    "symbol": p["symbol"], "strike": p["strike"],
-                    "mid": p["mid"], "delta": p["approx_delta"], "itm": p["itm_amount"]
-                } if p else None
-            except: pass
-            _manual_state["suggested_cache_time"] = _time.time()
-            _manual_state["suggested_cache_price"] = tsla_price
+    if tsla_price > 0 and not pos:
+        try:
+            c = find_itm_contract_for_manual(tsla_price, "call")
+            if c:
+                suggested_call = {
+                    "symbol": c["symbol"],
+                    "strike": c["strike"],
+                    "mid": c["mid"],
+                    "delta": c["approx_delta"],
+                    "itm": c["itm_amount"]
+                }
+        except:
+            pass
         
-        import threading as _threading
-        _threading.Thread(target=_refresh_cache, daemon=True).start()
+        try:
+            p = find_itm_contract_for_manual(tsla_price, "put")
+            if p:
+                suggested_put = {
+                    "symbol": p["symbol"],
+                    "strike": p["strike"],
+                    "mid": p["mid"],
+                    "delta": p["approx_delta"],
+                    "itm": p["itm_amount"]
+                }
+        except:
+            pass
     
-    # استخدم الـ Cache الحالي فوراً (حتى لو قديم)
-    suggested_call = _manual_state["suggested_call_cache"] if not pos else None
-    suggested_put  = _manual_state["suggested_put_cache"]  if not pos else None
-    
-    # ── إرجاع GEX levels وCheddarFlow دائماً (حتى أثناء الصفقة) ──
-    gex = _pe_state.get("gex_levels", {})
-    cheddar_pct = _pe_state.get("cheddar_call_pct")
-
     return {
         "tsla_price": tsla_price,
         "has_position": bool(pos),
@@ -2394,9 +2306,7 @@ def get_manual_status():
         "is_trading_hours": _is_scalp_window(),
         "et_time": _et_now().strftime("%I:%M:%S %p"),
         "last_reason": _manual_state.get("last_reason", ""),
-        "last_pnl": _manual_state.get("last_pnl", 0),
-        "gex_levels": gex,
-        "cheddar_call_pct": cheddar_pct
+        "last_pnl": _manual_state.get("last_pnl", 0)
     }
 
 

@@ -247,8 +247,8 @@ body {
 /* ── Result Card ── */
 #resultCard { border-radius: 14px; padding: 16px; text-align: center; margin-bottom: 10px; display: none; }
 #resultCard.show { display: block; }
-#resultCard.win  { display: block; background: rgba(34,197,94,0.1); border: 2px solid #22c55e; }
-#resultCard.loss { display: block; background: rgba(239,68,68,0.1); border: 2px solid #ef4444; }
+#resultCard.win  { background: rgba(34,197,94,0.1); border: 2px solid #22c55e; }
+#resultCard.loss { background: rgba(239,68,68,0.1); border: 2px solid #ef4444; }
 .rc-title { font-size: 13px; color: #888; margin-bottom: 4px; }
 .rc-pnl { font-size: 40px; font-weight: 900; }
 #resultCard.win  .rc-pnl { color: #22c55e; }
@@ -429,10 +429,7 @@ body {
 
 <!-- Levels Panel -->
 <div class="levels-box">
-  <div class="levels-title" style="display:flex;justify-content:space-between;align-items:center;">
-    <span>📊 المستويات الحالية</span>
-    <button id="btnGexRefresh" onclick="refreshGex()" style="font-size:10px;padding:3px 8px;background:#1e3a5f;color:#64b5f6;border:1px solid #2a5a8f;border-radius:5px;cursor:pointer;">&#x21bb; GEX</button>
-  </div>
+  <div class="levels-title">📊 المستويات الحالية</div>
   <div class="levels-grid">
     <div class="lvl gf">  <div class="lname">Gamma Flip</div><div class="lval" id="lvlGF">---</div></div>
     <div class="lvl cw">  <div class="lname">Call Wall</div>  <div class="lval" id="lvlCW">---</div></div>
@@ -534,10 +531,6 @@ body {
 <div class="footer">
   <span class="dot" id="statusDot"></span>
   <span id="statusTxt">جاري الاتصال...</span>
-  <span style="margin-right:12px;font-size:11px;opacity:0.6">
-    <span id="connDot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ff5252;margin-left:4px"></span>
-    <span id="connTxt" style="color:#aaa">جاري الاتصال</span>
-  </span>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════
@@ -773,27 +766,6 @@ function updateStreak(stats) {
 // ══════════════════════════════════════════════════════
 // CheddarFlow
 // ══════════════════════════════════════════════════════
-// V11.3: تحديث GEX يدوياً
-async function refreshGex() {
-  const btn = document.getElementById('btnGexRefresh');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ ...'; }
-  try {
-    const r = await fetch('/manual/gex_refresh', {method:'POST'});
-    const d = await r.json();
-    if (d.ok && d.levels) {
-      const lv = d.levels;
-      if (lv.gamma_flip) document.getElementById('lvlGF').textContent = '$' + parseFloat(lv.gamma_flip).toFixed(0);
-      if (lv.call_wall)  document.getElementById('lvlCW').textContent = '$' + parseFloat(lv.call_wall).toFixed(0);
-      if (lv.put_wall)   document.getElementById('lvlPW').textContent = '$' + parseFloat(lv.put_wall).toFixed(0);
-      if (btn) { btn.textContent = '✅ GEX'; setTimeout(() => { btn.textContent = '↻ GEX'; btn.disabled = false; }, 3000); }
-    } else {
-      if (btn) { btn.textContent = '❌'; setTimeout(() => { btn.textContent = '↻ GEX'; btn.disabled = false; }, 2000); }
-    }
-  } catch(e) {
-    if (btn) { btn.textContent = '❌'; setTimeout(() => { btn.textContent = '↻ GEX'; btn.disabled = false; }, 2000); }
-  }
-}
-
 async function submitCheddar() {
   const val = parseFloat(document.getElementById('cheddarInput').value);
   if (isNaN(val) || val < 0 || val > 100) { alert('أدخل رقماً بين 0 و 100'); return; }
@@ -821,19 +793,12 @@ async function submitCheddar() {
 // PE Refresh
 // ══════════════════════════════════════════════════════
 async function refreshPE() {
-  // ── فقط لـ signal banner — GEX/Cheddar تُحدّث من refreshManual مباشرةً ──
   try {
     const r = await fetch('/pe/status');
     const d = await r.json();
-    // تحديث GEX من pe/status فقط إذا لم تكن manual/status أعطتها بعد
-    if (d.gex_levels && d.gex_levels.gamma_flip) {
-      const gfEl = document.getElementById('lvlGF');
-      if (gfEl.textContent === '---') {
-        gfEl.textContent = '$' + parseFloat(d.gex_levels.gamma_flip).toFixed(0);
-        document.getElementById('lvlCW').textContent = d.gex_levels.call_wall ? '$' + parseFloat(d.gex_levels.call_wall).toFixed(0) : '---';
-        document.getElementById('lvlPW').textContent = d.gex_levels.put_wall  ? '$' + parseFloat(d.gex_levels.put_wall).toFixed(0)  : '---';
-      }
-    }
+    document.getElementById('lvlGF').textContent = d.gex_levels && d.gex_levels.gamma_flip ? '$' + parseFloat(d.gex_levels.gamma_flip).toFixed(0) : '---';
+    document.getElementById('lvlCW').textContent = d.gex_levels && d.gex_levels.call_wall  ? '$' + parseFloat(d.gex_levels.call_wall).toFixed(0)  : '---';
+    document.getElementById('lvlPW').textContent = d.gex_levels && d.gex_levels.put_wall   ? '$' + parseFloat(d.gex_levels.put_wall).toFixed(0)   : '---';
     if (d.cheddar_call_pct != null && d.cheddar_call_pct !== lastCheddar) {
       lastCheddar = d.cheddar_call_pct;
       updateCheddarBar(d.cheddar_call_pct);
@@ -863,24 +828,13 @@ async function refreshManual() {
     if (d.tsla_price > 0) document.getElementById('tslaPrice').textContent = '$' + d.tsla_price.toFixed(2);
     document.getElementById('etTime').textContent = (d.et_time || '--') + ' ET';
 
-    // ── GEX levels من manual/status مباشرةً (حتى أثناء الصفقة) ──
-    if (d.gex_levels && d.gex_levels.gamma_flip) {
-      document.getElementById('lvlGF').textContent = '$' + parseFloat(d.gex_levels.gamma_flip).toFixed(0);
-      document.getElementById('lvlCW').textContent = d.gex_levels.call_wall ? '$' + parseFloat(d.gex_levels.call_wall).toFixed(0) : '---';
-      document.getElementById('lvlPW').textContent = d.gex_levels.put_wall  ? '$' + parseFloat(d.gex_levels.put_wall).toFixed(0)  : '---';
-    }
-    if (d.cheddar_call_pct != null && d.cheddar_call_pct !== lastCheddar) {
-      lastCheddar = d.cheddar_call_pct;
-      updateCheddarBar(d.cheddar_call_pct);
-      document.getElementById('cheddarInput').value = d.cheddar_call_pct.toFixed(0);
-    }
-
-    // ── VWAP/PDH/PDL بشكل مستقل لا يعطّل الواجهة ──
-    fetch('/v8/status').then(rs => rs.json()).then(ds => {
+    try {
+      const rs = await fetch('/v8/status');
+      const ds = await rs.json();
       document.getElementById('lvlVWAP').textContent = ds.vwap && ds.vwap > 0 ? '$' + parseFloat(ds.vwap).toFixed(2) : '---';
       document.getElementById('lvlPDH').textContent  = ds.pdh  && ds.pdh  > 0 ? '$' + parseFloat(ds.pdh).toFixed(2)  : '---';
       document.getElementById('lvlPDL').textContent  = ds.pdl  && ds.pdl  > 0 ? '$' + parseFloat(ds.pdl).toFixed(2)  : '---';
-    }).catch(() => {});
+    } catch(e) {}
 
     // Streak من السجل
     try {
@@ -901,10 +855,6 @@ async function refreshManual() {
 
     if (d.has_position && d.position) {
       hasPos = true;
-      // إخفاء loadingDiv عند تأكيد وجود صفقة مفتوحة
-      document.getElementById('loadingDiv').classList.remove('show');
-      document.getElementById('btnCall').disabled = false;
-      document.getElementById('btnPut').disabled  = false;
       const pos = d.position;
       const pnl = d.pnl_dollar || 0;
 
@@ -943,30 +893,17 @@ async function refreshManual() {
       }
 
     } else {
-      // إخفاء loadingDiv دائماً عند عدم وجود صفقة
-      document.getElementById('loadingDiv').classList.remove('show');
-      document.getElementById('btnCall').disabled = false;
-      document.getElementById('btnPut').disabled  = false;
       if (hasPos) {
         hasPos = false;
         vib1 = false; vib2 = false;
-        // استخدام localStorage كـ fallback للـ P&L إذا كان last_pnl = 0
-        let pnl = d.last_pnl || 0;
-        let lastReason = d.last_reason || '';
-        if (pnl === 0) {
-          try {
-            const lsPnl = parseFloat(localStorage.getItem('_lastPnl') || '0');
-            const lsReason = localStorage.getItem('_lastReason') || '';
-            if (lsPnl !== 0) { pnl = lsPnl; lastReason = lsReason; }
-          } catch(e) {}
-        }
+        const pnl = d.last_pnl || 0;
         const rc = document.getElementById('resultCard');
         rc.className = 'show ' + (pnl >= 0 ? 'win' : 'loss');
         document.getElementById('rcTitle').textContent = pnl >= 0 ? '✅ ربح' : '❌ خسارة';
         const sign = pnl >= 0 ? '+' : '';
-        document.getElementById('rcPnl').textContent = sign + '$' + Math.abs(pnl).toFixed(2);
+        document.getElementById('rcPnl').textContent = sign + '$' + pnl.toFixed(2);
         const reasonMap = {'TP': 'جني أرباح تلقائي ✅', 'SL': 'ستوب لوس تلقائي 🛑', 'MANUAL': 'إغلاق يدوي 👆', 'ERROR': 'خطأ تقني ⚠️'};
-        const reasonText = reasonMap[lastReason] || lastReason || 'غير محدد';
+        const reasonText = reasonMap[d.last_reason] || d.last_reason || 'غير محدد';
         document.getElementById('rcDetail').textContent = '📌 السبب: ' + reasonText;
         vib(pnl >= 0 ? [100,50,100] : [500]);
         setTimeout(() => rc.classList.remove('show'), 12000);
@@ -1079,18 +1016,11 @@ function fastTrack() {
 // ══════════════════════════════════════════════════════
 // Execute Trade
 // ══════════════════════════════════════════════════════
-// V11.4: Execute Trade — Background polling (no timeout)
-// ══════════════════════════════════════════════════════
-let _buyPollInterval = null;
-
 async function executeTrade(type, preTradeData) {
-  // مسح localStorage عند فتح صفقة جديدة
-  try { localStorage.removeItem('_lastPnl'); localStorage.removeItem('_lastReason'); } catch(e) {}
   document.getElementById('loadingDiv').classList.add('show');
   document.getElementById('btnCall').disabled = true;
   document.getElementById('btnPut').disabled  = true;
 
-  // إرسال طلب الشراء — يرجع فوراً (pending)
   try {
     const r = await fetch('/manual/buy', {
       method: 'POST',
@@ -1098,65 +1028,14 @@ async function executeTrade(type, preTradeData) {
       body: JSON.stringify({ type, pre_trade: preTradeData })
     });
     const d = await r.json();
-    if (!d.success && !d.pending) {
-      // خطأ فوري (validation error)
-      alert('❌ ' + (d.error || 'خطأ غير محدد'));
-      document.getElementById('loadingDiv').classList.remove('show');
-      document.getElementById('btnCall').disabled = false;
-      document.getElementById('btnPut').disabled  = false;
-      return;
-    }
-  } catch(e) {
-    alert('❌ خطأ في الاتصال — حاول مرة ثانية');
+    if (d.success) { hasPos = true; vib([100,50,100]); await refresh(); }
+    else alert('❌ فشل الشراء:\n' + (d.error || 'خطأ'));
+  } catch(e) { alert('❌ خطأ في الاتصال'); }
+  finally {
     document.getElementById('loadingDiv').classList.remove('show');
     document.getElementById('btnCall').disabled = false;
     document.getElementById('btnPut').disabled  = false;
-    return;
   }
-
-  // بدء polling للتحقق من النتيجة (max 60 ثانية)
-  let _pollCount = 0;
-  const _maxPolls = 30; // 30 × 2s = 60s
-  if (_buyPollInterval) clearInterval(_buyPollInterval);
-  _buyPollInterval = setInterval(async () => {
-    _pollCount++;
-    try {
-      const rs = await fetch('/manual/buy_status');
-      const ds = await rs.json();
-      if (ds.status === 'done') {
-        clearInterval(_buyPollInterval); _buyPollInterval = null;
-        document.getElementById('loadingDiv').classList.remove('show');
-        document.getElementById('btnCall').disabled = false;
-        document.getElementById('btnPut').disabled  = false;
-        hasPos = true;
-        vib([100,50,100]);
-        await refresh();
-      } else if (ds.status === 'failed') {
-        clearInterval(_buyPollInterval); _buyPollInterval = null;
-        document.getElementById('loadingDiv').classList.remove('show');
-        document.getElementById('btnCall').disabled = false;
-        document.getElementById('btnPut').disabled  = false;
-        const errMsg = ds.error || 'خطأ غير محدد';
-        if (errMsg.includes('لا يوجد عقد')) {
-          alert('⚠️ لا يوجد عقد ITM مناسب الآن\
-انتظر دقيقة وحاول مرة ثانية');
-        } else {
-          alert('❌ فشل الشراء:\
-' + errMsg);
-        }
-      } else if (_pollCount >= _maxPolls) {
-        // تجاوز 60 ثانية — تحقق من Alpaca مباشرة
-        clearInterval(_buyPollInterval); _buyPollInterval = null;
-        document.getElementById('loadingDiv').classList.remove('show');
-        document.getElementById('btnCall').disabled = false;
-        document.getElementById('btnPut').disabled  = false;
-        // تحقق من حالة الصفقة عبر refreshManual
-        await refresh();
-        if (!hasPos) alert('⏱️ استغرق الأمر وقتاً طويلا\
-تحقق من الصفقة في Alpaca مباشرة');
-      }
-    } catch(e) { /* تجاهل أخطاء الشبكة المؤقتة */ }
-  }, 2000);
 }
 
 // ══════════════════════════════════════════════════════
@@ -1164,8 +1043,6 @@ async function executeTrade(type, preTradeData) {
 // ══════════════════════════════════════════════════════
 async function closeTrade() {
   if (!confirm('🛑 تأكيد البيع الفوري بسعر السوق؟')) return;
-  // مسح localStorage قبل البيع
-  try { localStorage.removeItem('_lastPnl'); localStorage.removeItem('_lastReason'); } catch(e) {}
   const btn = document.getElementById('btnStop');
   btn.disabled = true;
   btn.textContent = '⏳ جاري البيع...';
@@ -1180,8 +1057,6 @@ async function closeTrade() {
     if (d.success) {
       vib([300]);
       const pnl = d.pnl || 0;
-      // حفظ النتيجة في localStorage
-      try { localStorage.setItem('_lastPnl', pnl); localStorage.setItem('_lastReason', 'MANUAL'); } catch(e) {}
       const rc = document.getElementById('resultCard');
       rc.className = 'show ' + (pnl >= 0 ? 'win' : 'loss');
       document.getElementById('rcTitle').textContent = pnl >= 0 ? '✅ ربح' : '❌ خسارة';
@@ -1202,95 +1077,11 @@ async function closeTrade() {
 }
 
 // ══════════════════════════════════════════════════════
-// V11: SSE — P&L فوري + polling للبيانات الثانوية
+// Auto Refresh — V10: كل 2 ثانية
 // ══════════════════════════════════════════════════════
-let _sseSource = null;
-let _sseRetries = 0;
-
-function applyPnlUpdate(d) {
-  // تحديث P&L فوري من SSE
-  if (d.type === 'pnl') {
-    document.getElementById('stCurrent').textContent = fmt(d.current_price);
-    updatePnlBig(d.pnl_dollar);
-    updateBar(d.pnl_dollar);
-  } else if (d.type === 'closed') {
-    // الصفقة أغلقت تلقائياً — عرض النتيجة فوراً من SSE ثم رفرش
-    const pnl = d.pnl_dollar || 0;
-    const reason = d.reason || '';
-    // حفظ النتيجة في localStorage لضمان ظهورها عند refreshManual
-    try { localStorage.setItem('_lastPnl', pnl); localStorage.setItem('_lastReason', reason); } catch(e) {}
-    hasPos = false;
-    const rc = document.getElementById('resultCard');
-    rc.className = 'show ' + (pnl >= 0 ? 'win' : 'loss');
-    document.getElementById('rcTitle').textContent = pnl >= 0 ? '✅ ربح' : '❌ خسارة';
-    const sign = pnl >= 0 ? '+' : '';
-    document.getElementById('rcPnl').textContent = sign + '$' + Math.abs(pnl).toFixed(2);
-    const reasonMap = {'TP': 'جني أرباح تلقائي ✅', 'SL': 'ستوب لوس تلقائي 🛑', 'MANUAL': 'إغلاق يدوي 👆', 'ERROR': 'خطأ تقني ⚠️'};
-    document.getElementById('rcDetail').textContent = '📌 السبب: ' + (reasonMap[reason] || reason || 'غير محدد');
-    vib(pnl >= 0 ? [100,50,100] : [500]);
-    setTimeout(() => rc.classList.remove('show'), 12000);
-    // إخفاء لوحة الصفقة
-    document.getElementById('posPanel').classList.remove('show');
-    document.getElementById('btnStop').classList.remove('show');
-    document.getElementById('loadingDiv').classList.remove('show');
-    document.getElementById('btnCall').disabled = false;
-    document.getElementById('btnPut').disabled  = false;
-    document.getElementById('suggestDiv').style.display = 'grid';
-    document.getElementById('buyDiv').style.display = 'grid';
-    // رفرش لتحديث Strike والإحصائيات
-    setTimeout(() => refresh(), 1000);
-  } else if (d.type === 'init') {
-    // حالة أولية عند الاتصال
-    refreshManual();
-  }
-}
-
-function startSSE() {
-  if (_sseSource) { _sseSource.close(); _sseSource = null; }
-  const es = new EventSource('/manual/stream');
-  _sseSource = es;
-
-  es.onmessage = (e) => {
-    try {
-      const d = JSON.parse(e.data);
-      applyPnlUpdate(d);
-      _sseRetries = 0;
-    } catch(err) {}
-  };
-
-  es.onerror = () => {
-    es.close();
-    _sseSource = null;
-    _sseRetries++;
-    // إعادة الاتصال بعد 1-5 ثواني (أسرع من قبل)
-    const delay = Math.min(1000 * _sseRetries, 5000);
-    setTimeout(startSSE, delay);
-  };
-  
-  // مراقبة حالة الاتصال وعرضها للمستخدم
-  es.onopen = () => {
-    _sseRetries = 0;
-    const dot = document.getElementById('connDot');
-    const txt = document.getElementById('connTxt');
-    if (dot) dot.style.background = '#00e676';
-    if (txt) txt.textContent = 'Live 🟢';
-  };
-}
-
-// بدء SSE فور التحميل
-startSSE();
-
-// Polling للبيانات الثانوية (السعر المقترح، PE، Streak) — كل 5 ثوانٍ
 refresh();
-setInterval(refresh, 5000);
-
-// عند العودة للتبويب: إعادة الاتصال SSE + رفرش سريع
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) {
-    startSSE();
-    refresh();
-  }
-});
+setInterval(refresh, 2000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 </script>
 </body>
 </html>

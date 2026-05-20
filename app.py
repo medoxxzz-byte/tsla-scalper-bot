@@ -2583,22 +2583,23 @@ def pe_update_gex():
 def pair_scan():
     """مسح العقود المتاحة بدون تنفيذ."""
     try:
-        xom_c, xle_c, expiry = scalper.scan_pair_contracts()
+        from options_scalper import scan_pair_contracts, get_stock_price, PAIR_XOM_CONTRACTS, PAIR_XLE_CONTRACTS
+        xom_c, xle_c, expiry = scan_pair_contracts()
         if not xom_c or not xle_c:
             return jsonify({"ok": False, "error": "لم يُعثر على عقود ATM مناسبة في نافذة DTE 14-21"})
-        xom_price = scalper.get_stock_price("XOM")
-        xle_price = scalper.get_stock_price("XLE")
-        xom_cost  = xom_c["mid"] * scalper.PAIR_XOM_CONTRACTS * 100
-        xle_cost  = xle_c["mid"] * scalper.PAIR_XLE_CONTRACTS * 100
+        xom_price = get_stock_price("XOM")
+        xle_price = get_stock_price("XLE")
+        xom_cost  = xom_c["mid"] * PAIR_XOM_CONTRACTS * 100
+        xle_cost  = xle_c["mid"] * PAIR_XLE_CONTRACTS * 100
         total_cost   = round(xom_cost + xle_cost, 2)
         target_value = round(total_cost * 1.30, 2)
         return jsonify({
             "ok": True,
             "xom_price": xom_price, "xle_price": xle_price,
             "xom_symbol": xom_c["symbol"], "xom_strike": xom_c["strike"],
-            "xom_mid": xom_c["mid"], "xom_qty": scalper.PAIR_XOM_CONTRACTS,
+            "xom_mid": xom_c["mid"], "xom_qty": PAIR_XOM_CONTRACTS,
             "xle_symbol": xle_c["symbol"], "xle_strike": xle_c["strike"],
-            "xle_mid": xle_c["mid"], "xle_qty": scalper.PAIR_XLE_CONTRACTS,
+            "xle_mid": xle_c["mid"], "xle_qty": PAIR_XLE_CONTRACTS,
             "total_cost": total_cost, "target_value": target_value,
             "shared_expiry": expiry,
         })
@@ -2609,7 +2610,8 @@ def pair_scan():
 def pair_buy():
     """تنفيذ Pair Trade."""
     try:
-        ok, data = scalper.execute_pair_trade()
+        from options_scalper import execute_pair_trade
+        ok, data = execute_pair_trade()
         return jsonify({"ok": ok, **data})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
@@ -2618,7 +2620,8 @@ def pair_buy():
 def pair_sell():
     """إغلاق Pair Trade يدوياً."""
     try:
-        ok, data = scalper.close_pair_trade(reason="manual")
+        from options_scalper import close_pair_trade
+        ok, data = close_pair_trade(reason="manual")
         if not ok:
             return jsonify({"ok": False, **data})
         return jsonify({"ok": True, **data})
@@ -2629,7 +2632,8 @@ def pair_sell():
 def pair_status():
     """حالة Pair Trade الحالية."""
     try:
-        data = scalper.get_pair_status()
+        from options_scalper import get_pair_status
+        data = get_pair_status()
         return jsonify({"ok": True, **data})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})

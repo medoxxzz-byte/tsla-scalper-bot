@@ -2386,10 +2386,10 @@ def manual_sell():
         logger.info(f"[V9 Manual] Sell executed: PnL=${result.get('pnl', 0):+.2f} | Reason={reason}")
         return jsonify({"success": True, **result})
     else:
-        # إذا لم توجد صفقة مفتوحة — الصفقة أُغلقت تلقائياً بالفعل
+        # إذا لم توجد صفقة مفتوحة — الصفقة أُغلقت تلقائياً بالفعل (TP/SL)
         error_msg = result.get("error", "")
         if "لا توجد صفقة" in error_msg:
-            logger.info("[V9 Manual] Sell called but no open position — already auto-closed")
+            logger.info("[V9 Manual] Sell called but no open position — already auto-closed (TP/SL)")
             pnl = _last_manual_result.get("pnl", 0) if _last_manual_result else 0
             return jsonify({"success": True, "already_closed": True, "pnl": pnl, "reason": "auto"})
         return jsonify({"success": False, **result}), 400

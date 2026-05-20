@@ -2574,6 +2574,66 @@ def pe_update_gex():
         return jsonify({"error": str(e)}), 500
 
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Pair Trade Routes — XOM CALL + XLE PUT
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route('/pair/scan', methods=['GET'])
+def pair_scan():
+    """مسح العقود المتاحة بدون تنفيذ."""
+    try:
+        xom_c, xle_c, expiry = scalper.scan_pair_contracts()
+        if not xom_c or not xle_c:
+            return jsonify({"ok": False, "error": "لم يُعثر على عقود ATM مناسبة في نافذة DTE 14-21"})
+        xom_price = scalper.get_stock_price("XOM")
+        xle_price = scalper.get_stock_price("XLE")
+        xom_cost  = xom_c["mid"] * scalper.PAIR_XOM_CONTRACTS * 100
+        xle_cost  = xle_c["mid"] * scalper.PAIR_XLE_CONTRACTS * 100
+        total_cost   = round(xom_cost + xle_cost, 2)
+        target_value = round(total_cost * 1.30, 2)
+        return jsonify({
+            "ok": True,
+            "xom_price": xom_price, "xle_price": xle_price,
+            "xom_symbol": xom_c["symbol"], "xom_strike": xom_c["strike"],
+            "xom_mid": xom_c["mid"], "xom_qty": scalper.PAIR_XOM_CONTRACTS,
+            "xle_symbol": xle_c["symbol"], "xle_strike": xle_c["strike"],
+            "xle_mid": xle_c["mid"], "xle_qty": scalper.PAIR_XLE_CONTRACTS,
+            "total_cost": total_cost, "target_value": target_value,
+            "shared_expiry": expiry,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+@app.route('/pair/buy', methods=['POST'])
+def pair_buy():
+    """تنفيذ Pair Trade."""
+    try:
+        ok, data = scalper.execute_pair_trade()
+        return jsonify({"ok": ok, **data})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+@app.route('/pair/sell', methods=['POST'])
+def pair_sell():
+    """إغلاق Pair Trade يدوياً."""
+    try:
+        ok, data = scalper.close_pair_trade(reason="manual")
+        if not ok:
+            return jsonify({"ok": False, **data})
+        return jsonify({"ok": True, **data})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+@app.route('/pair/status', methods=['GET'])
+def pair_status():
+    """حالة Pair Trade الحالية."""
+    try:
+        data = scalper.get_pair_status()
+        return jsonify({"ok": True, **data})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Startup
 # ──────────────────────────────────────────────────────────────────────────────

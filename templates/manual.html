@@ -527,6 +527,92 @@ body {
 <!-- STOP LOSS Button -->
 <button id="btnStop" onclick="closeTrade()">🛑 STOP LOSS — بيع فوري</button>
 
+<!-- ═══════════════════════════════════════════════════════
+     PAIR TRADE SECTION — XOM CALL ×2 + XLE PUT ×4
+═══════════════════════════════════════════════════════ -->
+<div id="pairSection" style="margin-top:18px;">
+  <div style="text-align:center;font-size:11px;color:#888;letter-spacing:1px;margin-bottom:8px;">⚖️ PAIR TRADE — XOM CALL ×2 + XLE PUT ×4</div>
+
+  <!-- Scan Result Card -->
+  <div id="pairScanCard" style="display:none;background:#0d1117;border:1px solid #1e3a5f;border-radius:12px;padding:14px;margin-bottom:10px;">
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+      <div style="text-align:center;flex:1;">
+        <div style="font-size:9px;color:#888;">XOM CALL ×2</div>
+        <div id="pairXomSymbol" style="font-size:9px;color:#4ade80;font-weight:600;">---</div>
+        <div id="pairXomStrike" style="font-size:14px;color:#e2e8f0;font-weight:700;">$---</div>
+        <div id="pairXomMid" style="font-size:11px;color:#94a3b8;">Mid: $---</div>
+      </div>
+      <div style="text-align:center;flex:1;">
+        <div style="font-size:9px;color:#888;">XLE PUT ×4</div>
+        <div id="pairXleSymbol" style="font-size:9px;color:#f87171;font-weight:600;">---</div>
+        <div id="pairXleStrike" style="font-size:14px;color:#e2e8f0;font-weight:700;">$---</div>
+        <div id="pairXleMid" style="font-size:11px;color:#94a3b8;">Mid: $---</div>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;border-top:1px solid #1e3a5f;padding-top:8px;">
+      <div style="text-align:center;flex:1;">
+        <div style="font-size:9px;color:#888;">إجمالي القسط</div>
+        <div id="pairTotalCost" style="font-size:15px;color:#f59e0b;font-weight:700;">$---</div>
+      </div>
+      <div style="text-align:center;flex:1;">
+        <div style="font-size:9px;color:#888;">هدف +30%</div>
+        <div id="pairTargetVal" style="font-size:15px;color:#4ade80;font-weight:700;">$---</div>
+      </div>
+      <div style="text-align:center;flex:1;">
+        <div style="font-size:9px;color:#888;">Expiry</div>
+        <div id="pairExpiry" style="font-size:11px;color:#94a3b8;">---</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Active Position Card -->
+  <div id="pairPosCard" style="display:none;background:#0d1117;border:1px solid #166534;border-radius:12px;padding:14px;margin-bottom:10px;">
+    <div style="text-align:center;margin-bottom:8px;font-size:10px;color:#4ade80;">🔀 Pair Trade نشط</div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+      <div style="text-align:center;flex:1;">
+        <div style="font-size:9px;color:#888;">القيمة الحالية</div>
+        <div id="pairCurVal" style="font-size:18px;color:#e2e8f0;font-weight:700;">$---</div>
+      </div>
+      <div style="text-align:center;flex:1;">
+        <div style="font-size:9px;color:#888;">P&L</div>
+        <div id="pairPnl" style="font-size:18px;font-weight:700;">$---</div>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;border-top:1px solid #166534;padding-top:6px;">
+      <div style="text-align:center;flex:1;">
+        <div style="font-size:9px;color:#888;">الدخول</div>
+        <div id="pairCostDisp" style="font-size:11px;color:#94a3b8;">$---</div>
+      </div>
+      <div style="text-align:center;flex:1;">
+        <div style="font-size:9px;color:#888;">الهدف +30%</div>
+        <div id="pairTargetDisp" style="font-size:11px;color:#4ade80;">$---</div>
+      </div>
+      <div style="text-align:center;flex:1;">
+        <div style="font-size:9px;color:#888;">التقدم</div>
+        <div id="pairProgress" style="font-size:11px;color:#f59e0b;">0%</div>
+      </div>
+    </div>
+    <div style="margin-top:8px;background:#1e293b;border-radius:4px;height:6px;">
+      <div id="pairProgressBar" style="background:linear-gradient(90deg,#f59e0b,#4ade80);height:6px;border-radius:4px;width:0%;transition:width 0.5s;"></div>
+    </div>
+  </div>
+
+  <!-- Result Card -->
+  <div id="pairResultCard" style="display:none;border-radius:12px;padding:14px;margin-bottom:10px;text-align:center;">
+    <div id="pairResultEmoji" style="font-size:24px;">✅</div>
+    <div id="pairResultPnl" style="font-size:22px;font-weight:700;margin:4px 0;">$---</div>
+    <div id="pairResultReason" style="font-size:11px;color:#94a3b8;">---</div>
+  </div>
+
+  <!-- Buttons -->
+  <div style="display:flex;gap:8px;">
+    <button id="btnPairScan" onclick="pairScan()" style="flex:1;padding:12px;background:#1e3a5f;color:#60a5fa;border:none;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;">🔍 مسح العقود</button>
+    <button id="btnPairBuy" onclick="pairBuy()" style="flex:1;padding:12px;background:#166534;color:#4ade80;border:none;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;display:none;">🚀 تنفيذ Pair Trade</button>
+    <button id="btnPairSell" onclick="pairSell()" style="flex:1;padding:12px;background:#7f1d1d;color:#f87171;border:none;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;display:none;">🛑 إغلاق الكل</button>
+  </div>
+  <div id="pairStatus" style="text-align:center;font-size:11px;color:#888;margin-top:6px;"></div>
+</div>
+
 <!-- Footer -->
 <div class="footer">
   <span class="dot" id="statusDot"></span>
@@ -1082,6 +1168,199 @@ async function closeTrade() {
 refresh();
 setInterval(refresh, 2000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+
+/* ══════════════════════════════════════════════════════
+   PAIR TRADE FUNCTIONS
+══════════════════════════════════════════════════════ */
+let pairHasPos = false;
+let pairPollInterval = null;
+
+function pairScan() {
+  const btn = document.getElementById('btnPairScan');
+  btn.disabled = true;
+  btn.textContent = '⏳ جاري المسح...';
+  document.getElementById('pairStatus').textContent = 'يبحث عن عقود DTE 14-21...';
+  document.getElementById('pairScanCard').style.display = 'none';
+  document.getElementById('btnPairBuy').style.display = 'none';
+
+  fetch('/pair/scan')
+    .then(r => r.json())
+    .then(d => {
+      btn.disabled = false;
+      btn.textContent = '🔍 مسح العقود';
+      if (!d.ok) {
+        document.getElementById('pairStatus').textContent = '❌ ' + (d.error || 'خطأ في المسح');
+        return;
+      }
+      document.getElementById('pairXomSymbol').textContent = d.xom_symbol;
+      document.getElementById('pairXomStrike').textContent = '$' + d.xom_strike.toFixed(2);
+      document.getElementById('pairXomMid').textContent = 'Mid: $' + d.xom_mid.toFixed(2);
+      document.getElementById('pairXleSymbol').textContent = d.xle_symbol;
+      document.getElementById('pairXleStrike').textContent = '$' + d.xle_strike.toFixed(2);
+      document.getElementById('pairXleMid').textContent = 'Mid: $' + d.xle_mid.toFixed(2);
+      document.getElementById('pairTotalCost').textContent = '$' + d.total_cost.toFixed(2);
+      document.getElementById('pairTargetVal').textContent = '$' + d.target_value.toFixed(2);
+      document.getElementById('pairExpiry').textContent = d.shared_expiry;
+      document.getElementById('pairScanCard').style.display = 'block';
+      document.getElementById('btnPairBuy').style.display = 'block';
+      document.getElementById('pairStatus').textContent = '✅ عقود جاهزة — اضغط تنفيذ للشراء';
+    })
+    .catch(e => {
+      btn.disabled = false;
+      btn.textContent = '🔍 مسح العقود';
+      document.getElementById('pairStatus').textContent = '❌ خطأ: ' + e.message;
+    });
+}
+
+function pairBuy() {
+  const btn = document.getElementById('btnPairBuy');
+  btn.disabled = true;
+  btn.textContent = '⏳ جاري التنفيذ...';
+  document.getElementById('pairStatus').textContent = 'يشتري 2 XOM CALL + 4 XLE PUT...';
+
+  fetch('/pair/buy', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' })
+    .then(r => r.json())
+    .then(d => {
+      if (!d.ok) {
+        btn.disabled = false;
+        btn.textContent = '🚀 تنفيذ Pair Trade';
+        document.getElementById('pairStatus').textContent = '❌ ' + (d.error || 'فشل التنفيذ');
+        return;
+      }
+      document.getElementById('pairScanCard').style.display = 'none';
+      document.getElementById('btnPairScan').style.display = 'none';
+      document.getElementById('btnPairBuy').style.display = 'none';
+      document.getElementById('btnPairSell').style.display = 'block';
+      document.getElementById('pairPosCard').style.display = 'block';
+      document.getElementById('pairCostDisp').textContent = '$' + d.total_cost.toFixed(2);
+      document.getElementById('pairTargetDisp').textContent = '$' + d.target_value.toFixed(2);
+      document.getElementById('pairStatus').textContent = '✅ Pair Trade مفتوح | ' + d.entry_time;
+      pairHasPos = true;
+      startPairPoll();
+    })
+    .catch(e => {
+      btn.disabled = false;
+      btn.textContent = '🚀 تنفيذ Pair Trade';
+      document.getElementById('pairStatus').textContent = '❌ خطأ: ' + e.message;
+    });
+}
+
+function pairSell() {
+  const btn = document.getElementById('btnPairSell');
+  btn.disabled = true;
+  btn.textContent = '⏳ جاري الإغلاق...';
+
+  fetch('/pair/sell', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' })
+    .then(r => r.json())
+    .then(d => {
+      btn.disabled = false;
+      if (!d.ok) {
+        btn.textContent = '🛑 إغلاق الكل';
+        document.getElementById('pairStatus').textContent = '❌ ' + (d.error || 'فشل الإغلاق');
+        return;
+      }
+      showPairResult(d);
+    })
+    .catch(e => {
+      btn.disabled = false;
+      btn.textContent = '🛑 إغلاق الكل';
+      document.getElementById('pairStatus').textContent = '❌ خطأ: ' + e.message;
+    });
+}
+
+function startPairPoll() {
+  if (pairPollInterval) clearInterval(pairPollInterval);
+  pairPollInterval = setInterval(refreshPairStatus, 10000);
+  refreshPairStatus();
+}
+
+function refreshPairStatus() {
+  fetch('/pair/status')
+    .then(r => r.json())
+    .then(d => {
+      if (!d.ok) return;
+      if (d.has_position) {
+        pairHasPos = true;
+        document.getElementById('pairPosCard').style.display = 'block';
+        document.getElementById('btnPairSell').style.display = 'block';
+        document.getElementById('btnPairScan').style.display = 'none';
+        document.getElementById('btnPairBuy').style.display = 'none';
+
+        const curVal = d.current_value || 0;
+        const cost   = d.total_cost || 0;
+        const target = d.target_value || 0;
+        const pnl    = d.pnl_dollar || 0;
+        const pct    = d.pnl_pct || 0;
+
+        document.getElementById('pairCurVal').textContent = '$' + curVal.toFixed(2);
+        const pnlEl = document.getElementById('pairPnl');
+        pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%)';
+        pnlEl.style.color = pnl >= 0 ? '#4ade80' : '#f87171';
+        document.getElementById('pairCostDisp').textContent = '$' + cost.toFixed(2);
+        document.getElementById('pairTargetDisp').textContent = '$' + target.toFixed(2);
+
+        const progress = cost > 0 ? Math.min(100, Math.max(0, (pnl / (target - cost)) * 100)) : 0;
+        document.getElementById('pairProgress').textContent = progress.toFixed(0) + '%';
+        document.getElementById('pairProgressBar').style.width = progress + '%';
+
+      } else if (d.status === 'closed' && pairHasPos) {
+        // تم الإغلاق التلقائي
+        clearInterval(pairPollInterval);
+        showPairResult(d);
+      } else if (!d.has_position && !d.status) {
+        // لا يوجد صفقة
+        clearInterval(pairPollInterval);
+        pairHasPos = false;
+        document.getElementById('pairPosCard').style.display = 'none';
+        document.getElementById('btnPairScan').style.display = 'block';
+        document.getElementById('btnPairSell').style.display = 'none';
+      }
+    })
+    .catch(() => {});
+}
+
+function showPairResult(d) {
+  clearInterval(pairPollInterval);
+  pairHasPos = false;
+  document.getElementById('pairPosCard').style.display = 'none';
+  document.getElementById('btnPairSell').style.display = 'none';
+  document.getElementById('btnPairScan').style.display = 'block';
+
+  const pnl = d.pnl_dollar || 0;
+  const pct = d.pnl_pct || 0;
+  const rc  = document.getElementById('pairResultCard');
+  rc.style.display = 'block';
+  rc.style.background = pnl >= 0 ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)';
+  rc.style.border = pnl >= 0 ? '2px solid #22c55e' : '2px solid #ef4444';
+  document.getElementById('pairResultEmoji').textContent = pnl >= 0 ? '✅' : '❌';
+  document.getElementById('pairResultPnl').textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%)';
+  document.getElementById('pairResultPnl').style.color = pnl >= 0 ? '#4ade80' : '#f87171';
+  document.getElementById('pairResultReason').textContent = d.reason === 'TP' ? 'جني أرباح تلقائي +30% ✅' : 'إغلاق يدوي';
+  document.getElementById('pairStatus').textContent = 'Pair Trade مغلق';
+}
+
+// تحقق من حالة Pair Trade عند تحميل الصفحة
+window.addEventListener('load', function() {
+  setTimeout(function() {
+    fetch('/pair/status')
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok && d.has_position) {
+          pairHasPos = true;
+          document.getElementById('pairPosCard').style.display = 'block';
+          document.getElementById('btnPairSell').style.display = 'block';
+          document.getElementById('btnPairScan').style.display = 'none';
+          document.getElementById('btnPairBuy').style.display = 'none';
+          document.getElementById('pairCostDisp').textContent = '$' + (d.total_cost || 0).toFixed(2);
+          document.getElementById('pairTargetDisp').textContent = '$' + (d.target_value || 0).toFixed(2);
+          document.getElementById('pairStatus').textContent = '🔀 Pair Trade نشط | ' + (d.entry_time || '');
+          startPairPoll();
+        }
+      })
+      .catch(() => {});
+  }, 2000);
+});
+
 </script>
 </body>
 </html>

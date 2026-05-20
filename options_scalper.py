@@ -2878,3 +2878,423 @@ def stop_pe_engine():
     """إيقاف محرك الدخول الدقيق."""
     _pe_state["running"] = False
     logger.info("[PE] Precision Entry Engine stopping...")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAIR TRADE ENGINE — XOM CALL (×2) + XLE PUT (×4)
+# Beta-Weighted Relative Value Options Pair Trade
+# Target: +30% combined profit on total premium paid
+# ══════════════════════════════════════════════════════════════════════════════
+
+PAIR_XOM_CONTRACTS = 2
+PAIR_XLE_CONTRACTS = 4
+PAIR_TP_PCT        = 0.30
+PAIR_DTE_MIN       = 14
+PAIR_DTE_MAX       = 21
+
+_pair_state = {
+    "position": None,
+    "monitor_active": False,
+    "total_cost": 0.0,
+    "target_value": 0.0,
+    "current_value": 0.0,
+    "pnl_dollar": 0.0,
+    "pnl_pct": 0.0,
+}
+_pair_monitor_thread = None
+_pair_lock = threading.Lock()
+
+
+def get_stock_price(ticker):
+    """جلب سعر سهم من Alpaca snapshot."""
+    try:
+        r = _session.get(
+            f"{ALPACA_DATA_URL}/v2/stocks/{ticker}/snapshot",
+            headers=_headers(),
+            params={"feed": "iex"},
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json()
+            price = float(data.get("latestTrade", {}).get("p", 0))
+            if price <= 0:
+                price = float(data.get("dailyBar", {}).get("c", 0))
+            if price <= 0:
+                price = float(data.get("prevDailyBar", {}).get("c", 0))
+            return price
+    except Exception as e:
+        logger.error(f"[Pair] Stock price error {ticker}: {e}")
+    return 0.0
+
+
+def get_options_chain_generic(ticker, expiry_date, option_type="call",
+                               strike_min=None, strike_max=None):
+    """جلب سلسلة الخيارات لأي سهم."""
+    try:
+        params = {
+            "underlying_symbols": ticker,
+            "expiration_date": expiry_date,
+            "type": option_type,
+            "limit": 50
+        }
+        if strike_min is not None:
+            params["strike_price_gte"] = str(strike_min)
+        if strike_max is not None:
+            params["strike_price_lte"] = str(strike_max)
+        r = _session.get(
+            f"{ALPACA_BASE_URL}/v2/options/contracts",
+            headers=_headers(),
+            params=params,
+            timeout=15
+        )
+        if r.status_code == 200:
+            return r.json().get("option_contracts", [])
+        else:
+            logger.warning(f"[Pair] Chain {ticker}/{expiry_date}: {r.status_code}")
+    except Exception as e:
+        logger.error(f"[Pair] Chain error {ticker}: {e}")
+    return []
+
+
+def find_atm_contract_pair(ticker, price, option_type):
+    """
+    يجد أقرب عقد ATM لـ ticker في نافذة DTE 14-21 يوماً.
+    Returns: (contract_dict, expiry_date) أو (None, None)
+    """
+    et_now = datetime.now(timezone.utc) - timedelta(hours=4)
+    expiry_candidates = []
+    for i in range(PAIR_DTE_MIN, PAIR_DTE_MAX + 1):
+        d = et_now + timedelta(days=i)
+        if d.weekday() < 5:
+            expiry_candidates.append(d.strftime('%Y-%m-%d'))
+
+    if not expiry_candidates:
+        return None, None
+
+    strike_min = round(price * 0.92, 0)
+    strike_max = round(price * 1.08, 0)
+
+    for expiry in expiry_candidates:
+        contracts = get_options_chain_generic(ticker, expiry, option_type, strike_min, strike_max)
+        if not contracts:
+            continue
+        best = min(contracts, key=lambda c: abs(float(c.get("strike_price", 0)) - price))
+        symbol = best.get("symbol", "")
+        quote = get_option_quote(symbol)
+        if quote and quote["mid"] > 0:
+            logger.info(f"[Pair] ATM {ticker} {option_type.upper()} Strike=${float(best['strike_price']):.2f} Mid=${quote['mid']:.2f} Expiry={expiry}")
+            return {
+                "symbol": symbol,
+                "strike": float(best.get("strike_price", 0)),
+                "type": option_type,
+                "expiry": expiry,
+                "bid": quote["bid"],
+                "ask": quote["ask"],
+                "mid": quote["mid"],
+            }, expiry
+
+    logger.warning(f"[Pair] No ATM contract for {ticker} {option_type} in DTE {PAIR_DTE_MIN}-{PAIR_DTE_MAX}")
+    return None, None
+
+
+def scan_pair_contracts():
+    """
+    مسح وإيجاد عقود XOM CALL و XLE PUT بنفس تاريخ الانتهاء.
+    Returns: (xom_contract, xle_contract, shared_expiry) أو (None, None, None)
+    """
+    xom_price = get_stock_price("XOM")
+    xle_price = get_stock_price("XLE")
+
+    if xom_price <= 0 or xle_price <= 0:
+        logger.error(f"[Pair] Cannot get prices: XOM=${xom_price} XLE=${xle_price}")
+        return None, None, None
+
+    logger.info(f"[Pair] Scanning: XOM=${xom_price:.2f} XLE=${xle_price:.2f}")
+
+    xom_contract, xom_expiry = find_atm_contract_pair("XOM", xom_price, "call")
+    if not xom_contract:
+        return None, None, None
+
+    # حاول نفس expiry لـ XLE أولاً
+    xle_contract = None
+    contracts = get_options_chain_generic(
+        "XLE", xom_expiry, "put",
+        round(xle_price * 0.92, 0), round(xle_price * 1.08, 0)
+    )
+    if contracts:
+        best = min(contracts, key=lambda c: abs(float(c.get("strike_price", 0)) - xle_price))
+        symbol = best.get("symbol", "")
+        quote = get_option_quote(symbol)
+        if quote and quote["mid"] > 0:
+            xle_contract = {
+                "symbol": symbol,
+                "strike": float(best.get("strike_price", 0)),
+                "type": "put",
+                "expiry": xom_expiry,
+                "bid": quote["bid"],
+                "ask": quote["ask"],
+                "mid": quote["mid"],
+            }
+
+    if not xle_contract:
+        xle_contract, _ = find_atm_contract_pair("XLE", xle_price, "put")
+        if not xle_contract:
+            return None, None, None
+
+    return xom_contract, xle_contract, xom_expiry
+
+
+def execute_pair_trade():
+    """تنفيذ Pair Trade: شراء 2 XOM CALL + 4 XLE PUT."""
+    global _pair_state
+
+    with _pair_lock:
+        if _pair_state["position"]:
+            return False, {"error": "يوجد Pair Trade مفتوح — أغلقه أولاً"}
+
+    xom_c, xle_c, expiry = scan_pair_contracts()
+    if not xom_c or not xle_c:
+        return False, {"error": "لم يُعثر على عقود ATM مناسبة في نافذة DTE 14-21"}
+
+    xom_cost   = xom_c["mid"] * PAIR_XOM_CONTRACTS * 100
+    xle_cost   = xle_c["mid"] * PAIR_XLE_CONTRACTS * 100
+    total_cost = round(xom_cost + xle_cost, 2)
+    target_value = round(total_cost * (1 + PAIR_TP_PCT), 2)
+
+    logger.info(f"[Pair] Executing: XOM CALL {PAIR_XOM_CONTRACTS}x@${xom_c['mid']:.2f} + XLE PUT {PAIR_XLE_CONTRACTS}x@${xle_c['mid']:.2f} | Total=${total_cost:.2f} | Target=${target_value:.2f}")
+
+    xom_order = place_option_order(symbol=xom_c["symbol"], qty=PAIR_XOM_CONTRACTS,
+                                   side="buy", order_type="market", position_intent="buy_to_open")
+    if not xom_order:
+        return False, {"error": "فشل تنفيذ أمر XOM CALL"}
+
+    xle_order = place_option_order(symbol=xle_c["symbol"], qty=PAIR_XLE_CONTRACTS,
+                                   side="buy", order_type="market", position_intent="buy_to_open")
+    if not xle_order:
+        try:
+            cancel_order(xom_order.get("id"))
+        except Exception:
+            pass
+        return False, {"error": "فشل تنفيذ أمر XLE PUT (تم إلغاء XOM)"}
+
+    position = {
+        "xom": {
+            "symbol": xom_c["symbol"], "strike": xom_c["strike"],
+            "expiry": xom_c["expiry"], "qty": PAIR_XOM_CONTRACTS,
+            "entry_price": xom_c["mid"], "current_price": xom_c["mid"],
+            "order_id": xom_order.get("id"),
+        },
+        "xle": {
+            "symbol": xle_c["symbol"], "strike": xle_c["strike"],
+            "expiry": xle_c["expiry"], "qty": PAIR_XLE_CONTRACTS,
+            "entry_price": xle_c["mid"], "current_price": xle_c["mid"],
+            "order_id": xle_order.get("id"),
+        },
+        "total_cost": total_cost,
+        "target_value": target_value,
+        "shared_expiry": expiry,
+        "entry_time": _et_now().strftime("%I:%M:%S %p ET"),
+        "status": "open",
+    }
+
+    with _pair_lock:
+        _pair_state["position"]      = position
+        _pair_state["total_cost"]    = total_cost
+        _pair_state["target_value"]  = target_value
+        _pair_state["current_value"] = total_cost
+        _pair_state["pnl_dollar"]    = 0.0
+        _pair_state["pnl_pct"]       = 0.0
+        _pair_state["monitor_active"] = True
+
+    msg = (
+        f"🔀 <b>Pair Trade مفتوح</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📈 XOM CALL ×{PAIR_XOM_CONTRACTS}: {xom_c['symbol']}\n"
+        f"   Strike: ${xom_c['strike']:.2f} | Mid: ${xom_c['mid']:.2f}\n"
+        f"📉 XLE PUT ×{PAIR_XLE_CONTRACTS}: {xle_c['symbol']}\n"
+        f"   Strike: ${xle_c['strike']:.2f} | Mid: ${xle_c['mid']:.2f}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"💰 إجمالي القسط: ${total_cost:.2f}\n"
+        f"🎯 هدف الربح (+30%): ${target_value:.2f}\n"
+        f"📅 Expiry: {expiry}\n"
+        f"🕐 {_et_now().strftime('%I:%M %p')} ET"
+    )
+    send_telegram(msg)
+    _start_pair_monitor()
+
+    return True, {
+        "xom_symbol": xom_c["symbol"], "xom_strike": xom_c["strike"],
+        "xom_mid": xom_c["mid"], "xom_qty": PAIR_XOM_CONTRACTS,
+        "xle_symbol": xle_c["symbol"], "xle_strike": xle_c["strike"],
+        "xle_mid": xle_c["mid"], "xle_qty": PAIR_XLE_CONTRACTS,
+        "total_cost": total_cost, "target_value": target_value,
+        "shared_expiry": expiry, "entry_time": position["entry_time"],
+    }
+
+
+def close_pair_trade(reason="manual"):
+    """إغلاق Pair Trade: بيع جميع العقود الـ 6."""
+    global _pair_state
+
+    with _pair_lock:
+        pos = _pair_state.get("position")
+
+    if not pos or pos.get("status") != "open":
+        return False, {"error": "لا يوجد Pair Trade مفتوح"}
+
+    xom = pos["xom"]
+    xle = pos["xle"]
+
+    xom_quote = get_option_quote(xom["symbol"])
+    xle_quote = get_option_quote(xle["symbol"])
+    xom_exit  = xom_quote["mid"] if xom_quote and xom_quote["mid"] > 0 else xom["entry_price"]
+    xle_exit  = xle_quote["mid"] if xle_quote and xle_quote["mid"] > 0 else xle["entry_price"]
+
+    place_option_order(symbol=xom["symbol"], qty=xom["qty"], side="sell",
+                       order_type="market", position_intent="sell_to_close")
+    place_option_order(symbol=xle["symbol"], qty=xle["qty"], side="sell",
+                       order_type="market", position_intent="sell_to_close")
+
+    current_value = round(xom_exit * xom["qty"] * 100 + xle_exit * xle["qty"] * 100, 2)
+    total_cost    = pos["total_cost"]
+    pnl_dollar    = round(current_value - total_cost, 2)
+    pnl_pct       = round((pnl_dollar / total_cost) * 100, 1) if total_cost > 0 else 0
+
+    with _pair_lock:
+        _pair_state["position"]["status"] = "closed"
+        _pair_state["monitor_active"]     = False
+        _pair_state["pnl_dollar"]         = pnl_dollar
+        _pair_state["pnl_pct"]            = pnl_pct
+        _pair_state["current_value"]      = current_value
+
+    reason_ar = {"TP": "جني أرباح تلقائي +30% ✅", "manual": "إغلاق يدوي 👆"}.get(reason, reason)
+    emoji = "✅" if pnl_dollar >= 0 else "❌"
+    msg = (
+        f"{emoji} <b>Pair Trade مغلق</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📈 XOM CALL: ${xom['entry_price']:.2f} → ${xom_exit:.2f}\n"
+        f"📉 XLE PUT: ${xle['entry_price']:.2f} → ${xle_exit:.2f}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"💰 دخول: ${total_cost:.2f} | خروج: ${current_value:.2f}\n"
+        f"{'💚' if pnl_dollar >= 0 else '🔴'} P&L: ${pnl_dollar:+.2f} ({pnl_pct:+.1f}%)\n"
+        f"📌 السبب: {reason_ar}\n"
+        f"🕐 {_et_now().strftime('%I:%M %p')} ET"
+    )
+    send_telegram(msg)
+    logger.info(f"[Pair] Closed | PnL=${pnl_dollar:+.2f} ({pnl_pct:+.1f}%) | Reason={reason}")
+
+    return True, {
+        "pnl_dollar": pnl_dollar, "pnl_pct": pnl_pct,
+        "total_cost": total_cost, "current_value": current_value,
+        "xom_exit": xom_exit, "xle_exit": xle_exit, "reason": reason,
+    }
+
+
+def _pair_monitor_loop():
+    """حلقة مراقبة Pair Trade — تُغلق تلقائياً عند +30%."""
+    global _pair_state
+    logger.info("[Pair] Monitor started")
+
+    while True:
+        with _pair_lock:
+            active = _pair_state["monitor_active"]
+        if not active:
+            break
+
+        try:
+            with _pair_lock:
+                pos = _pair_state.get("position")
+
+            if not pos or pos.get("status") != "open":
+                with _pair_lock:
+                    _pair_state["monitor_active"] = False
+                break
+
+            xom = pos["xom"]
+            xle = pos["xle"]
+
+            xom_q = get_option_quote(xom["symbol"])
+            xle_q = get_option_quote(xle["symbol"])
+
+            if not xom_q or not xle_q:
+                time.sleep(10)
+                continue
+
+            xom_now = xom_q["mid"] if xom_q["mid"] > 0 else xom["entry_price"]
+            xle_now = xle_q["mid"] if xle_q["mid"] > 0 else xle["entry_price"]
+
+            current_value = round(xom_now * xom["qty"] * 100 + xle_now * xle["qty"] * 100, 2)
+            total_cost    = pos["total_cost"]
+            target_value  = pos["target_value"]
+            pnl_dollar    = round(current_value - total_cost, 2)
+            pnl_pct       = round((pnl_dollar / total_cost) * 100, 1) if total_cost > 0 else 0
+
+            with _pair_lock:
+                _pair_state["current_value"]     = current_value
+                _pair_state["pnl_dollar"]        = pnl_dollar
+                _pair_state["pnl_pct"]           = pnl_pct
+                pos["xom"]["current_price"]      = xom_now
+                pos["xle"]["current_price"]      = xle_now
+
+            logger.debug(f"[Pair] Value=${current_value:.2f} PnL=${pnl_dollar:+.2f} ({pnl_pct:+.1f}%) Target=${target_value:.2f}")
+
+            if current_value >= target_value:
+                logger.info(f"[Pair] TP hit! ${current_value:.2f} >= ${target_value:.2f} (+30%)")
+                close_pair_trade(reason="TP")
+                break
+
+        except Exception as e:
+            logger.error(f"[Pair Monitor] Error: {e}")
+
+        time.sleep(10)
+
+    logger.info("[Pair] Monitor stopped")
+
+
+def _start_pair_monitor():
+    """تشغيل thread مراقبة Pair Trade."""
+    global _pair_monitor_thread
+    if _pair_monitor_thread and _pair_monitor_thread.is_alive():
+        return
+    _pair_monitor_thread = threading.Thread(
+        target=_pair_monitor_loop, daemon=True, name="Pair_Monitor"
+    )
+    _pair_monitor_thread.start()
+
+
+def get_pair_status():
+    """إرجاع حالة Pair Trade للواجهة."""
+    with _pair_lock:
+        pos           = _pair_state.get("position")
+        total_cost    = _pair_state["total_cost"]
+        target_value  = _pair_state["target_value"]
+        current_value = _pair_state["current_value"]
+        pnl_dollar    = _pair_state["pnl_dollar"]
+        pnl_pct       = _pair_state["pnl_pct"]
+
+    if not pos:
+        return {"has_position": False, "total_cost": 0, "target_value": 0,
+                "current_value": 0, "pnl_dollar": 0, "pnl_pct": 0}
+
+    return {
+        "has_position":   pos.get("status") == "open",
+        "status":         pos.get("status", "closed"),
+        "xom_symbol":     pos["xom"]["symbol"],
+        "xom_strike":     pos["xom"]["strike"],
+        "xom_qty":        pos["xom"]["qty"],
+        "xom_entry":      pos["xom"]["entry_price"],
+        "xom_current":    pos["xom"].get("current_price", pos["xom"]["entry_price"]),
+        "xle_symbol":     pos["xle"]["symbol"],
+        "xle_strike":     pos["xle"]["strike"],
+        "xle_qty":        pos["xle"]["qty"],
+        "xle_entry":      pos["xle"]["entry_price"],
+        "xle_current":    pos["xle"].get("current_price", pos["xle"]["entry_price"]),
+        "total_cost":     total_cost,
+        "target_value":   target_value,
+        "current_value":  current_value,
+        "pnl_dollar":     pnl_dollar,
+        "pnl_pct":        pnl_pct,
+        "entry_time":     pos.get("entry_time", ""),
+        "shared_expiry":  pos.get("shared_expiry", ""),
+        "tp_pct":         PAIR_TP_PCT * 100,
+    }

@@ -2389,13 +2389,17 @@ def manual_stream():
     )
 
 
+# V11.4: حالة الشراء الجاري — لتجنب طلبات متعددة
+_buy_state = {"status": "idle", "result": None, "error": None, "pre_trade": {}}
+
+
 @app.route('/manual/buy', methods=['POST'])
 def manual_buy():
-    """Execute manual ITM buy order."""
+    """V11.4: Execute manual ITM buy in background thread — returns immediately."""
     if not _V8_AVAILABLE:
         return jsonify({"success": False, "error": "V9 not available"}), 503
     
-    global _active_journal_id
+    global _active_journal_id, _buy_state
     data = request.get_json(force=True, silent=True) or {}
     option_type = data.get("type", "").lower()
     pre_trade   = data.get("pre_trade", {})
@@ -2403,44 +2407,66 @@ def manual_buy():
     if option_type not in ("call", "put"):
         return jsonify({"success": False, "error": "يجب تحديد call أو put"}), 400
 
-    success, result = execute_manual_itm(option_type)
+    # إذا كان هناك شراء جاري بالفعل — لا تكرر
+    if _buy_state["status"] == "pending":
+        return jsonify({"success": False, "pending": True, "error": "شراء جاري — انتظر"})
 
-    if success:
-        logger.info(f"[V9 Manual] Buy {option_type.upper()} executed: {result.get('symbol')} @ ${result.get('entry_price')}")
-        # ── تسجيل تلقائي في السجل مع بيانات pre_trade (V10) ──
+    _buy_state = {"status": "pending", "result": None, "error": None, "pre_trade": pre_trade}
+
+    def _do_buy():
+        global _active_journal_id, _buy_state
         try:
-            from options_scalper import add_journal_entry, get_manual_status
-            ms = get_manual_status()
-            journal_entry = {
-                "status":        "open",
-                "direction":     option_type.upper(),
-                "symbol":        result.get("symbol", ""),
-                "strike":        result.get("strike", 0),
-                "entry_price":   result.get("entry_price", 0),
-                "tsla_price":    ms.get("tsla_price", 0),
-                "delta":         result.get("delta", 0),
-                "gex_position":  "",
-                "cheddar_flow":  pre_trade.get("cheddar_flow", ""),
-                "gamma_flip":    pre_trade.get("gamma_flip", ""),
-                "vwap_position": pre_trade.get("vwap_position", ""),
-                "or_position":   pre_trade.get("or_position", ""),
-                "entry_reason":  pre_trade.get("entry_reason", ""),
-                "notes":         "",
-                "images":        [],
-                "exit_price":    None,
-                "pnl_dollar":    None,
-                "exit_reason":   None,
-                "exit_time":     None,
-            }
-            entry_id = add_journal_entry(journal_entry)
-            _active_journal_id = entry_id
-            result["journal_id"] = entry_id
-        except Exception as je:
-            logger.warning(f"[V10] Journal auto-save failed: {je}")
-        return jsonify({"success": True, **result})
-    else:
-        logger.warning(f"[V9 Manual] Buy failed: {result.get('error')}")
-        return jsonify({"success": False, **result}), 400
+            success, result = execute_manual_itm(option_type)
+            if success:
+                logger.info(f"[V9 Manual] Buy {option_type.upper()} executed: {result.get('symbol')} @ ${result.get('entry_price')}")
+                try:
+                    from options_scalper import add_journal_entry, get_manual_status
+                    ms = get_manual_status()
+                    journal_entry = {
+                        "status":        "open",
+                        "direction":     option_type.upper(),
+                        "symbol":        result.get("symbol", ""),
+                        "strike":        result.get("strike", 0),
+                        "entry_price":   result.get("entry_price", 0),
+                        "tsla_price":    ms.get("tsla_price", 0),
+                        "delta":         result.get("delta", 0),
+                        "gex_position":  "",
+                        "cheddar_flow":  pre_trade.get("cheddar_flow", ""),
+                        "gamma_flip":    pre_trade.get("gamma_flip", ""),
+                        "vwap_position": pre_trade.get("vwap_position", ""),
+                        "or_position":   pre_trade.get("or_position", ""),
+                        "entry_reason":  pre_trade.get("entry_reason", ""),
+                        "notes":         "",
+                        "images":        [],
+                        "exit_price":    None,
+                        "pnl_dollar":    None,
+                        "exit_reason":   None,
+                        "exit_time":     None,
+                    }
+                    entry_id = add_journal_entry(journal_entry)
+                    _active_journal_id = entry_id
+                    result["journal_id"] = entry_id
+                except Exception as je:
+                    logger.warning(f"[V10] Journal auto-save failed: {je}")
+                _buy_state = {"status": "done", "result": result, "error": None, "pre_trade": pre_trade}
+            else:
+                logger.warning(f"[V9 Manual] Buy failed: {result.get('error')}")
+                _buy_state = {"status": "failed", "result": None, "error": result.get('error', 'خطأ'), "pre_trade": pre_trade}
+        except Exception as ex:
+            logger.error(f"[V11.4] _do_buy exception: {ex}")
+            _buy_state = {"status": "failed", "result": None, "error": str(ex), "pre_trade": pre_trade}
+
+    import threading
+    t = threading.Thread(target=_do_buy, daemon=True)
+    t.start()
+    return jsonify({"success": True, "pending": True, "message": "جاري البحث عن عقد ITM وتنفيذ الشراء..."})
+
+
+@app.route('/manual/buy_status', methods=['GET'])
+def manual_buy_status():
+    """V11.4: Check background buy status."""
+    global _buy_state
+    return jsonify(_buy_state)
 
 
 @app.route('/manual/sell', methods=['POST'])

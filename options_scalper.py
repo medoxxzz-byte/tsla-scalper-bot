@@ -211,12 +211,17 @@ def get_tsla_snapshot():
             trade = data.get("latestTrade", {})
             price = float(trade.get("p", 0))
             bar = data.get("dailyBar", {})
+            prev_bar = data.get("prevDailyBar", {})
+            # V11.4: fallback للسعر عند السوق المغلق — استخدم prevClose أو dailyBar.c
+            if price <= 0:
+                price = float(bar.get("c", 0)) or float(prev_bar.get("c", 0))
             return {
                 "price": price,
                 "high": float(bar.get("h", 0)),
                 "low": float(bar.get("l", 0)),
                 "vwap": float(bar.get("vw", 0)),
-                "volume": int(bar.get("v", 0))
+                "volume": int(bar.get("v", 0)),
+                "prev_close": float(prev_bar.get("c", 0))
             }
     except Exception as e:
         logger.error(f"[V8] Snapshot error: {e}")
@@ -1870,7 +1875,11 @@ _manual_state = {
     "monitor_active": False,
     "last_price": 0.0,
     "pnl_dollar": 0.0,
-    # Cache للـ Strike المقترح — يُحدَّث كل 30 ثانية فقط
+    "last_pnl": 0.0,        # V11.4: آخر P&L بعد الإغلاق
+    "last_reason": "",      # V11.4: سبب الإغلاق
+    "last_tsla_price": 0.0, # V11.4: آخر سعر TSLA معروف (fallback للسوق المغلق)
+    "journal_id": None,
+    # Cache للـ Strike المقترح — يُحدّث كل 30 ثانية فقط
     "suggested_call_cache": None,
     "suggested_put_cache": None,
     "suggested_cache_time": 0.0,
@@ -2208,15 +2217,17 @@ def _manual_monitor_loop():
             # ── TP تلقائي: +$0.20 ──
             if current_price >= pos["tp_price"]:
                 logger.info(f"[V9 Manual] TP hit! ${current_price:.2f} >= ${pos['tp_price']:.2f}")
+                pnl_final = round((current_price - pos["entry_price"]) * 100, 2)
                 close_manual_itm(reason="TP")
-                _sse_broadcast({"type": "closed", "reason": "TP", "pnl_dollar": pnl_dollar})
+                _sse_broadcast({"type": "closed", "reason": "TP", "pnl_dollar": pnl_final})
                 break
             
             # ── SL تلقائي: -$0.65 ──
             if current_price <= pos["sl_price"]:
                 logger.info(f"[V9 Manual] SL hit! ${current_price:.2f} <= ${pos['sl_price']:.2f}")
+                pnl_final = round((current_price - pos["entry_price"]) * 100, 2)
                 close_manual_itm(reason="SL")
-                _sse_broadcast({"type": "closed", "reason": "SL", "pnl_dollar": pnl_dollar})
+                _sse_broadcast({"type": "closed", "reason": "SL", "pnl_dollar": pnl_final})
                 break
             
             # ── تنبيه 1: -$0.30 ──
@@ -2328,6 +2339,11 @@ def get_manual_status():
     # جلب سعر TSLA الحالي
     snap = get_tsla_snapshot()
     tsla_price = snap["price"] if snap else 0
+    # V11.4: fallback للسعر المخزّن إذا كان السوق مغلقاً
+    if tsla_price <= 0 and _manual_state.get("last_tsla_price", 0) > 0:
+        tsla_price = _manual_state["last_tsla_price"]
+    elif tsla_price > 0:
+        _manual_state["last_tsla_price"] = tsla_price
     
     # اقتراح عقد ITM للعرض — Cache كل 30 ثانية أو عند تغير السعر بـ $1+
     import time as _time

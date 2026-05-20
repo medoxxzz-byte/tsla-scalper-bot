@@ -2182,6 +2182,26 @@ def gex_morning_worker():
                 time.sleep(300)
                 continue
             
+            # V11.3: جلب GEX فوراً إذا كانت _pe_state فارغة (بعد Deploy أو إعادة تشغيل)
+            if _V8_AVAILABLE:
+                try:
+                    from options_scalper import get_pe_status
+                    pe_st = get_pe_status()
+                    gex_empty = not pe_st.get("gex_levels") or not pe_st["gex_levels"].get("gamma_flip")
+                    if gex_empty and _gex_cache.get("data") and _gex_cache["data"].get("gamma_flip"):
+                        # الكاش موجود لكن PE فارغ — أعد التزامن
+                        gex_data = _gex_cache["data"]
+                        pe_levels = {
+                            "gamma_flip": float(gex_data.get("gamma_flip") or 0),
+                            "call_wall":  float(gex_data.get("call_wall") or 0),
+                            "put_wall":   float(gex_data.get("put_wall") or 0),
+                            "max_gamma":  float(gex_data.get("zero_dte_magnet") or gex_data.get("max_positive_gamma") or 0),
+                        }
+                        update_gex_levels(pe_levels)
+                        logger.info(f"[V11.3] GEX re-synced from cache to PE: {pe_levels}")
+                except Exception:
+                    pass
+
             # Fetch 1: 9:25 AM ET — خريطة الصباح
             if not _morning_sent and now.hour == 9 and 24 <= now.minute <= 30:
                 gex_data = fetch_flashalpha_gex()
@@ -2288,6 +2308,26 @@ def v8_start():
 
 # متغير لحفظ آخر نتيجة صفقة مغلقة
 _last_manual_result = {"pnl": 0, "reason": "", "entry_price": 0, "exit_price": 0}
+
+
+@app.route('/manual/gex_refresh', methods=['POST'])
+def manual_gex_refresh():
+    """V11.3: تحديث GEX يدوياً من الواجهة عند ظهور --- في المستويات."""
+    try:
+        gex_data = fetch_flashalpha_gex()
+        if gex_data and gex_data.get("gamma_flip") and _V8_AVAILABLE:
+            pe_levels = {
+                "gamma_flip": float(gex_data.get("gamma_flip") or 0),
+                "call_wall":  float(gex_data.get("call_wall") or 0),
+                "put_wall":   float(gex_data.get("put_wall") or 0),
+                "max_gamma":  float(gex_data.get("zero_dte_magnet") or gex_data.get("max_positive_gamma") or 0),
+            }
+            update_gex_levels(pe_levels)
+            logger.info(f"[V11.3] Manual GEX refresh: {pe_levels}")
+            return jsonify({"ok": True, "levels": pe_levels})
+        return jsonify({"ok": False, "error": "GEX data empty or unavailable"}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route('/manual', methods=['GET'])
 def manual_page():
@@ -2648,6 +2688,41 @@ def _start_background_threads():
         logger.info("V9.4 ITM Precision Entry Engine started ✅ 🎯")
 
 _start_background_threads()
+
+# V11.3: جلب GEX فوري عند Startup إذا كانت البيانات فارغة
+def _startup_gex_fetch():
+    """يجلب GEX فوراً عند بدء التشغيل إذا لم تكن البيانات موجودة."""
+    import time as _t
+    _t.sleep(5)  # انتظار تهيئة Flask
+    try:
+        if not _gex_cache.get("data") or not _gex_cache["data"].get("gamma_flip"):
+            logger.info("[V11.3] Startup GEX fetch — no cached data found")
+            gex_data = fetch_flashalpha_gex()
+            if gex_data and gex_data.get("gamma_flip") and _V8_AVAILABLE:
+                pe_levels = {
+                    "gamma_flip": float(gex_data.get("gamma_flip") or 0),
+                    "call_wall":  float(gex_data.get("call_wall") or 0),
+                    "put_wall":   float(gex_data.get("put_wall") or 0),
+                    "max_gamma":  float(gex_data.get("zero_dte_magnet") or gex_data.get("max_positive_gamma") or 0),
+                }
+                update_gex_levels(pe_levels)
+                logger.info(f"[V11.3] Startup GEX loaded: {pe_levels}")
+        else:
+            # البيانات موجودة — تأكد من تحديث PE Engine
+            if _V8_AVAILABLE:
+                gex_data = _gex_cache["data"]
+                pe_levels = {
+                    "gamma_flip": float(gex_data.get("gamma_flip") or 0),
+                    "call_wall":  float(gex_data.get("call_wall") or 0),
+                    "put_wall":   float(gex_data.get("put_wall") or 0),
+                    "max_gamma":  float(gex_data.get("zero_dte_magnet") or gex_data.get("max_positive_gamma") or 0),
+                }
+                update_gex_levels(pe_levels)
+                logger.info(f"[V11.3] Startup GEX synced from cache: {pe_levels}")
+    except Exception as e:
+        logger.warning(f"[V11.3] Startup GEX fetch failed: {e}")
+
+threading.Thread(target=_startup_gex_fetch, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host=SERVER_HOST, port=SERVER_PORT, debug=False)

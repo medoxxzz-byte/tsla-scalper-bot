@@ -531,6 +531,10 @@ body {
 <div class="footer">
   <span class="dot" id="statusDot"></span>
   <span id="statusTxt">جاري الاتصال...</span>
+  <span style="margin-right:12px;font-size:11px;opacity:0.6">
+    <span id="connDot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ff5252;margin-left:4px"></span>
+    <span id="connTxt" style="color:#aaa">جاري الاتصال</span>
+  </span>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════
@@ -1039,17 +1043,37 @@ async function executeTrade(type, preTradeData) {
   document.getElementById('btnCall').disabled = true;
   document.getElementById('btnPut').disabled  = true;
 
+  // Timeout 20 ثانية لمنع التعليق الأبدي
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
+
   try {
     const r = await fetch('/manual/buy', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ type, pre_trade: preTradeData })
+      body: JSON.stringify({ type, pre_trade: preTradeData }),
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
     const d = await r.json();
     if (d.success) { hasPos = true; vib([100,50,100]); await refresh(); }
-    else alert('❌ فشل الشراء:\n' + (d.error || 'خطأ'));
-  } catch(e) { alert('❌ خطأ في الاتصال'); }
-  finally {
+    else {
+      const errMsg = d.error || 'خطأ غير محدد';
+      // إذا كان الخطأ هو عدم وجود عقد مناسب، أظهر رسالة واضحة
+      if (errMsg.includes('لا يوجد عقد')) {
+        alert('⚠️ لا يوجد عقد ITM مناسب الآن\nانتظر دقيقة وحاول مرة ثانية');
+      } else {
+        alert('❌ فشل الشراء:\n' + errMsg);
+      }
+    }
+  } catch(e) {
+    clearTimeout(timeoutId);
+    if (e.name === 'AbortError') {
+      alert('⏱️ انتهت مدة الانتظار (20 ثانية)\nتحقق من الصفقة في Alpaca مباشرة');
+    } else {
+      alert('❌ خطأ في الاتصال — حاول مرة ثانية');
+    }
+  } finally {
     document.getElementById('loadingDiv').classList.remove('show');
     document.getElementById('btnCall').disabled = false;
     document.getElementById('btnPut').disabled  = false;
@@ -1107,8 +1131,28 @@ function applyPnlUpdate(d) {
     updatePnlBig(d.pnl_dollar);
     updateBar(d.pnl_dollar);
   } else if (d.type === 'closed') {
-    // الصفقة أغلقت تلقائياً — رفرش كامل
-    refresh();
+    // الصفقة أغلقت تلقائياً — عرض النتيجة فوراً من SSE ثم رفرش
+    const pnl = d.pnl_dollar || 0;
+    const reason = d.reason || '';
+    if (hasPos) {
+      hasPos = false;
+      const rc = document.getElementById('resultCard');
+      rc.className = 'show ' + (pnl >= 0 ? 'win' : 'loss');
+      document.getElementById('rcTitle').textContent = pnl >= 0 ? '✅ ربح' : '❌ خسارة';
+      const sign = pnl >= 0 ? '+' : '';
+      document.getElementById('rcPnl').textContent = sign + '$' + Math.abs(pnl).toFixed(2);
+      const reasonMap = {'TP': 'جني أرباح تلقائي ✅', 'SL': 'ستوب لوس تلقائي 🛑', 'MANUAL': 'إغلاق يدوي 👆', 'ERROR': 'خطأ تقني ⚠️'};
+      document.getElementById('rcDetail').textContent = '📌 السبب: ' + (reasonMap[reason] || reason || 'غير محدد');
+      vib(pnl >= 0 ? [100,50,100] : [500]);
+      setTimeout(() => rc.classList.remove('show'), 12000);
+      // إخفاء لوحة الصفقة
+      document.getElementById('posPanel').classList.remove('show');
+      document.getElementById('btnStop').classList.remove('show');
+      document.getElementById('suggestDiv').style.display = 'grid';
+      document.getElementById('buyDiv').style.display = 'grid';
+    }
+    // رفرش لتحديث Strike والإحصائيات
+    setTimeout(() => refresh(), 1000);
   } else if (d.type === 'init') {
     // حالة أولية عند الاتصال
     refreshManual();
@@ -1132,9 +1176,18 @@ function startSSE() {
     es.close();
     _sseSource = null;
     _sseRetries++;
-    // إعادة الاتصال بعد 2-10 ثوانٍ حسب عدد المحاولات
-    const delay = Math.min(2000 * _sseRetries, 10000);
+    // إعادة الاتصال بعد 1-5 ثواني (أسرع من قبل)
+    const delay = Math.min(1000 * _sseRetries, 5000);
     setTimeout(startSSE, delay);
+  };
+  
+  // مراقبة حالة الاتصال وعرضها للمستخدم
+  es.onopen = () => {
+    _sseRetries = 0;
+    const dot = document.getElementById('connDot');
+    const txt = document.getElementById('connTxt');
+    if (dot) dot.style.background = '#00e676';
+    if (txt) txt.textContent = 'Live 🟢';
   };
 }
 

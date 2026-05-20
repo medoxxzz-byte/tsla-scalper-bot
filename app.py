@@ -2327,7 +2327,7 @@ def manual_stream():
             # انتظار التحديثات
             while True:
                 try:
-                    msg = q.get(timeout=25)   # timeout لإرسال heartbeat
+                    msg = q.get(timeout=15)   # timeout لإرسال heartbeat
                     yield msg
                 except Exception:
                     # heartbeat لإبقاء الاتصال حياً

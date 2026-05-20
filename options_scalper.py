@@ -1870,6 +1870,11 @@ _manual_state = {
     "monitor_active": False,
     "last_price": 0.0,
     "pnl_dollar": 0.0,
+    # Cache للـ Strike المقترح — يُحدَّث كل 30 ثانية فقط
+    "suggested_call_cache": None,
+    "suggested_put_cache": None,
+    "suggested_cache_time": 0.0,
+    "suggested_cache_price": 0.0,
 }
 
 _manual_monitor_thread = None
@@ -2324,36 +2329,38 @@ def get_manual_status():
     snap = get_tsla_snapshot()
     tsla_price = snap["price"] if snap else 0
     
-    # اقتراح عقد ITM للعرض (قبل الضغط)
-    suggested_call = None
-    suggested_put = None
+    # اقتراح عقد ITM للعرض — Cache كل 30 ثانية أو عند تغير السعر بـ $1+
+    import time as _time
+    now_ts = _time.time()
+    cache_age = now_ts - _manual_state["suggested_cache_time"]
+    price_moved = abs(tsla_price - _manual_state["suggested_cache_price"]) > 1.0
     
-    if tsla_price > 0 and not pos:
-        try:
-            c = find_itm_contract_for_manual(tsla_price, "call")
-            if c:
-                suggested_call = {
-                    "symbol": c["symbol"],
-                    "strike": c["strike"],
-                    "mid": c["mid"],
-                    "delta": c["approx_delta"],
-                    "itm": c["itm_amount"]
-                }
-        except:
-            pass
+    if tsla_price > 0 and not pos and (cache_age > 30 or price_moved or _manual_state["suggested_call_cache"] is None):
+        # تحديث الـ Cache في background thread لعدم تعطيل الـ response
+        def _refresh_cache():
+            try:
+                c = find_itm_contract_for_manual(tsla_price, "call")
+                _manual_state["suggested_call_cache"] = {
+                    "symbol": c["symbol"], "strike": c["strike"],
+                    "mid": c["mid"], "delta": c["approx_delta"], "itm": c["itm_amount"]
+                } if c else None
+            except: pass
+            try:
+                p = find_itm_contract_for_manual(tsla_price, "put")
+                _manual_state["suggested_put_cache"] = {
+                    "symbol": p["symbol"], "strike": p["strike"],
+                    "mid": p["mid"], "delta": p["approx_delta"], "itm": p["itm_amount"]
+                } if p else None
+            except: pass
+            _manual_state["suggested_cache_time"] = _time.time()
+            _manual_state["suggested_cache_price"] = tsla_price
         
-        try:
-            p = find_itm_contract_for_manual(tsla_price, "put")
-            if p:
-                suggested_put = {
-                    "symbol": p["symbol"],
-                    "strike": p["strike"],
-                    "mid": p["mid"],
-                    "delta": p["approx_delta"],
-                    "itm": p["itm_amount"]
-                }
-        except:
-            pass
+        import threading as _threading
+        _threading.Thread(target=_refresh_cache, daemon=True).start()
+    
+    # استخدم الـ Cache الحالي فوراً (حتى لو قديم)
+    suggested_call = _manual_state["suggested_call_cache"] if not pos else None
+    suggested_put  = _manual_state["suggested_put_cache"]  if not pos else None
     
     # ── إرجاع GEX levels وCheddarFlow دائماً (حتى أثناء الصفقة) ──
     gex = _pe_state.get("gex_levels", {})

@@ -2641,6 +2641,11 @@ def pair_status():
 # ──────────────────────────────────────────────────────────────────────────────
 # Reversal Warning Routes (V10.2)
 # ──────────────────────────────────────────────────────────────────────────────
+@app.route('/dashboard', methods=['GET'])
+def dashboard():
+    """لوحة مراقبة حية لجميع الـ endpoints."""
+    return render_template('dashboard.html')
+
 @app.route('/reversal/status', methods=['GET'])
 def reversal_warning_status():
     """حالة نظام تحذير انعكاس TSLA 5M."""

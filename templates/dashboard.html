@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TSLA Scalper Bot — Live Dashboard</title>
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0b0e14;
+      --surface:   #141820;
+      --surface2:  #1c2230;
+      --border:    #252d3d;
+      --green:     #00e676;
+      --green-dim: #00c85360;
+      --red:       #ff4444;
+      --red-dim:   #ff444440;
+      --yellow:    #ffc107;
+      --yellow-dim:#ffc10730;
+      --blue:      #4fc3f7;
+      --blue-dim:  #4fc3f720;
+      --purple:    #ce93d8;
+      --purple-dim:#ce93d820;
+      --text:      #e2e8f0;
+      --text-muted:#64748b;
+      --font:      'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      padding: 0 0 40px;
+    }
+
+    /* ── Header ───────────────────────────────────────────────────── */
+    header {
+      background: linear-gradient(135deg, #0f1724 0%, #1a2540 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(10px);
+    }
+
+    .header-left { display: flex; align-items: center; gap: 14px; }
+
+    .logo {
+      width: 42px; height: 42px;
+      background: linear-gradient(135deg, #4fc3f7, #00e676);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; font-weight: 900; color: #0b0e14;
+      flex-shrink: 0;
+    }
+
+    .header-title h1 {
+      font-size: 18px; font-weight: 700; color: var(--text);
+      letter-spacing: 0.3px;
+    }
+    .header-title p {
+      font-size: 12px; color: var(--text-muted); margin-top: 2px;
+    }
+
+    .header-right { display: flex; align-items: center; gap: 16px; }
+
+    .live-badge {
+      display: flex; align-items: center; gap: 7px;
+      background: var(--green-dim);
+      border: 1px solid var(--green);
+      border-radius: 20px;
+      padding: 5px 14px;
+      font-size: 12px; font-weight: 600; color: var(--green);
+    }
+    .live-dot {
+      width: 8px; height: 8px;
+      background: var(--green);
+      border-radius: 50%;
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.4; transform: scale(0.7); }
+    }
+
+    .refresh-timer {
+      font-size: 12px; color: var(--text-muted);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .timer-ring {
+      width: 20px; height: 20px;
+      position: relative;
+    }
+    .timer-ring svg { transform: rotate(-90deg); }
+    .timer-ring circle {
+      fill: none; stroke: var(--border); stroke-width: 2;
+    }
+    .timer-ring .progress {
+      stroke: var(--blue); stroke-width: 2;
+      stroke-dasharray: 50.27;
+      stroke-dashoffset: 0;
+      transition: stroke-dashoffset 1s linear;
+    }
+
+    /* ── Main Grid ────────────────────────────────────────────────── */
+    .container { max-width: 1400px; margin: 0 auto; padding: 28px 24px; }
+
+    /* ── Section Title ────────────────────────────────────────────── */
+    .section-title {
+      font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 1.5px;
+      color: var(--text-muted);
+      margin: 28px 0 14px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .section-title::after {
+      content: '';
+      flex: 1; height: 1px;
+      background: var(--border);
+    }
+
+    /* ── Top Stats Row ────────────────────────────────────────────── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+      margin-bottom: 4px;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s, transform 0.2s;
+    }
+    .stat-card:hover { transform: translateY(-2px); border-color: var(--blue); }
+
+    .stat-card::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: var(--accent, var(--blue));
+      border-radius: 12px 12px 0 0;
+    }
+
+    .stat-label {
+      font-size: 11px; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+    .stat-value {
+      font-size: 26px; font-weight: 800;
+      color: var(--accent, var(--text));
+      line-height: 1;
+    }
+    .stat-sub {
+      font-size: 11px; color: var(--text-muted);
+      margin-top: 6px;
+    }
+
+    /* ── Main Grid Layout ─────────────────────────────────────────── */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 900px) { .main-grid { grid-template-columns: 1fr; } }
+
+    .full-width { grid-column: 1 / -1; }
+
+    /* ── Card ─────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      transition: border-color 0.3s;
+    }
+    .card:hover { border-color: #2d3a52; }
+
+    .card-header {
+      padding: 16px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .card-title {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 14px; font-weight: 700;
+    }
+    .card-icon {
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+    .card-body { padding: 18px 20px; }
+
+    /* ── Status Badge ─────────────────────────────────────────────── */
+    .badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 20px;
+      font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .badge-green  { background: var(--green-dim);  color: var(--green);  border: 1px solid var(--green); }
+    .badge-red    { background: var(--red-dim);    color: var(--red);    border: 1px solid var(--red); }
+    .badge-yellow { background: var(--yellow-dim); color: var(--yellow); border: 1px solid var(--yellow); }
+    .badge-blue   { background: var(--blue-dim);   color: var(--blue);   border: 1px solid var(--blue); }
+    .badge-purple { background: var(--purple-dim); color: var(--purple); border: 1px solid var(--purple); }
+    .badge-gray   { background: #1e2535; color: var(--text-muted); border: 1px solid var(--border); }
+
+    /* ── Data Row ─────────────────────────────────────────────────── */
+    .data-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .data-row:last-child { border-bottom: none; }
+    .data-key {
+      font-size: 12px; color: var(--text-muted);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .data-val {
+      font-size: 13px; font-weight: 600; color: var(--text);
+      text-align: left;
+    }
+    .data-val.green { color: var(--green); }
+    .data-val.red   { color: var(--red); }
+    .data-val.yellow{ color: var(--yellow); }
+    .data-val.blue  { color: var(--blue); }
+
+    /* ── Reversal Warning ─────────────────────────────────────────── */
+    .reversal-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .condition-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      transition: all 0.4s ease;
+    }
+    .condition-card.triggered {
+      border-color: var(--red);
+      background: var(--red-dim);
+      animation: flash 0.5s ease-in-out 3;
+    }
+    @keyframes flash {
+      0%,100% { opacity: 1; }
+      50%      { opacity: 0.6; }
+    }
+
+    .condition-name {
+      font-size: 12px; font-weight: 700;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .condition-status {
+      font-size: 18px; font-weight: 800;
+    }
+    .condition-status.ok      { color: var(--green); }
+    .condition-status.warning { color: var(--red); }
+    .condition-detail {
+      font-size: 10px; color: var(--text-muted);
+      margin-top: 4px; line-height: 1.4;
+    }
+
+    /* ── Alert Log ────────────────────────────────────────────────── */
+    .alert-log {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      max-height: 160px;
+      overflow-y: auto;
+    }
+    .alert-log::-webkit-scrollbar { width: 4px; }
+    .alert-log::-webkit-scrollbar-track { background: transparent; }
+    .alert-log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    .alert-item {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      display: flex; gap: 10px; align-items: flex-start;
+    }
+    .alert-item:last-child { border-bottom: none; }
+    .alert-time { color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
+    .alert-msg  { color: var(--red); }
+    .alert-empty {
+      padding: 20px 14px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    /* ── Options Suggestion ───────────────────────────────────────── */
+    .options-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    }
+    .option-box {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .option-box.call { border-top: 3px solid var(--green); }
+    .option-box.put  { border-top: 3px solid var(--red); }
+    .option-type {
+      font-size: 10px; font-weight: 800;
+      text-transform: uppercase; letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+    .option-type.call { color: var(--green); }
+    .option-type.put  { color: var(--red); }
+    .option-symbol {
+      font-size: 11px; color: var(--text-muted);
+      margin-bottom: 10px; font-family: monospace;
+    }
+    .option-stat { display: flex; justify-content: space-between; margin-bottom: 4px; }
+    .option-stat span:first-child { font-size: 11px; color: var(--text-muted); }
+    .option-stat span:last-child  { font-size: 12px; font-weight: 700; color: var(--text); }
+
+    /* ── Trend Indicator ──────────────────────────────────────────── */
+    .trend-box {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+    }
+    .trend-label { font-size: 11px; color: var(--text-muted); flex: 1; }
+    .trend-val   { font-size: 13px; font-weight: 700; }
+    .trend-up    { color: var(--green); }
+    .trend-down  { color: var(--red); }
+    .trend-none  { color: var(--text-muted); }
+
+    /* ── Endpoint Health Row ──────────────────────────────────────── */
+    .endpoint-row {
+      display: flex; align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      gap: 12px;
+    }
+    .endpoint-row:last-child { border-bottom: none; }
+    .endpoint-dot {
+      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+    }
+    .endpoint-dot.up   { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .endpoint-dot.down { background: var(--red);   box-shadow: 0 0 6px var(--red); }
+    .endpoint-dot.loading { background: var(--yellow); animation: pulse 1s infinite; }
+    .endpoint-path { font-size: 12px; font-family: monospace; color: var(--blue); flex: 1; }
+    .endpoint-latency { font-size: 11px; color: var(--text-muted); }
+    .endpoint-status  { font-size: 11px; font-weight: 600; }
+    .endpoint-status.up   { color: var(--green); }
+    .endpoint-status.down { color: var(--red); }
+
+    /* ── PnL Display ──────────────────────────────────────────────── */
+    .pnl-display {
+      text-align: center; padding: 16px 0;
+    }
+    .pnl-number {
+      font-size: 36px; font-weight: 900;
+      letter-spacing: -1px; line-height: 1;
+    }
+    .pnl-number.positive { color: var(--green); }
+    .pnl-number.negative { color: var(--red); }
+    .pnl-number.neutral  { color: var(--text-muted); }
+    .pnl-label { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+
+    /* ── Portfolio Bar ────────────────────────────────────────────── */
+    .portfolio-bar {
+      background: var(--surface2);
+      border-radius: 8px;
+      height: 8px;
+      overflow: hidden;
+      margin: 12px 0 6px;
+    }
+    .portfolio-fill {
+      height: 100%;
+      border-radius: 8px;
+      background: linear-gradient(90deg, var(--green), #00e676aa);
+      transition: width 0.6s ease;
+    }
+    .portfolio-labels {
+      display: flex; justify-content: space-between;
+      font-size: 10px; color: var(--text-muted);
+    }
+
+    /* ── Pair Trade ───────────────────────────────────────────────── */
+    .pair-legs {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+      margin-bottom: 12px;
+    }
+    .pair-leg {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+    }
+    .pair-leg-type { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+    .pair-leg-type.xom { color: var(--green); }
+    .pair-leg-type.xle { color: var(--red); }
+    .pair-leg-val  { font-size: 20px; font-weight: 800; color: var(--text); }
+    .pair-leg-sub  { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+    /* ── Last Updated ─────────────────────────────────────────────── */
+    .last-updated {
+      text-align: center;
+      font-size: 11px; color: var(--text-muted);
+      margin-top: 8px;
+    }
+
+    /* ── Loading Skeleton ─────────────────────────────────────────── */
+    .skeleton {
+      background: linear-gradient(90deg, var(--surface2) 25%, var(--border) 50%, var(--surface2) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 4px;
+      height: 14px;
+    }
+    @keyframes shimmer {
+      0%   { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* ── Error State ──────────────────────────────────────────────── */
+    .error-state {
+      text-align: center; padding: 20px;
+      color: var(--red); font-size: 12px;
+    }
+
+    /* ── Scrollbar Global ─────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  HEADER                                                         -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<header>
+  <div class="header-left">
+    <div class="logo">T</div>
+    <div class="header-title">
+      <h1>TSLA Scalper Bot</h1>
+      <p>Live System Dashboard — V10.2</p>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="refresh-timer">
+      <div class="timer-ring">
+        <svg width="20" height="20" viewBox="0 0 20 20">
+          <circle cx="10" cy="10" r="8"/>
+          <circle class="progress" id="timerCircle" cx="10" cy="10" r="8"/>
+        </svg>
+      </div>
+      <span id="timerLabel">5s</span>
+    </div>
+    <div class="live-badge">
+      <div class="live-dot"></div>
+      LIVE
+    </div>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  MAIN CONTENT                                                   -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="container">
+
+  <!-- ── Top Stats ──────────────────────────────────────────────── -->
+  <div class="section-title">📊 نظرة عامة</div>
+  <div class="stats-row">
+    <div class="stat-card" style="--accent: var(--blue)">
+      <div class="stat-label">سعر TSLA</div>
+      <div class="stat-value" id="tslaPriceTop">—</div>
+      <div class="stat-sub" id="tslaPriceSub">جاري التحديث...</div>
+    </div>
+    <div class="stat-card" style="--accent: var(--green)">
+      <div class="stat-label">المحفظة</div>
+      <div class="stat-value" id="portfolioTop">—</div>
+      <div class="stat-sub" id="portfolioSub">—</div>
+    </div>
+    <div class="stat-card" style="--accent: var(--yellow)">
+      <div class="stat-label">P&amp;L اليوم</div>
+      <div class="stat-value" id="dailyPnlTop">$0</div>
+      <div class="stat-sub" id="dailyPnlSub">—</div>
+    </div>
+    <div class="stat-card" style="--accent: var(--purple)">
+      <div class="stat-label">تحذيرات اليوم</div>
+      <div class="stat-value" id="warningCountTop">0</div>
+      <div class="stat-sub" id="warningCountSub">Reversal Warnings</div>
+    </div>
+    <div class="stat-card" style="--accent: var(--green)">
+      <div class="stat-label">صفقات اليوم</div>
+      <div class="stat-value" id="tradesTodayTop">0</div>
+      <div class="stat-sub" id="tradesTodaySub">W: 0 | L: 0</div>
+    </div>
+  </div>
+
+  <!-- ── Main Grid ──────────────────────────────────────────────── -->
+  <div class="section-title">🚨 نظام تحذير الانعكاس (TSLA 5M)</div>
+  <div class="main-grid">
+
+    <!-- Reversal Warning Card -->
+    <div class="card full-width">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="card-icon" style="background:#ff444420; color:var(--red)">⚠️</div>
+          Reversal Warning Monitor
+        </div>
+        <div id="reversalBadge" class="badge badge-green">✅ نشط — لا تحذيرات</div>
+      </div>
+      <div class="card-body">
+        <div class="reversal-grid">
+          <div class="condition-card" id="cond_bearish">
+            <div class="condition-name">📉 Bearish Divergence</div>
+            <div class="condition-status ok" id="cond_bearish_status">—</div>
+            <div class="condition-detail" id="cond_bearish_detail">RSI يهبط بينما السعر يرتفع</div>
+          </div>
+          <div class="condition-card" id="cond_trend">
+            <div class="condition-name">📊 Trend Breakdown</div>
+            <div class="condition-status ok" id="cond_trend_status">—</div>
+            <div class="condition-detail" id="cond_trend_detail">كسر EMA9 + MACD سلبي</div>
+          </div>
+          <div class="condition-card" id="cond_rejection">
+            <div class="condition-name">🕯️ Price Rejection</div>
+            <div class="condition-status ok" id="cond_rejection_status">—</div>
+            <div class="condition-detail" id="cond_rejection_detail">ذيل علوي طويل / Shooting Star</div>
+          </div>
+          <div class="condition-card" id="cond_volume">
+            <div class="condition-name">📦 Volume Exhaustion</div>
+            <div class="condition-status ok" id="cond_volume_status">—</div>
+            <div class="condition-detail" id="cond_volume_detail">ارتفاع على حجم متراجع + OBV مسطح</div>
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+          <span style="font-size:12px; color:var(--text-muted); font-weight:700; text-transform:uppercase; letter-spacing:1px;">سجل التحذيرات اليوم</span>
+          <span class="badge badge-purple" id="alertCountBadge">0 تحذيرات</span>
+        </div>
+        <div class="alert-log" id="alertLog">
+          <div class="alert-empty">✅ لا توجد تحذيرات اليوم</div>
+        </div>
+        <div class="last-updated">آخر فحص: <span id="lastCheck">—</span></div>
+      </div>
+    </div>
+
+    <!-- V8 Scalper Status -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="card-icon" style="background:#4fc3f720; color:var(--blue)">🤖</div>
+          V8 Scalper Engine
+        </div>
+        <div id="v8Badge" class="badge badge-gray">—</div>
+      </div>
+      <div class="card-body">
+        <div class="trend-box">
+          <span class="trend-label">📈 Trend 15M</span>
+          <span class="trend-val trend-none" id="trend15m">—</span>
+        </div>
+        <div class="trend-box">
+          <span class="trend-label">📊 Trend 5M</span>
+          <span class="trend-val trend-none" id="trend5m">—</span>
+        </div>
+        <div class="trend-box">
+          <span class="trend-label">⚡ Trend 1M</span>
+          <span class="trend-val trend-none" id="trend1m">—</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">💰 VWAP</span>
+          <span class="data-val blue" id="vwap">—</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">📊 OR High / Low</span>
+          <span class="data-val" id="orRange">—</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">📅 PDH / PDL</span>
+          <span class="data-val" id="pdRange">—</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">⏸️ Paused Until</span>
+          <span class="data-val" id="pausedUntil">—</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">🚫 Stopped For Day</span>
+          <span class="data-val" id="stoppedDay">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manual ITM Status -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="card-icon" style="background:#00e67620; color:var(--green)">🎯</div>
+          Manual ITM Trade
+        </div>
+        <div id="manualBadge" class="badge badge-gray">—</div>
+      </div>
+      <div class="card-body">
+        <div class="pnl-display">
+          <div class="pnl-number neutral" id="manualPnl">$0.00</div>
+          <div class="pnl-label" id="manualPnlPct">P&amp;L — لا صفقة مفتوحة</div>
+        </div>
+        <div class="data-row">
+          <span class="data-key">🕐 وقت ET</span>
+          <span class="data-val blue" id="etTime">—</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">📈 سعر TSLA</span>
+          <span class="data-val" id="tslaPriceManual">—</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">📋 الصفقة المفتوحة</span>
+          <span class="data-val" id="openPosition">لا يوجد</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">✅ آخر نتيجة</span>
+          <span class="data-val" id="lastResult">—</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">🏪 ساعات التداول</span>
+          <span class="data-val" id="tradingHours">—</span>
+        </div>
+
+        <div style="margin-top:14px;">
+          <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px; font-weight:700; text-transform:uppercase; letter-spacing:1px;">العقود المقترحة</div>
+          <div class="options-grid">
+            <div class="option-box call">
+              <div class="option-type call">CALL ↑</div>
+              <div class="option-symbol" id="callSymbol">—</div>
+              <div class="option-stat"><span>Strike</span><span id="callStrike">—</span></div>
+              <div class="option-stat"><span>Mid</span><span id="callMid">—</span></div>
+              <div class="option-stat"><span>Delta</span><span id="callDelta">—</span></div>
+            </div>
+            <div class="option-box put">
+              <div class="option-type put">PUT ↓</div>
+              <div class="option-symbol" id="putSymbol">—</div>
+              <div class="option-stat"><span>Strike</span><span id="putStrike">—</span></div>
+              <div class="option-stat"><span>Mid</span><span id="putMid">—</span></div>
+              <div class="option-stat"><span>Delta</span><span id="putDelta">—</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pair Trade Status -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="card-icon" style="background:#ce93d820; color:var(--purple)">⚖️</div>
+          Pair Trade (XOM + XLE)
+        </div>
+        <div id="pairBadge" class="badge badge-gray">—</div>
+      </div>
+      <div class="card-body">
+        <div class="pair-legs">
+          <div class="pair-leg">
+            <div class="pair-leg-type xom">XOM CALL ×2</div>
+            <div class="pair-leg-val" id="xomVal">$0</div>
+            <div class="pair-leg-sub">Long Energy</div>
+          </div>
+          <div class="pair-leg">
+            <div class="pair-leg-type xle">XLE PUT ×4</div>
+            <div class="pair-leg-val" id="xleVal">$0</div>
+            <div class="pair-leg-sub">Short ETF Hedge</div>
+          </div>
+        </div>
+        <div class="data-row">
+          <span class="data-key">💵 التكلفة الإجمالية</span>
+          <span class="data-val" id="pairCost">$0.00</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">📈 القيمة الحالية</span>
+          <span class="data-val" id="pairCurrentVal">$0.00</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">🎯 الهدف (+30%)</span>
+          <span class="data-val green" id="pairTarget">$0.00</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">💰 P&amp;L</span>
+          <span class="data-val" id="pairPnl">$0.00 (0%)</span>
+        </div>
+
+        <!-- Progress bar toward +30% -->
+        <div style="margin-top:14px;">
+          <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-bottom:6px;">
+            <span>تقدم نحو الهدف +30%</span>
+            <span id="pairProgressPct">0%</span>
+          </div>
+          <div class="portfolio-bar">
+            <div class="portfolio-fill" id="pairProgressBar" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PE Engine Status -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="card-icon" style="background:#ffc10720; color:var(--yellow)">🔬</div>
+          Precision Entry Engine (PE)
+        </div>
+        <div id="peBadge" class="badge badge-gray">—</div>
+      </div>
+      <div class="card-body">
+        <div class="data-row">
+          <span class="data-key">📡 Signal Active</span>
+          <span class="data-val" id="peSignalActive">—</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">📊 Direction</span>
+          <span class="data-val" id="peDirection">—</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">💲 Signal Price</span>
+          <span class="data-val" id="peSignalPrice">—</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">⏰ Signal Time</span>
+          <span class="data-val" id="peSignalTime">—</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">🌊 CheddarFlow %</span>
+          <span class="data-val" id="peCheddar">—</span>
+        </div>
+        <div class="data-row">
+          <span class="data-key">📋 Signal Reasons</span>
+          <span class="data-val" id="peReasons" style="font-size:11px; text-align:left; max-width:160px; word-break:break-word;">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Endpoint Health -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="card-icon" style="background:#4fc3f720; color:var(--blue)">🌐</div>
+          Endpoint Health
+        </div>
+        <span id="endpointSummary" class="badge badge-gray">—</span>
+      </div>
+      <div class="card-body">
+        <div id="endpointList">
+          <!-- populated by JS -->
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /main-grid -->
+
+  <div class="last-updated" style="margin-top:20px;">
+    آخر تحديث شامل: <span id="globalLastUpdate">—</span>
+  </div>
+
+</div><!-- /container -->
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  JAVASCRIPT                                                     -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<script>
+  const BASE = 'https://tsla-scalper-bot.onrender.com';
+  const REFRESH_INTERVAL = 5; // seconds
+
+  // ── Timer ────────────────────────────────────────────────────────
+  let timerCount = REFRESH_INTERVAL;
+  const timerCircle = document.getElementById('timerCircle');
+  const timerLabel  = document.getElementById('timerLabel');
+  const CIRCUMFERENCE = 2 * Math.PI * 8; // r=8 → 50.27
+
+  function updateTimer() {
+    timerCount--;
+    if (timerCount < 0) timerCount = REFRESH_INTERVAL;
+    timerLabel.textContent = timerCount + 's';
+    const offset = CIRCUMFERENCE * (1 - timerCount / REFRESH_INTERVAL);
+    timerCircle.style.strokeDashoffset = offset;
+    if (timerCount === 0) fetchAll();
+  }
+  setInterval(updateTimer, 1000);
+
+  // ── Helpers ──────────────────────────────────────────────────────
+  function fmt$(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    const v = parseFloat(n);
+    return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+  function fmtPrice(n) {
+    if (!n || isNaN(n)) return '—';
+    return '$' + parseFloat(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+  function fmtPct(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    return (parseFloat(n) >= 0 ? '+' : '') + parseFloat(n).toFixed(2) + '%';
+  }
+  function el(id) { return document.getElementById(id); }
+  function setText(id, val) { const e = el(id); if (e) e.textContent = val; }
+  function setClass(id, cls) { const e = el(id); if (e) e.className = cls; }
+  function setHTML(id, html) { const e = el(id); if (e) e.innerHTML = html; }
+
+  function colorPnl(id, val) {
+    const e = el(id);
+    if (!e) return;
+    const v = parseFloat(val);
+    e.className = 'pnl-number ' + (v > 0 ? 'positive' : v < 0 ? 'negative' : 'neutral');
+  }
+
+  function trendClass(t) {
+    if (!t) return 'trend-none';
+    return t.toLowerCase().includes('bull') || t === 'up' ? 'trend-up' : 'trend-down';
+  }
+  function trendEmoji(t) {
+    if (!t) return '—';
+    const u = t.toLowerCase();
+    if (u.includes('bull') || u === 'up')   return '📈 ' + t.toUpperCase();
+    if (u.includes('bear') || u === 'down') return '📉 ' + t.toUpperCase();
+    return t.toUpperCase();
+  }
+
+  // ── Fetch with latency ───────────────────────────────────────────
+  async function fetchEndpoint(path) {
+    const t0 = Date.now();
+    try {
+      const r = await fetch(BASE + path, { cache: 'no-store' });
+      const latency = Date.now() - t0;
+      if (!r.ok) return { ok: false, latency, status: r.status };
+      const data = await r.json();
+      return { ok: true, latency, data };
+    } catch(e) {
+      return { ok: false, latency: Date.now() - t0, error: e.message };
+    }
+  }
+
+  // ── Endpoint Health ──────────────────────────────────────────────
+  const ENDPOINTS = [
+    { path: '/reversal/status', label: 'Reversal Warning' },
+    { path: '/manual/status',   label: 'Manual ITM' },
+    { path: '/v8/status',       label: 'V8 Scalper' },
+    { path: '/pe/status',       label: 'Precision Entry' },
+    { path: '/pair/status',     label: 'Pair Trade' },
+    { path: '/pair/scan',       label: 'Pair Scan' },
+    { path: '/journal/entries', label: 'Journal' },
+  ];
+
+  let endpointStates = {};
+
+  function renderEndpointList() {
+    const list = el('endpointList');
+    if (!list) return;
+    let html = '';
+    let upCount = 0;
+    ENDPOINTS.forEach(ep => {
+      const s = endpointStates[ep.path] || { status: 'loading' };
+      const isUp = s.status === 'up';
+      const isLoading = s.status === 'loading';
+      if (isUp) upCount++;
+      html += `
+        <div class="endpoint-row">
+          <div class="endpoint-dot ${s.status}"></div>
+          <span class="endpoint-path">${ep.path}</span>
+          <span class="endpoint-latency">${s.latency ? s.latency + 'ms' : ''}</span>
+          <span class="endpoint-status ${s.status}">${isLoading ? '...' : isUp ? 'UP' : 'DOWN'}</span>
+        </div>`;
+    });
+    list.innerHTML = html;
+    const total = ENDPOINTS.length;
+    const badge = el('endpointSummary');
+    if (badge) {
+      badge.textContent = upCount + '/' + total + ' UP';
+      badge.className = 'badge ' + (upCount === total ? 'badge-green' : upCount > 0 ? 'badge-yellow' : 'badge-red');
+    }
+  }
+
+  // ── Update Reversal Warning ──────────────────────────────────────
+  function updateReversal(data) {
+    const count = data.alert_count || 0;
+    const alerts = data.alerts_today || [];
+    const active = data.active;
+    const lastCheck = data.last_check;
+
+    // Top stat
+    setText('warningCountTop', count);
+
+    // Badge
+    const badge = el('reversalBadge');
+    if (badge) {
+      if (count > 0) {
+        badge.textContent = '🚨 ' + count + ' تحذير نشط!';
+        badge.className = 'badge badge-red';
+      } else {
+        badge.textContent = '✅ نشط — لا تحذيرات';
+        badge.className = 'badge badge-green';
+      }
+    }
+
+    // Alert count badge
+    setText('alertCountBadge', count + ' تحذيرات');
+
+    // Last check
+    setText('lastCheck', lastCheck ? new Date(lastCheck).toLocaleTimeString('ar-SA') : 'لم يتم الفحص بعد');
+
+    // Condition cards — reset all to OK
+    const conditions = ['bearish','trend','rejection','volume'];
+    const condMap = {
+      'BEARISH_DIVERGENCE': 'bearish',
+      'TREND_BREAKDOWN':    'trend',
+      'PRICE_REJECTION':    'rejection',
+      'VOLUME_EXHAUSTION':  'volume',
+    };
+
+    conditions.forEach(c => {
+      const card = el('cond_' + c);
+      const statusEl = el('cond_' + c + '_status');
+      if (card) card.classList.remove('triggered');
+      if (statusEl) { statusEl.textContent = '✅ OK'; statusEl.className = 'condition-status ok'; }
+    });
+
+    // Mark triggered conditions
+    alerts.forEach(a => {
+      const key = condMap[a.condition];
+      if (!key) return;
+      const card = el('cond_' + key);
+      const statusEl = el('cond_' + key + '_status');
+      const detailEl = el('cond_' + key + '_detail');
+      if (card) card.classList.add('triggered');
+      if (statusEl) { statusEl.textContent = '🚨 TRIGGERED'; statusEl.className = 'condition-status warning'; }
+      if (detailEl && a.detail) detailEl.textContent = a.detail;
+    });
+
+    // Alert log
+    const logEl = el('alertLog');
+    if (logEl) {
+      if (alerts.length === 0) {
+        logEl.innerHTML = '<div class="alert-empty">✅ لا توجد تحذيرات اليوم</div>';
+      } else {
+        logEl.innerHTML = alerts.map(a => `
+          <div class="alert-item">
+            <span class="alert-time">${a.time || '—'}</span>
+            <span class="alert-msg">🚨 ${a.name || a.condition} @ ${fmtPrice(a.price)}</span>
+          </div>`).join('');
+      }
+    }
+  }
+
+  // ── Update Manual Status ─────────────────────────────────────────
+  function updateManual(data) {
+    setText('etTime', data.et_time || '—');
+    setText('tslaPriceManual', fmtPrice(data.tsla_price));
+    setText('tslaPriceTop', fmtPrice(data.tsla_price));
+    setText('tslaPriceSub', data.is_trading_hours ? '🟢 ساعات التداول' : '🔴 خارج التداول');
+
+    const hasPos = data.has_position;
+    const pnl = data.pnl_dollar || 0;
+    const pnlPct = data.pnl_pct || 0;
+
+    const badge = el('manualBadge');
+    if (badge) {
+      badge.textContent = hasPos ? '📊 صفقة مفتوحة' : '⏳ انتظار';
+      badge.className = 'badge ' + (hasPos ? 'badge-yellow' : 'badge-gray');
+    }
+
+    setText('manualPnl', hasPos ? fmt$(pnl) : '$0.00');
+    colorPnl('manualPnl', hasPos ? pnl : 0);
+    setText('manualPnlPct', hasPos ? fmtPct(pnlPct) + ' من الدخول' : 'لا صفقة مفتوحة');
+
+    if (data.position) {
+      const pos = data.position;
+      setText('openPosition', (pos.option_type || '').toUpperCase() + ' ' + (pos.symbol || '') + ' ×' + (pos.qty || 1));
+    } else {
+      setText('openPosition', 'لا يوجد');
+    }
+
+    const lastPnl = data.last_pnl;
+    const lastReason = data.last_reason;
+    if (lastPnl && lastPnl !== 0) {
+      setText('lastResult', fmt$(lastPnl) + (lastReason ? ' (' + lastReason + ')' : ''));
+      const e = el('lastResult');
+      if (e) e.className = 'data-val ' + (lastPnl > 0 ? 'green' : 'red');
+    } else {
+      setText('lastResult', '—');
+    }
+
+    setText('tradingHours', data.is_trading_hours ? '🟢 نشط' : '🔴 مغلق');
+
+    // Suggested contracts
+    const sc = data.suggested_call || {};
+    const sp = data.suggested_put  || {};
+    setText('callSymbol', sc.symbol || '—');
+    setText('callStrike', sc.strike ? '$' + sc.strike : '—');
+    setText('callMid',    sc.mid    ? '$' + parseFloat(sc.mid).toFixed(2) : '—');
+    setText('callDelta',  sc.delta  ? parseFloat(sc.delta).toFixed(2) : '—');
+    setText('putSymbol',  sp.symbol || '—');
+    setText('putStrike',  sp.strike ? '$' + sp.strike : '—');
+    setText('putMid',     sp.mid    ? '$' + parseFloat(sp.mid).toFixed(2) : '—');
+    setText('putDelta',   sp.delta  ? parseFloat(sp.delta).toFixed(2) : '—');
+  }
+
+  // ── Update V8 Status ─────────────────────────────────────────────
+  function updateV8(data) {
+    const running = data.running;
+    const stopped = data.stopped_for_day || data.stopped_permanent;
+
+    const badge = el('v8Badge');
+    if (badge) {
+      if (stopped) { badge.textContent = '🛑 متوقف'; badge.className = 'badge badge-red'; }
+      else if (running) { badge.textContent = '🚀 يعمل'; badge.className = 'badge badge-green'; }
+      else { badge.textContent = '⏸️ متوقف مؤقتاً'; badge.className = 'badge badge-yellow'; }
+    }
+
+    // Trends
+    const t15 = el('trend15m');
+    const t5  = el('trend5m');
+    const t1  = el('trend1m');
+    if (t15) { t15.textContent = trendEmoji(data.trend_15m); t15.className = 'trend-val ' + trendClass(data.trend_15m); }
+    if (t5)  { t5.textContent  = trendEmoji(data.trend_5m);  t5.className  = 'trend-val ' + trendClass(data.trend_5m); }
+    if (t1)  { t1.textContent  = trendEmoji(data.trend);     t1.className  = 'trend-val ' + trendClass(data.trend); }
+
+    setText('vwap', fmtPrice(data.vwap));
+    setText('orRange', fmtPrice(data.opening_range_high) + ' / ' + fmtPrice(data.opening_range_low));
+    setText('pdRange',  fmtPrice(data.pdh) + ' / ' + fmtPrice(data.pdl));
+
+    const paused = data.paused_until || 0;
+    if (paused > Date.now() / 1000) {
+      const remaining = Math.round(paused - Date.now() / 1000);
+      setText('pausedUntil', remaining + 'ث متبقية');
+      const e = el('pausedUntil'); if (e) e.className = 'data-val yellow';
+    } else {
+      setText('pausedUntil', 'لا');
+      const e = el('pausedUntil'); if (e) e.className = 'data-val green';
+    }
+
+    const stoppedEl = el('stoppedDay');
+    if (stoppedEl) {
+      stoppedEl.textContent = stopped ? 'نعم 🛑' : 'لا ✅';
+      stoppedEl.className = 'data-val ' + (stopped ? 'red' : 'green');
+    }
+
+    // Portfolio
+    const pStart = data.portfolio_start || 0;
+    const pCur   = data.portfolio_current || 0;
+    const dailyPnl = data.daily_pnl || 0;
+    setText('portfolioTop', '$' + Math.round(pCur).toLocaleString('en-US'));
+    setText('portfolioSub', 'بداية: $' + Math.round(pStart).toLocaleString('en-US'));
+
+    const dpEl = el('dailyPnlTop');
+    if (dpEl) {
+      dpEl.textContent = fmt$(dailyPnl);
+      dpEl.className = 'stat-value ' + (dailyPnl > 0 ? '' : dailyPnl < 0 ? '' : '');
+      dpEl.style.color = dailyPnl > 0 ? 'var(--green)' : dailyPnl < 0 ? 'var(--red)' : 'var(--text-muted)';
+    }
+    setText('dailyPnlSub', 'Total: ' + fmt$(data.total_pnl || 0));
+
+    // Trades
+    setText('tradesTodayTop', data.trades_today || 0);
+    setText('tradesTodaySub', 'W: ' + (data.wins || 0) + ' | L: ' + (data.losses || 0));
+  }
+
+  // ── Update Pair Status ───────────────────────────────────────────
+  function updatePair(data) {
+    const hasPos = data.has_position;
+    const pnlD   = data.pnl_dollar || 0;
+    const pnlP   = data.pnl_pct    || 0;
+    const cost   = data.total_cost  || 0;
+    const curVal = data.current_value || 0;
+    const target = data.target_value  || 0;
+
+    const badge = el('pairBadge');
+    if (badge) {
+      badge.textContent = hasPos ? '📊 صفقة مفتوحة' : '⏳ لا صفقة';
+      badge.className = 'badge ' + (hasPos ? 'badge-purple' : 'badge-gray');
+    }
+
+    setText('pairCost',       fmtPrice(cost));
+    setText('pairCurrentVal', fmtPrice(curVal));
+    setText('pairTarget',     fmtPrice(target));
+
+    const pnlEl = el('pairPnl');
+    if (pnlEl) {
+      pnlEl.textContent = fmt$(pnlD) + ' (' + fmtPct(pnlP) + ')';
+      pnlEl.className = 'data-val ' + (pnlD > 0 ? 'green' : pnlD < 0 ? 'red' : '');
+    }
+
+    // XOM / XLE placeholder values
+    setText('xomVal', fmtPrice(cost * 0.33));
+    setText('xleVal', fmtPrice(cost * 0.67));
+
+    // Progress bar toward +30%
+    const progress = Math.min(100, Math.max(0, (pnlP / 30) * 100));
+    const bar = el('pairProgressBar');
+    if (bar) bar.style.width = progress + '%';
+    setText('pairProgressPct', progress.toFixed(1) + '%');
+  }
+
+  // ── Update PE Status ─────────────────────────────────────────────
+  function updatePE(data) {
+    const running = data.running;
+    const signalActive = data.signal_active;
+
+    const badge = el('peBadge');
+    if (badge) {
+      if (signalActive) { badge.textContent = '⚡ إشارة نشطة!'; badge.className = 'badge badge-yellow'; }
+      else if (running) { badge.textContent = '🔬 يراقب';       badge.className = 'badge badge-blue'; }
+      else              { badge.textContent = '⏸️ متوقف';       badge.className = 'badge badge-gray'; }
+    }
+
+    const saEl = el('peSignalActive');
+    if (saEl) {
+      saEl.textContent = signalActive ? '✅ نعم' : '❌ لا';
+      saEl.className = 'data-val ' + (signalActive ? 'green' : 'red');
+    }
+
+    const dir = data.signal_direction || '';
+    const dirEl = el('peDirection');
+    if (dirEl) {
+      dirEl.textContent = dir ? (dir.toUpperCase() === 'CALL' ? '📈 CALL' : '📉 PUT') : '—';
+      dirEl.className = 'data-val ' + (dir.toUpperCase() === 'CALL' ? 'green' : dir ? 'red' : '');
+    }
+
+    setText('peSignalPrice', fmtPrice(data.signal_price));
+    setText('peSignalTime',  data.signal_time || '—');
+
+    const ched = data.cheddar_call_pct;
+    const chedEl = el('peCheddar');
+    if (chedEl) {
+      chedEl.textContent = ched !== null && ched !== undefined ? ched + '%' : '—';
+      if (ched !== null && ched !== undefined) {
+        chedEl.className = 'data-val ' + (ched > 60 ? 'green' : ched < 40 ? 'red' : 'yellow');
+      }
+    }
+
+    const reasons = data.signal_reasons || [];
+    setText('peReasons', reasons.length > 0 ? reasons.join(', ') : '—');
+  }
+
+  // ── Main Fetch ───────────────────────────────────────────────────
+  async function fetchAll() {
+    const now = new Date().toLocaleTimeString('ar-SA');
+    setText('globalLastUpdate', now);
+
+    // Fetch all in parallel
+    const [reversalRes, manualRes, v8Res, peRes, pairRes] = await Promise.all([
+      fetchEndpoint('/reversal/status'),
+      fetchEndpoint('/manual/status'),
+      fetchEndpoint('/v8/status'),
+      fetchEndpoint('/pe/status'),
+      fetchEndpoint('/pair/status'),
+    ]);
+
+    // Update endpoint health states
+    endpointStates['/reversal/status'] = { status: reversalRes.ok ? 'up' : 'down', latency: reversalRes.latency };
+    endpointStates['/manual/status']   = { status: manualRes.ok   ? 'up' : 'down', latency: manualRes.latency };
+    endpointStates['/v8/status']       = { status: v8Res.ok       ? 'up' : 'down', latency: v8Res.latency };
+    endpointStates['/pe/status']       = { status: peRes.ok       ? 'up' : 'down', latency: peRes.latency };
+    endpointStates['/pair/status']     = { status: pairRes.ok     ? 'up' : 'down', latency: pairRes.latency };
+
+    // Fetch extra endpoints for health only
+    const [pairScanRes, journalRes] = await Promise.all([
+      fetchEndpoint('/pair/scan'),
+      fetchEndpoint('/journal/entries'),
+    ]);
+    endpointStates['/pair/scan']       = { status: pairScanRes.ok ? 'up' : 'down', latency: pairScanRes.latency };
+    endpointStates['/journal/entries'] = { status: journalRes.ok  ? 'up' : 'down', latency: journalRes.latency };
+
+    renderEndpointList();
+
+    // Update cards
+    if (reversalRes.ok) updateReversal(reversalRes.data);
+    if (manualRes.ok)   updateManual(manualRes.data);
+    if (v8Res.ok)       updateV8(v8Res.data);
+    if (peRes.ok)       updatePE(peRes.data);
+    if (pairRes.ok)     updatePair(pairRes.data);
+  }
+
+  // ── Init ─────────────────────────────────────────────────────────
+  timerCircle.style.strokeDasharray = CIRCUMFERENCE;
+  timerCircle.style.strokeDashoffset = 0;
+
+  // Mark all endpoints as loading initially
+  ENDPOINTS.forEach(ep => { endpointStates[ep.path] = { status: 'loading' }; });
+  renderEndpointList();
+
+  // First fetch immediately
+  fetchAll();
+</script>
+</body>
+</html>

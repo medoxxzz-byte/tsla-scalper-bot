@@ -2639,6 +2639,19 @@ def pair_status():
         return jsonify({"ok": False, "error": str(e)})
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Reversal Warning Routes (V10.2)
+# ──────────────────────────────────────────────────────────────────────────────
+@app.route('/reversal/status', methods=['GET'])
+def reversal_warning_status():
+    """حالة نظام تحذير انعكاس TSLA 5M."""
+    try:
+        from options_scalper import get_reversal_warning_status
+        data = get_reversal_warning_status()
+        return jsonify({"ok": True, **data})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Startup
 # ──────────────────────────────────────────────────────────────────────────────
 _threads_started = False
@@ -2667,6 +2680,13 @@ def _start_background_threads():
     # V7.1: FlashAlpha GEX Direct API — always start
     threading.Thread(target=gex_morning_worker, daemon=True).start()
     logger.info("FlashAlpha GEX morning worker started (Direct API) ✅")
+    # V10.2: TSLA 5M Reversal Warning System
+    try:
+        from options_scalper import start_reversal_warning
+        start_reversal_warning()
+        logger.info("TSLA 5M Reversal Warning System started ✅ 🔔")
+    except Exception as _rw_err:
+        logger.warning(f"Reversal Warning System not started: {_rw_err}")
     # V8: Options Scalper — autonomous trading engine
     if _V8_AVAILABLE:
         if reversal_map.get("built"):

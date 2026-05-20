@@ -3298,3 +3298,262 @@ def get_pair_status():
         "shared_expiry":  pos.get("shared_expiry", ""),
         "tp_pct":         PAIR_TP_PCT * 100,
     }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TSLA 5M REVERSAL WARNING SYSTEM — V10.2
+# 4 Conditions: Bearish Divergence | Trend Break | Price Rejection | Volume Exhaustion
+# ══════════════════════════════════════════════════════════════════════════════
+
+_reversal_warn_state = {
+    "last_alert_time":   {},
+    "last_check":        None,
+    "last_candle_time":  None,
+    "alerts_today":      [],
+    "active":            False,
+}
+_reversal_warn_lock = threading.Lock()
+
+def _rw_ema(values, period):
+    if len(values) < period:
+        return None
+    k = 2.0 / (period + 1)
+    ema = sum(values[:period]) / period
+    for v in values[period:]:
+        ema = v * k + ema * (1 - k)
+    return ema
+
+def _rw_rsi(closes, period=14):
+    if len(closes) < period + 1:
+        return None
+    gains, losses = [], []
+    for i in range(1, len(closes)):
+        diff = closes[i] - closes[i-1]
+        gains.append(max(diff, 0))
+        losses.append(max(-diff, 0))
+    avg_gain = sum(gains[-period:]) / period
+    avg_loss = sum(losses[-period:]) / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return round(100 - (100 / (1 + rs)), 2)
+
+def _rw_macd_hist(closes, fast=12, slow=26, signal=9):
+    if len(closes) < slow + signal + 2:
+        return None, None
+    macd_series = []
+    for i in range(slow, len(closes) + 1):
+        ef = _rw_ema(closes[:i], fast)
+        es = _rw_ema(closes[:i], slow)
+        if ef and es:
+            macd_series.append(ef - es)
+    if len(macd_series) < signal + 2:
+        return None, None
+    sig_line = _rw_ema(macd_series, signal)
+    if sig_line is None:
+        return None, None
+    curr_hist = macd_series[-1] - sig_line
+    prev_hist = macd_series[-2] - _rw_ema(macd_series[:-1], signal) if len(macd_series) > signal else None
+    return curr_hist, prev_hist
+
+def _rw_bollinger(closes, period=20, std_dev=2):
+    if len(closes) < period:
+        return None, None, None
+    window = closes[-period:]
+    mid = sum(window) / period
+    variance = sum((x - mid) ** 2 for x in window) / period
+    std = variance ** 0.5
+    return round(mid + std_dev * std, 4), round(mid, 4), round(mid - std_dev * std, 4)
+
+def _rw_obv(closes, volumes):
+    if len(closes) < 2:
+        return []
+    obv = [0]
+    for i in range(1, len(closes)):
+        if closes[i] > closes[i-1]:
+            obv.append(obv[-1] + volumes[i])
+        elif closes[i] < closes[i-1]:
+            obv.append(obv[-1] - volumes[i])
+        else:
+            obv.append(obv[-1])
+    return obv
+
+def _rw_check_bearish_divergence(bars):
+    if len(bars) < 22:
+        return None
+    closes = [b["c"] for b in bars]
+    highs  = [b["h"] for b in bars]
+    curr_high = highs[-1]
+    prev_high = max(highs[-7:-1])
+    if curr_high <= prev_high:
+        return None
+    curr_rsi = _rw_rsi(closes[-17:], 14)
+    prev_rsi = _rw_rsi(closes[-22:-5], 14)
+    curr_hist, prev_hist = _rw_macd_hist(closes[-50:])
+    rsi_div  = (curr_rsi is not None and prev_rsi is not None and curr_rsi < prev_rsi - 1)
+    macd_div = (curr_hist is not None and prev_hist is not None and curr_hist < prev_hist)
+    if rsi_div or macd_div:
+        indicator = "RSI" if rsi_div else "MACD Histogram"
+        return {
+            "condition": "BEARISH_DIVERGENCE",
+            "name": "Bearish Divergence",
+            "detail": f"Bearish Divergence Detected - Momentum is Weakening! ({indicator} Lower High while Price Higher High)",
+            "price": closes[-1],
+        }
+    return None
+
+def _rw_check_trend_breakdown(bars):
+    if len(bars) < 12:
+        return None
+    closes = [b["c"] for b in bars]
+    ema9_curr = _rw_ema(closes, 9)
+    ema9_prev = _rw_ema(closes[:-1], 9)
+    if ema9_curr is None or ema9_prev is None:
+        return None
+    if closes[-2] >= ema9_prev and closes[-1] < ema9_curr:
+        return {
+            "condition": "TREND_BREAKDOWN",
+            "name": "Trend Break",
+            "detail": f"Trend Break - Candle Closed Below 9 EMA. Exit Calls! (Close: ${closes[-1]:.2f} | EMA9: ${ema9_curr:.2f})",
+            "price": closes[-1],
+        }
+    return None
+
+def _rw_check_price_rejection(bars):
+    if len(bars) < 22:
+        return None
+    closes = [b["c"] for b in bars]
+    highs  = [b["h"] for b in bars]
+    opens  = [b["o"] for b in bars]
+    upper_bb, _, _ = _rw_bollinger(closes, 20, 2)
+    if upper_bb is None:
+        return None
+    curr_high  = highs[-1]
+    curr_close = closes[-1]
+    curr_open  = opens[-1]
+    body = abs(curr_close - curr_open)
+    upper_wick = curr_high - max(curr_close, curr_open)
+    if body < 0.01:
+        return None
+    wick_ratio = upper_wick / body
+    near_upper_bb = curr_high >= upper_bb * 0.997
+    round_lvl = round(curr_high / 0.5) * 0.5
+    near_round = abs(curr_high - round_lvl) <= 0.35
+    if wick_ratio >= 2.0 and (near_upper_bb or near_round):
+        reason = "Upper Bollinger Band" if near_upper_bb else f"Round Number ${round_lvl:.2f}"
+        return {
+            "condition": "PRICE_REJECTION",
+            "name": "Price Rejection",
+            "detail": f"Institutional Selling / Price Rejection at {reason}! (Wick: {wick_ratio:.1f}x body)",
+            "price": curr_close,
+        }
+    return None
+
+def _rw_check_volume_exhaustion(bars):
+    if len(bars) < 25:
+        return None
+    closes  = [b["c"] for b in bars]
+    volumes = [b["v"] for b in bars]
+    if not (closes[-1] > closes[-2] > closes[-3]):
+        return None
+    vol_declining = volumes[-1] < volumes[-2] < volumes[-3]
+    avg_vol_20 = sum(volumes[-21:-1]) / 20
+    vol_below_avg = volumes[-1] < avg_vol_20 * 0.85 if avg_vol_20 > 0 else False
+    obv = _rw_obv(closes[-10:], volumes[-10:])
+    obv_flat = len(obv) >= 4 and (obv[-1] <= obv[-3])
+    if (vol_declining or vol_below_avg) and obv_flat:
+        reason = "Volume declining + OBV flattening" if vol_declining else "Volume below 20-avg + OBV flattening"
+        return {
+            "condition": "VOLUME_EXHAUSTION",
+            "name": "Volume Exhaustion",
+            "detail": f"Fake Move - Price Rising on Dying Volume/OBV! ({reason})",
+            "price": closes[-1],
+        }
+    return None
+
+def _rw_send_telegram(alert):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
+    msg = (
+        f"🚨 *[TSLA 5M WARNING]: {alert['name']}* triggered at price *${alert['price']:.2f}*\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"⚠️ {alert['detail']}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🛑 *Consider stopping Scalping/Exiting Positions immediately!* 🛑"
+    )
+    try:
+        r = http_requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+            timeout=8
+        )
+        return r.status_code == 200
+    except Exception as e:
+        logger.error(f"[ReversalWarn] Telegram error: {e}")
+        return False
+
+def _reversal_warning_loop():
+    logger.info("[ReversalWarn] 5M Reversal Warning Monitor started ✅")
+    with _reversal_warn_lock:
+        _reversal_warn_state["active"] = True
+    while True:
+        try:
+            now_et = _et_now()
+            market_open  = now_et.replace(hour=9,  minute=30, second=0, microsecond=0)
+            market_close = now_et.replace(hour=16, minute=0,  second=0, microsecond=0)
+            if not (market_open <= now_et <= market_close):
+                time.sleep(60)
+                continue
+            bars = get_tsla_bars(timeframe="5Min", limit=55)
+            if not bars or len(bars) < 25:
+                time.sleep(60)
+                continue
+            latest_t = bars[-1].get("t", "")
+            with _reversal_warn_lock:
+                if latest_t == _reversal_warn_state["last_candle_time"]:
+                    time.sleep(30)
+                    continue
+                _reversal_warn_state["last_candle_time"] = latest_t
+                _reversal_warn_state["last_check"] = now_et.strftime("%H:%M:%S ET")
+            checks = [
+                _rw_check_bearish_divergence(bars),
+                _rw_check_trend_breakdown(bars),
+                _rw_check_price_rejection(bars),
+                _rw_check_volume_exhaustion(bars),
+            ]
+            for alert in checks:
+                if alert is None:
+                    continue
+                cond = alert["condition"]
+                now_ts = time.time()
+                with _reversal_warn_lock:
+                    last_sent = _reversal_warn_state["last_alert_time"].get(cond, 0)
+                    if now_ts - last_sent < 300:
+                        continue
+                    _reversal_warn_state["last_alert_time"][cond] = now_ts
+                    _reversal_warn_state["alerts_today"].append({
+                        "time":      now_et.strftime("%H:%M ET"),
+                        "condition": cond,
+                        "name":      alert["name"],
+                        "price":     alert["price"],
+                        "detail":    alert["detail"],
+                    })
+                    _reversal_warn_state["alerts_today"] = _reversal_warn_state["alerts_today"][-20:]
+                logger.warning(f"[ReversalWarn] 🚨 {alert['name']} @ ${alert['price']:.2f}")
+                _rw_send_telegram(alert)
+        except Exception as e:
+            logger.error(f"[ReversalWarn] Loop error: {e}")
+        time.sleep(60)
+
+def start_reversal_warning():
+    t = threading.Thread(target=_reversal_warning_loop, daemon=True)
+    t.start()
+    return t
+
+def get_reversal_warning_status():
+    with _reversal_warn_lock:
+        return {
+            "active":       _reversal_warn_state["active"],
+            "last_check":   _reversal_warn_state["last_check"],
+            "alerts_today": list(_reversal_warn_state["alerts_today"]),
+            "alert_count":  len(_reversal_warn_state["alerts_today"]),
+        }

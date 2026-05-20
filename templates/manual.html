@@ -793,12 +793,19 @@ async function submitCheddar() {
 // PE Refresh
 // ══════════════════════════════════════════════════════
 async function refreshPE() {
+  // ── فقط لـ signal banner — GEX/Cheddar تُحدّث من refreshManual مباشرةً ──
   try {
     const r = await fetch('/pe/status');
     const d = await r.json();
-    document.getElementById('lvlGF').textContent = d.gex_levels && d.gex_levels.gamma_flip ? '$' + parseFloat(d.gex_levels.gamma_flip).toFixed(0) : '---';
-    document.getElementById('lvlCW').textContent = d.gex_levels && d.gex_levels.call_wall  ? '$' + parseFloat(d.gex_levels.call_wall).toFixed(0)  : '---';
-    document.getElementById('lvlPW').textContent = d.gex_levels && d.gex_levels.put_wall   ? '$' + parseFloat(d.gex_levels.put_wall).toFixed(0)   : '---';
+    // تحديث GEX من pe/status فقط إذا لم تكن manual/status أعطتها بعد
+    if (d.gex_levels && d.gex_levels.gamma_flip) {
+      const gfEl = document.getElementById('lvlGF');
+      if (gfEl.textContent === '---') {
+        gfEl.textContent = '$' + parseFloat(d.gex_levels.gamma_flip).toFixed(0);
+        document.getElementById('lvlCW').textContent = d.gex_levels.call_wall ? '$' + parseFloat(d.gex_levels.call_wall).toFixed(0) : '---';
+        document.getElementById('lvlPW').textContent = d.gex_levels.put_wall  ? '$' + parseFloat(d.gex_levels.put_wall).toFixed(0)  : '---';
+      }
+    }
     if (d.cheddar_call_pct != null && d.cheddar_call_pct !== lastCheddar) {
       lastCheddar = d.cheddar_call_pct;
       updateCheddarBar(d.cheddar_call_pct);
@@ -828,13 +835,24 @@ async function refreshManual() {
     if (d.tsla_price > 0) document.getElementById('tslaPrice').textContent = '$' + d.tsla_price.toFixed(2);
     document.getElementById('etTime').textContent = (d.et_time || '--') + ' ET';
 
-    try {
-      const rs = await fetch('/v8/status');
-      const ds = await rs.json();
+    // ── GEX levels من manual/status مباشرةً (حتى أثناء الصفقة) ──
+    if (d.gex_levels && d.gex_levels.gamma_flip) {
+      document.getElementById('lvlGF').textContent = '$' + parseFloat(d.gex_levels.gamma_flip).toFixed(0);
+      document.getElementById('lvlCW').textContent = d.gex_levels.call_wall ? '$' + parseFloat(d.gex_levels.call_wall).toFixed(0) : '---';
+      document.getElementById('lvlPW').textContent = d.gex_levels.put_wall  ? '$' + parseFloat(d.gex_levels.put_wall).toFixed(0)  : '---';
+    }
+    if (d.cheddar_call_pct != null && d.cheddar_call_pct !== lastCheddar) {
+      lastCheddar = d.cheddar_call_pct;
+      updateCheddarBar(d.cheddar_call_pct);
+      document.getElementById('cheddarInput').value = d.cheddar_call_pct.toFixed(0);
+    }
+
+    // ── VWAP/PDH/PDL بشكل مستقل لا يعطّل الواجهة ──
+    fetch('/v8/status').then(rs => rs.json()).then(ds => {
       document.getElementById('lvlVWAP').textContent = ds.vwap && ds.vwap > 0 ? '$' + parseFloat(ds.vwap).toFixed(2) : '---';
       document.getElementById('lvlPDH').textContent  = ds.pdh  && ds.pdh  > 0 ? '$' + parseFloat(ds.pdh).toFixed(2)  : '---';
       document.getElementById('lvlPDL').textContent  = ds.pdl  && ds.pdl  > 0 ? '$' + parseFloat(ds.pdl).toFixed(2)  : '---';
-    } catch(e) {}
+    }).catch(() => {});
 
     // Streak من السجل
     try {

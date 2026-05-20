@@ -2355,6 +2355,10 @@ def get_manual_status():
         except:
             pass
     
+    # ── إرجاع GEX levels وCheddarFlow دائماً (حتى أثناء الصفقة) ──
+    gex = _pe_state.get("gex_levels", {})
+    cheddar_pct = _pe_state.get("cheddar_call_pct")
+
     return {
         "tsla_price": tsla_price,
         "has_position": bool(pos),
@@ -2367,7 +2371,9 @@ def get_manual_status():
         "is_trading_hours": _is_scalp_window(),
         "et_time": _et_now().strftime("%I:%M:%S %p"),
         "last_reason": _manual_state.get("last_reason", ""),
-        "last_pnl": _manual_state.get("last_pnl", 0)
+        "last_pnl": _manual_state.get("last_pnl", 0),
+        "gex_levels": gex,
+        "cheddar_call_pct": cheddar_pct
     }
 
 

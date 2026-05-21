@@ -2518,6 +2518,60 @@ def journal_active_id():
     return jsonify({"active_id": _active_journal_id})
 
 
+@app.route('/journal/export/csv', methods=['GET'])
+def journal_export_csv():
+    """تصدير جميع الصفقات كملف CSV للتحليل."""
+    import csv
+    import io
+    from flask import Response
+    try:
+        from options_scalper import get_journal_entries
+        entries = get_journal_entries(limit=10000)
+        output = io.StringIO()
+        fieldnames = [
+            'id', 'created_at', 'status', 'direction', 'symbol', 'strike',
+            'qty', 'entry_price', 'exit_price', 'pnl_dollar', 'pnl_pct',
+            'exit_reason', 'closed_at', 'tsla_price', 'notes'
+        ]
+        writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
+        writer.writeheader()
+        for e in entries:
+            writer.writerow({k: e.get(k, '') for k in fieldnames})
+        csv_data = output.getvalue()
+        from datetime import datetime
+        filename = f"tsla_trades_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+        return Response(
+            csv_data,
+            mimetype='text/csv',
+            headers={'Content-Disposition': f'attachment; filename={filename}'}
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/journal/db/info', methods=['GET'])
+def journal_db_info():
+    """معلومات عن قاعدة بيانات Journal."""
+    try:
+        import os
+        from options_scalper import _JOURNAL_DB, get_journal_stats
+        db_path = _JOURNAL_DB
+        db_size = os.path.getsize(db_path) if os.path.exists(db_path) else 0
+        stats = get_journal_stats()
+        return jsonify({
+            'ok': True,
+            'db_path': db_path,
+            'db_size_kb': round(db_size / 1024, 2),
+            'persistent': db_path.startswith('/data'),
+            'total_trades': stats.get('total', 0),
+            'closed_trades': stats.get('closed', 0),
+            'win_rate': stats.get('win_rate', 0),
+            'total_pnl': stats.get('total_pnl', 0),
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # V9.4 — ITM Precision Entry Engine Routes
 # ──────────────────────────────────────────────────────────────────────────────

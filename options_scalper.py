@@ -2311,66 +2311,213 @@ def get_manual_status():
 
 
 # ═══════════════════════════════════════════════════════════════
-# V9.3 — TRADE JOURNAL (سجل الصفقات)
+# V9.3 — TRADE JOURNAL (سجل الصفقات) — V10.3: SQLite Persistent Storage
 # ═══════════════════════════════════════════════════════════════
 
 import json
 import os
+import sqlite3
+import threading as _journal_th
 
-# Render يحذف الملفات عند Deploy — نستخدم /tmp للاستمرارية خلال الجلسة
-# أو مجلد static/journal_images للصور (تُحفظ في الكود)
-_JOURNAL_FILE = os.environ.get("JOURNAL_FILE", "/tmp/trade_journal.json")
-_IMAGES_DIR   = os.path.join(os.path.dirname(__file__), "static", "journal_images")
-
-# تأكد من وجود المجلد
+# ── مسار قاعدة البيانات الدائمة ─────────────────────────────────────────────
+# الأولوية: JOURNAL_DB_PATH → /data/journal.db (Render Disk) → /tmp/journal.db
+_JOURNAL_DB = os.environ.get(
+    "JOURNAL_DB_PATH",
+    "/data/journal.db" if os.path.isdir("/data") else "/tmp/journal.db"
+)
+_IMAGES_DIR = os.path.join(os.path.dirname(__file__), "static", "journal_images")
 os.makedirs(_IMAGES_DIR, exist_ok=True)
+try:
+    os.makedirs(os.path.dirname(_JOURNAL_DB), exist_ok=True)
+except Exception:
+    pass
+
+_journal_db_lock = _journal_th.Lock()
+
+
+def _get_db_conn():
+    """فتح اتصال SQLite مع WAL للأداء."""
+    conn = sqlite3.connect(_JOURNAL_DB, check_same_thread=False, timeout=10)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
+def _init_journal_db():
+    """إنشاء جدول الصفقات إذا لم يكن موجوداً."""
+    with _journal_db_lock:
+        conn = _get_db_conn()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS trades (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at   TEXT,
+                status       TEXT DEFAULT 'open',
+                direction    TEXT,
+                symbol       TEXT,
+                strike       REAL,
+                qty          INTEGER,
+                entry_price  REAL,
+                exit_price   REAL,
+                pnl_dollar   REAL,
+                pnl_pct      REAL,
+                exit_reason  TEXT,
+                closed_at    TEXT,
+                tsla_price   REAL,
+                pre_trade    TEXT,
+                notes        TEXT,
+                image_file   TEXT,
+                extra_json   TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
+    logger.info(f"[Journal] ✅ SQLite DB ready: {_JOURNAL_DB}")
+
+
+# تهيئة قاعدة البيانات عند الاستيراد
+_init_journal_db()
+
+
+def _row_to_dict(row) -> dict:
+    """تحويل صف SQLite إلى dict متوافق مع الكود القديم."""
+    d = dict(row)
+    if d.get("extra_json"):
+        try:
+            d.update(json.loads(d["extra_json"]))
+        except Exception:
+            pass
+    d.pop("extra_json", None)
+    if d.get("pre_trade") and isinstance(d["pre_trade"], str):
+        try:
+            d["pre_trade"] = json.loads(d["pre_trade"])
+        except Exception:
+            pass
+    return d
 
 
 def _load_journal() -> list:
-    """تحميل سجل الصفقات من الملف."""
-    if os.path.exists(_JOURNAL_FILE):
-        try:
-            with open(_JOURNAL_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return []
-    return []
+    """تحميل جميع الصفقات من SQLite (للتوافق مع الكود القديم)."""
+    try:
+        with _journal_db_lock:
+            conn = _get_db_conn()
+            rows = conn.execute("SELECT * FROM trades ORDER BY id DESC").fetchall()
+            conn.close()
+        return [_row_to_dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"[Journal] Load error: {e}")
+        return []
 
 
 def _save_journal(entries: list):
-    """حفظ سجل الصفقات في الملف."""
-    try:
-        with open(_JOURNAL_FILE, "w", encoding="utf-8") as f:
-            json.dump(entries, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.error(f"[Journal] Save error: {e}")
+    """للتوافق فقط — SQLite يحفظ مباشرة في add/update."""
+    pass
 
 
 def add_journal_entry(entry: dict):
-    """إضافة صفقة جديدة للسجل."""
-    entries = _load_journal()
-    # ID تسلسلي
-    entry["id"] = (entries[-1]["id"] + 1) if entries else 1
-    entry["created_at"] = _et_now().strftime("%Y-%m-%d %H:%M:%S ET")
-    entries.insert(0, entry)  # أحدث أولاً
-    _save_journal(entries)
-    logger.info(f"[Journal] Entry #{entry['id']} saved")
-    return entry["id"]
+    """إضافة صفقة جديدة للسجل الدائم (SQLite)."""
+    try:
+        created_at = _et_now().strftime("%Y-%m-%d %H:%M:%S ET")
+        known = ["status", "direction", "symbol", "strike", "qty",
+                 "entry_price", "exit_price", "pnl_dollar", "pnl_pct",
+                 "exit_reason", "closed_at", "tsla_price", "notes", "image_file"]
+        pre_trade = json.dumps(entry.get("pre_trade", {}), ensure_ascii=False)
+        extra = {k: v for k, v in entry.items()
+                 if k not in known + ["pre_trade", "id", "created_at"]}
+        extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
+        with _journal_db_lock:
+            conn = _get_db_conn()
+            cur = conn.execute("""
+                INSERT INTO trades
+                (created_at, status, direction, symbol, strike, qty,
+                 entry_price, exit_price, pnl_dollar, pnl_pct,
+                 exit_reason, closed_at, tsla_price, pre_trade, notes, image_file, extra_json)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (
+                created_at,
+                entry.get("status", "open"),
+                entry.get("direction"),
+                entry.get("symbol"),
+                entry.get("strike"),
+                entry.get("qty"),
+                entry.get("entry_price"),
+                entry.get("exit_price"),
+                entry.get("pnl_dollar"),
+                entry.get("pnl_pct"),
+                entry.get("exit_reason"),
+                entry.get("closed_at"),
+                entry.get("tsla_price"),
+                pre_trade,
+                entry.get("notes"),
+                entry.get("image_file"),
+                extra_json,
+            ))
+            new_id = cur.lastrowid
+            conn.commit()
+            conn.close()
+        logger.info(f"[Journal] ✅ Entry #{new_id} saved permanently to SQLite")
+        return new_id
+    except Exception as e:
+        logger.error(f"[Journal] add_journal_entry error: {e}")
+        return -1
 
 
 def update_journal_entry(entry_id: int, updates: dict):
-    """تحديث صفقة موجودة (مثلاً إضافة نتيجة الخروج)."""
-    entries = _load_journal()
-    for e in entries:
-        if e.get("id") == entry_id:
-            e.update(updates)
-            break
-    _save_journal(entries)
+    """تحديث صفقة موجودة في SQLite (إضافة نتيجة الخروج)."""
+    try:
+        known_cols = ["status", "direction", "symbol", "strike", "qty",
+                      "entry_price", "exit_price", "pnl_dollar", "pnl_pct",
+                      "exit_reason", "closed_at", "tsla_price", "notes", "image_file"]
+        set_parts = []
+        vals = []
+        extra_updates = {}
+        for k, v in updates.items():
+            if k in known_cols:
+                set_parts.append(f"{k} = ?")
+                vals.append(v)
+            elif k not in ("id", "created_at", "pre_trade"):
+                extra_updates[k] = v
+        if extra_updates:
+            # دمج extra_json الحالي مع التحديثات الجديدة
+            with _journal_db_lock:
+                conn = _get_db_conn()
+                row = conn.execute("SELECT extra_json FROM trades WHERE id=?", (entry_id,)).fetchone()
+                conn.close()
+            existing = {}
+            if row and row["extra_json"]:
+                try:
+                    existing = json.loads(row["extra_json"])
+                except Exception:
+                    pass
+            existing.update(extra_updates)
+            set_parts.append("extra_json = ?")
+            vals.append(json.dumps(existing, ensure_ascii=False))
+        if not set_parts:
+            return
+        vals.append(entry_id)
+        with _journal_db_lock:
+            conn = _get_db_conn()
+            conn.execute(f"UPDATE trades SET {', '.join(set_parts)} WHERE id=?", vals)
+            conn.commit()
+            conn.close()
+        logger.info(f"[Journal] ✅ Entry #{entry_id} updated in SQLite")
+    except Exception as e:
+        logger.error(f"[Journal] update_journal_entry error: {e}")
 
 
-def get_journal_entries(limit: int = 50) -> list:
-    """إرجاع آخر N صفقة."""
-    return _load_journal()[:limit]
+def get_journal_entries(limit: int = 200) -> list:
+    """إرجاع آخر N صفقة من SQLite."""
+    try:
+        with _journal_db_lock:
+            conn = _get_db_conn()
+            rows = conn.execute(
+                "SELECT * FROM trades ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+            conn.close()
+        return [_row_to_dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"[Journal] get_journal_entries error: {e}")
+        return []
 
 
 def save_journal_image(entry_id: int, image_data: bytes, ext: str = "jpg") -> str:

@@ -1707,7 +1707,18 @@ def engine_loop():
             if not _is_0dte_day():
                 time.sleep(60)
                 continue
-            
+
+            # ── Always update price snapshot (even outside scalp window) ──
+            try:
+                snap = get_tsla_snapshot()
+                if snap and snap.get("price", 0) > 0:
+                    _state["current_price"] = snap["price"]
+                    _state["vwap"]          = snap.get("vwap", 0)
+                    _state["day_high"]      = snap.get("high", 0)
+                    _state["day_low"]       = snap.get("low", 0)
+            except Exception:
+                pass
+
             # ── Compute Opening Range (before scalp window) ──
             if not _state["opening_range_set"]:
                 compute_opening_range()
@@ -3457,6 +3468,12 @@ _reversal_warn_state = {
     "last_candle_time":  None,
     "alerts_today":      [],
     "active":            False,
+    "current_conditions": {
+        "BEARISH_DIVERGENCE": False,
+        "TREND_BREAKDOWN":    False,
+        "PRICE_REJECTION":    False,
+        "VOLUME_EXHAUSTION":  False,
+    },
 }
 _reversal_warn_lock = threading.Lock()
 
@@ -3661,12 +3678,17 @@ def _reversal_warning_loop():
                     continue
                 _reversal_warn_state["last_candle_time"] = latest_t
                 _reversal_warn_state["last_check"] = now_et.strftime("%H:%M:%S ET")
-            checks = [
-                _rw_check_bearish_divergence(bars),
-                _rw_check_trend_breakdown(bars),
-                _rw_check_price_rejection(bars),
-                _rw_check_volume_exhaustion(bars),
+            check_results = [
+                ("BEARISH_DIVERGENCE", _rw_check_bearish_divergence(bars)),
+                ("TREND_BREAKDOWN",    _rw_check_trend_breakdown(bars)),
+                ("PRICE_REJECTION",    _rw_check_price_rejection(bars)),
+                ("VOLUME_EXHAUSTION",  _rw_check_volume_exhaustion(bars)),
             ]
+            # Update live condition states
+            with _reversal_warn_lock:
+                for cond_key, alert_result in check_results:
+                    _reversal_warn_state["current_conditions"][cond_key] = (alert_result is not None)
+            checks = [r for _, r in check_results]
             for alert in checks:
                 if alert is None:
                     continue
@@ -3699,8 +3721,9 @@ def start_reversal_warning():
 def get_reversal_warning_status():
     with _reversal_warn_lock:
         return {
-            "active":       _reversal_warn_state["active"],
-            "last_check":   _reversal_warn_state["last_check"],
-            "alerts_today": list(_reversal_warn_state["alerts_today"]),
-            "alert_count":  len(_reversal_warn_state["alerts_today"]),
+            "active":             _reversal_warn_state["active"],
+            "last_check":         _reversal_warn_state["last_check"],
+            "alerts_today":       list(_reversal_warn_state["alerts_today"]),
+            "alert_count":        len(_reversal_warn_state["alerts_today"]),
+            "current_conditions": dict(_reversal_warn_state["current_conditions"]),
         }

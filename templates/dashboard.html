@@ -920,36 +920,41 @@
     // Alert count badge
     setText('alertCountBadge', count + ' تحذيرات');
 
-    // Last check
-    setText('lastCheck', lastCheck ? new Date(lastCheck).toLocaleTimeString('ar-SA') : 'لم يتم الفحص بعد');
+    // Last check — backend sends plain text like "02:34:20 ET"
+    setText('lastCheck', lastCheck || 'لم يتم الفحص بعد');
 
-    // Condition cards — reset all to OK
-    const conditions = ['bearish','trend','rejection','volume'];
+     // Condition cards — use live current_conditions if available, fallback to alerts_today
     const condMap = {
       'BEARISH_DIVERGENCE': 'bearish',
       'TREND_BREAKDOWN':    'trend',
       'PRICE_REJECTION':    'rejection',
       'VOLUME_EXHAUSTION':  'volume',
     };
-
+    const liveConds = data.current_conditions || {};
+    const conditions = ['bearish','trend','rejection','volume'];
+    // Reset all to OK first
     conditions.forEach(c => {
       const card = el('cond_' + c);
       const statusEl = el('cond_' + c + '_status');
       if (card) card.classList.remove('triggered');
       if (statusEl) { statusEl.textContent = '✅ OK'; statusEl.className = 'condition-status ok'; }
     });
-
-    // Mark triggered conditions
+    // Apply live conditions (real-time per-candle state)
+    Object.entries(condMap).forEach(([condKey, uiKey]) => {
+      if (liveConds[condKey] === true) {
+        const card = el('cond_' + uiKey);
+        const statusEl = el('cond_' + uiKey + '_status');
+        if (card) card.classList.add('triggered');
+        if (statusEl) { statusEl.textContent = '🚨 TRIGGERED'; statusEl.className = 'condition-status warning'; }
+      }
+    });
+    // Also mark from alerts_today (for detail text)
     alerts.forEach(a => {
       const key = condMap[a.condition];
       if (!key) return;
-      const card = el('cond_' + key);
-      const statusEl = el('cond_' + key + '_status');
       const detailEl = el('cond_' + key + '_detail');
-      if (card) card.classList.add('triggered');
-      if (statusEl) { statusEl.textContent = '🚨 TRIGGERED'; statusEl.className = 'condition-status warning'; }
       if (detailEl && a.detail) detailEl.textContent = a.detail;
-    });
+    });;
 
     // Alert log
     const logEl = el('alertLog');

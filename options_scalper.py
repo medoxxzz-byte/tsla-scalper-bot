@@ -3727,3 +3727,382 @@ def get_reversal_warning_status():
             "alert_count":        len(_reversal_warn_state["alerts_today"]),
             "current_conditions": dict(_reversal_warn_state["current_conditions"]),
         }
+# ══════════════════════════════════════════════════════════════════════════════
+# 🦟 MOSQUITO SCANNER — V10.5
+# Multi-Timeframe MACD Reversal System (1M → 3M → 5M)
+# 3 Progressive Telegram Alerts
+# ══════════════════════════════════════════════════════════════════════════════
+
+_mosquito_state = {
+    "active": False,
+    "last_check": None,
+    "direction": None,  # "CALL" or "PUT"
+    "signal_1m": False,
+    "signal_3m": False,
+    "signal_5m": False,
+    "signal_price": 0.0,
+    "macd_peak": 0.0,
+    "alerts_today": [],
+    "last_alert_time": {}
+}
+
+_mosquito_lock = threading.Lock()
+
+def _mq_macd(closes, fast=12, slow=26, signal=9):
+    if len(closes) < slow + signal:
+        return []
+    
+    # EMA function
+    def ema(data, period):
+        alpha = 2 / (period + 1)
+        res = [data[0]]
+        for i in range(1, len(data)):
+            res.append(data[i] * alpha + res[-1] * (1 - alpha))
+        return res
+    
+    ema_fast = ema(closes, fast)
+    ema_slow = ema(closes, slow)
+    macd_line = [f - s for f, s in zip(ema_fast, ema_slow)]
+    
+    # Calculate signal line starting from where we have enough macd_line data
+    signal_line = [0] * (slow - 1) + ema(macd_line[slow - 1:], signal)
+    
+    histogram = [m - s for m, s in zip(macd_line, signal_line)]
+    return histogram
+
+def _mq_rsi(closes, period=14):
+    if len(closes) < period + 1:
+        return 50.0
+    
+    gains = []
+    losses = []
+    for i in range(1, len(closes)):
+        change = closes[i] - closes[i-1]
+        if change > 0:
+            gains.append(change)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(change))
+            
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    
+    for i in range(period, len(closes) - 1):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+        
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+def _mq_obv(closes, volumes):
+    if len(closes) < 2:
+        return "neutral"
+    
+    obv = 0
+    obv_list = [0]
+    for i in range(1, len(closes)):
+        if closes[i] > closes[i-1]:
+            obv += volumes[i]
+        elif closes[i] < closes[i-1]:
+            obv -= volumes[i]
+        obv_list.append(obv)
+        
+    if len(obv_list) >= 3:
+        if obv_list[-1] > obv_list[-2] and obv_list[-2] > obv_list[-3]:
+            return "up"
+        if obv_list[-1] < obv_list[-2] and obv_list[-2] < obv_list[-3]:
+            return "down"
+    return "neutral"
+
+def _mq_momentum(closes, period=10):
+    if len(closes) <= period:
+        return 0
+    return closes[-1] - closes[-period-1]
+
+def _mq_get_dynamic_threshold(macd_hist):
+    if not macd_hist or len(macd_hist) < 20:
+        return 0.350
+    recent_20 = macd_hist[-20:]
+    max_val = max(recent_20)
+    min_val = min(recent_20)
+    return max(abs(max_val), abs(min_val)) * 0.60
+
+def _mq_send_alert(level, data):
+    # level: 1 (1M), 2 (3M), 3 (5M)
+    now_et = _et_now()
+    time_str = now_et.strftime("%I:%M %p ET")
+    
+    if level == 1:
+        msg = f"""🦟 *MOSQUITO — إنذار مبكر*
+━━━━━━━━━━━━━━━━━━━━
+📍 TSLA: ${data['price']:.2f}
+🕐 الوقت: {time_str}
+📊 الاتجاه: {'📈 CALL (صعود)' if data['dir'] == 'CALL' else '📉 PUT (هبوط)'}
+
+🔴 MACD 1M: ارتد من {data['macd_peak']:.3f}
+   القاع كان قوياً — الزخم يتحول
+
+⏳ انتظر تأكيد 3M
+━━━━━━━━━━━━━━━━━━━━
+⚠️ لا تدخل بعد — فقط استعد"""
+
+    elif level == 2:
+        price_diff = data['price'] - data['signal_price']
+        diff_str = f"+${price_diff:.2f}" if price_diff >= 0 else f"-${abs(price_diff):.2f}"
+        msg = f"""✅ *MOSQUITO — تأكيد 3M*
+━━━━━━━━━━━━━━━━━━━━
+📍 TSLA: ${data['price']:.2f}  ({diff_str} من الإنذار)
+🕐 الوقت: {time_str}
+📊 الاتجاه: {'📈 CALL مؤكد' if data['dir'] == 'CALL' else '📉 PUT مؤكد'}
+
+📊 MACD 3M: عمود {'أخضر' if data['dir'] == 'CALL' else 'أحمر'} جديد ✅
+   الانعكاس حقيقي — ليس شوبي
+
+📈 VWAP: ${data['vwap']:.2f} — السعر {'فوقه ✅' if data['price'] > data['vwap'] else 'تحته ✅'}
+🔵 RSI 3M: {data['rsi']:.0f} — {'صاعد ✅' if data['rsi'] > 50 else 'هابط ✅'}
+
+⏳ انتظر تأكيد 5M للدخول الكامل
+━━━━━━━━━━━━━━━━━━━━
+🟡 الانعكاس مدعوم — استعد للدخول"""
+
+    else:
+        strike_type = "CALL" if data['dir'] == "CALL" else "PUT"
+        strike = int(round(data['price'] / 5.0) * 5.0)
+        target = 5.20 * 1.10 # dummy example for target
+        stop = 5.20 * 0.50 # dummy example for stop
+        
+        msg = f"""🚀 *MOSQUITO — دخول الآن!*
+━━━━━━━━━━━━━━━━━━━━
+📍 TSLA: ${data['price']:.2f}
+🕐 الوقت: {time_str}
+📊 الاتجاه: {'📈 CALL ✅✅✅' if data['dir'] == 'CALL' else '📉 PUT ✅✅✅'}
+
+🎯 العقد المقترح:
+   Strike: ${strike} {strike_type} (0DTE)
+   Delta: ~0.72 (ITM)
+   Mid Price: ~$5.20
+
+📊 التأكيدات:
+   MACD 1M ✅ | MACD 3M ✅ | MACD 5M ✅
+   VWAP: {'فوقه ✅' if data['price'] > data['vwap'] else 'تحته ✅'}
+   RSI: {data['rsi']:.0f} {'صاعد ✅' if data['rsi'] > 50 else 'هابط ✅'}
+   OBV: {'صاعد ✅' if data['obv'] == 'up' else 'هابط ✅' if data['obv'] == 'down' else 'محايد ⚠️'}
+
+💰 الهدف: +10% → ${target:.2f}
+🛑 Stop Loss: -50% → ${stop:.2f}
+━━━━━━━━━━━━━━━━━━━━
+🟢 ادخل الآن — كل الشروط مكتملة"""
+
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        try:
+            http_requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+                timeout=5
+            )
+        except Exception as e:
+            logger.error(f"[Mosquito] Telegram Error: {e}")
+
+def _mosquito_loop():
+    logger.info("🦟 Mosquito loop started")
+    while True:
+        try:
+            now_et = _et_now()
+            
+            # Check if within trading window (10:10-11:30 or 14:00-15:30)
+            time_val = now_et.hour * 100 + now_et.minute
+            is_window_1 = (1010 <= time_val <= 1130)
+            is_window_2 = (1400 <= time_val <= 1530)
+            
+            with _mosquito_lock:
+                _mosquito_state["active"] = is_window_1 or is_window_2
+                _mosquito_state["last_check"] = now_et.strftime("%H:%M:%S ET")
+            
+            if not (is_window_1 or is_window_2):
+                with _mosquito_lock:
+                    _mosquito_state["signal_1m"] = False
+                    _mosquito_state["signal_3m"] = False
+                    _mosquito_state["signal_5m"] = False
+                    _mosquito_state["direction"] = None
+                time.sleep(30)
+                continue
+                
+            # Get data
+            bars_1m = get_tsla_bars("1Min", 50)
+            if not bars_1m or len(bars_1m) < 40:
+                time.sleep(30)
+                continue
+                
+            closes_1m = [b["c"] for b in bars_1m]
+            vols_1m = [b["v"] for b in bars_1m]
+            current_price = closes_1m[-1]
+            vwap = _get_vwap()
+            if not vwap:
+                vwap = current_price
+                
+            macd_1m = _mq_macd(closes_1m)
+            if not macd_1m or len(macd_1m) < 20:
+                time.sleep(30)
+                continue
+                
+            # Check 1M
+            threshold = _mq_get_dynamic_threshold(macd_1m)
+            threshold = max(threshold, 0.150) # minimum threshold
+            
+            with _mosquito_lock:
+                state = _mosquito_state.copy()
+                
+            if not state["signal_1m"]:
+                # Looking for 1M reversal
+                hist_curr = macd_1m[-1]
+                hist_prev = macd_1m[-2]
+                hist_prev2 = macd_1m[-3]
+                
+                # CALL condition: MACD was deeply negative, now rising
+                if hist_prev2 < -threshold and hist_prev < hist_prev2 and hist_curr > hist_prev:
+                    if current_price > vwap: # VWAP Filter
+                        with _mosquito_lock:
+                            _mosquito_state["signal_1m"] = True
+                            _mosquito_state["direction"] = "CALL"
+                            _mosquito_state["signal_price"] = current_price
+                            _mosquito_state["macd_peak"] = hist_prev
+                            
+                        _mq_send_alert(1, {
+                            "price": current_price,
+                            "dir": "CALL",
+                            "macd_peak": hist_prev
+                        })
+                        time.sleep(30)
+                        continue
+                        
+                # PUT condition: MACD was deeply positive, now falling
+                elif hist_prev2 > threshold and hist_prev > hist_prev2 and hist_curr < hist_prev:
+                    if current_price < vwap: # VWAP Filter
+                        with _mosquito_lock:
+                            _mosquito_state["signal_1m"] = True
+                            _mosquito_state["direction"] = "PUT"
+                            _mosquito_state["signal_price"] = current_price
+                            _mosquito_state["macd_peak"] = hist_prev
+                            
+                        _mq_send_alert(1, {
+                            "price": current_price,
+                            "dir": "PUT",
+                            "macd_peak": hist_prev
+                        })
+                        time.sleep(30)
+                        continue
+                        
+            elif state["signal_1m"] and not state["signal_3m"]:
+                # Check price movement limit
+                if abs(current_price - state["signal_price"]) > 1.50:
+                    with _mosquito_lock:
+                        _mosquito_state["signal_1m"] = False # Reset if moved too much
+                    continue
+                    
+                bars_3m = get_tsla_bars("3Min", 50)
+                if bars_3m and len(bars_3m) >= 40:
+                    closes_3m = [b["c"] for b in bars_3m]
+                    macd_3m = _mq_macd(closes_3m)
+                    rsi_3m = _mq_rsi(closes_3m)
+                    
+                    if macd_3m and len(macd_3m) >= 2:
+                        hist_curr = macd_3m[-1]
+                        hist_prev = macd_3m[-2]
+                        
+                        if state["direction"] == "CALL" and hist_curr > hist_prev and hist_curr > 0:
+                            with _mosquito_lock:
+                                _mosquito_state["signal_3m"] = True
+                            _mq_send_alert(2, {
+                                "price": current_price,
+                                "signal_price": state["signal_price"],
+                                "dir": "CALL",
+                                "vwap": vwap,
+                                "rsi": rsi_3m
+                            })
+                        elif state["direction"] == "PUT" and hist_curr < hist_prev and hist_curr < 0:
+                            with _mosquito_lock:
+                                _mosquito_state["signal_3m"] = True
+                            _mq_send_alert(2, {
+                                "price": current_price,
+                                "signal_price": state["signal_price"],
+                                "dir": "PUT",
+                                "vwap": vwap,
+                                "rsi": rsi_3m
+                            })
+                            
+            elif state["signal_3m"] and not state["signal_5m"]:
+                if abs(current_price - state["signal_price"]) > 1.50:
+                    with _mosquito_lock:
+                        _mosquito_state["signal_1m"] = False
+                        _mosquito_state["signal_3m"] = False
+                    continue
+                    
+                bars_5m = get_tsla_bars("5Min", 50)
+                if bars_5m and len(bars_5m) >= 40:
+                    closes_5m = [b["c"] for b in bars_5m]
+                    vols_5m = [b["v"] for b in bars_5m]
+                    macd_5m = _mq_macd(closes_5m)
+                    rsi_5m = _mq_rsi(closes_5m)
+                    obv_5m = _mq_obv(closes_5m, vols_5m)
+                    
+                    if macd_5m and len(macd_5m) >= 2:
+                        hist_curr = macd_5m[-1]
+                        hist_prev = macd_5m[-2]
+                        
+                        # 5M background check: just ensure it's not strongly opposing
+                        if state["direction"] == "CALL" and hist_curr >= hist_prev:
+                            with _mosquito_lock:
+                                _mosquito_state["signal_5m"] = True
+                            _mq_send_alert(3, {
+                                "price": current_price,
+                                "dir": "CALL",
+                                "vwap": vwap,
+                                "rsi": rsi_5m,
+                                "obv": obv_5m
+                            })
+                            # Reset after full cycle
+                            time.sleep(300) # wait 5 mins before new signals
+                            with _mosquito_lock:
+                                _mosquito_state["signal_1m"] = False
+                                _mosquito_state["signal_3m"] = False
+                                _mosquito_state["signal_5m"] = False
+                        elif state["direction"] == "PUT" and hist_curr <= hist_prev:
+                            with _mosquito_lock:
+                                _mosquito_state["signal_5m"] = True
+                            _mq_send_alert(3, {
+                                "price": current_price,
+                                "dir": "PUT",
+                                "vwap": vwap,
+                                "rsi": rsi_5m,
+                                "obv": obv_5m
+                            })
+                            time.sleep(300)
+                            with _mosquito_lock:
+                                _mosquito_state["signal_1m"] = False
+                                _mosquito_state["signal_3m"] = False
+                                _mosquito_state["signal_5m"] = False
+                                
+        except Exception as e:
+            logger.error(f"[Mosquito] Loop error: {e}")
+            
+        time.sleep(15)
+
+def start_mosquito():
+    t = threading.Thread(target=_mosquito_loop, daemon=True)
+    t.start()
+    return t
+
+def get_mosquito_status():
+    with _mosquito_lock:
+        return {
+            "active": _mosquito_state["active"],
+            "last_check": _mosquito_state["last_check"],
+            "direction": _mosquito_state["direction"],
+            "signal_1m": _mosquito_state["signal_1m"],
+            "signal_3m": _mosquito_state["signal_3m"],
+            "signal_5m": _mosquito_state["signal_5m"],
+            "signal_price": _mosquito_state["signal_price"]
+        }

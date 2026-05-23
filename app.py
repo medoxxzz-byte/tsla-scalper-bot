@@ -2710,6 +2710,15 @@ def reversal_warning_status():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
+@app.route('/mosquito/status', methods=['GET'])
+def mosquito_status():
+    """حالة نظام Mosquito Scanner — MACD متعدد الأطر الزمنية."""
+    try:
+        from options_scalper import get_mosquito_status
+        return jsonify({"ok": True, **get_mosquito_status()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Startup
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2746,6 +2755,13 @@ def _start_background_threads():
         logger.info("TSLA 5M Reversal Warning System started ✅ 🔔")
     except Exception as _rw_err:
         logger.warning(f"Reversal Warning System not started: {_rw_err}")
+    # V10.5: Mosquito Scanner — Multi-Timeframe MACD Reversal
+    try:
+        from options_scalper import start_mosquito
+        start_mosquito()
+        logger.info("🦟 Mosquito Scanner started ✅")
+    except Exception as _mq_err:
+        logger.warning(f"Mosquito Scanner not started: {_mq_err}")
     # V8: Options Scalper — autonomous trading engine
     if _V8_AVAILABLE:
         if reversal_map.get("built"):

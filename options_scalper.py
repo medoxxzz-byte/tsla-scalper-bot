@@ -3727,382 +3727,396 @@ def get_reversal_warning_status():
             "alert_count":        len(_reversal_warn_state["alerts_today"]),
             "current_conditions": dict(_reversal_warn_state["current_conditions"]),
         }
+
+
 # ══════════════════════════════════════════════════════════════════════════════
-# 🦟 MOSQUITO SCANNER — V10.5
-# Multi-Timeframe MACD Reversal System (1M → 3M → 5M)
-# 3 Progressive Telegram Alerts
+# V11.0: Pyramid Auto Simulation — Paper Trading
+# نافذة العمل: 10:05 AM → 12:10 PM ET
+# الملعب: ITM Options (Delta 0.60-0.90) | Alpaca Paper
+# الهدف: جمع بيانات حقيقية لتحسين استراتيجية Pyramid
 # ══════════════════════════════════════════════════════════════════════════════
 
-_mosquito_state = {
-    "active": False,
-    "last_check": None,
-    "direction": None,  # "CALL" or "PUT"
-    "signal_1m": False,
-    "signal_3m": False,
-    "signal_5m": False,
-    "signal_price": 0.0,
-    "macd_peak": 0.0,
-    "alerts_today": [],
-    "last_alert_time": {}
+PYR_START_MINUTES   = 35
+PYR_END_MINUTES     = 160
+PYR_TP1_PCT         = 0.15
+PYR_ADD_PCT         = -0.30
+PYR_TP2_PCT         = 0.08
+PYR_SL_PCT          = -0.20
+PYR_DELTA_MIN       = 0.60
+PYR_DELTA_MAX       = 0.90
+PYR_LOOP_SLEEP      = 30
+
+_pyr_lock  = threading.Lock()
+_pyr_state = {
+    "running":      False,
+    "active_trade": None,
+    "last_check":   "--",
+    "trades_today": [],
+    "status_msg":   "غير نشط",
 }
 
-_mosquito_lock = threading.Lock()
+def _pyr_in_window():
+    import pytz
+    et = pytz.timezone("America/New_York")
+    now = datetime.now(et)
+    open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    elapsed = (now - open_time).total_seconds() / 60
+    return PYR_START_MINUTES <= elapsed <= PYR_END_MINUTES
 
-def _mq_macd(closes, fast=12, slow=26, signal=9):
-    if len(closes) < slow + signal:
-        return []
-    
-    # EMA function
-    def ema(data, period):
-        alpha = 2 / (period + 1)
-        res = [data[0]]
-        for i in range(1, len(data)):
-            res.append(data[i] * alpha + res[-1] * (1 - alpha))
-        return res
-    
-    ema_fast = ema(closes, fast)
-    ema_slow = ema(closes, slow)
-    macd_line = [f - s for f, s in zip(ema_fast, ema_slow)]
-    
-    # Calculate signal line starting from where we have enough macd_line data
-    signal_line = [0] * (slow - 1) + ema(macd_line[slow - 1:], signal)
-    
-    histogram = [m - s for m, s in zip(macd_line, signal_line)]
-    return histogram
+def _pyr_is_force_close():
+    import pytz
+    et = pytz.timezone("America/New_York")
+    now = datetime.now(et)
+    open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    elapsed = (now - open_time).total_seconds() / 60
+    return elapsed >= PYR_END_MINUTES
 
-def _mq_rsi(closes, period=14):
-    if len(closes) < period + 1:
-        return 50.0
-    
-    gains = []
-    losses = []
-    for i in range(1, len(closes)):
-        change = closes[i] - closes[i-1]
-        if change > 0:
-            gains.append(change)
-            losses.append(0)
-        else:
-            gains.append(0)
-            losses.append(abs(change))
-            
-    avg_gain = sum(gains[:period]) / period
-    avg_loss = sum(losses[:period]) / period
-    
-    for i in range(period, len(closes) - 1):
-        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-        
-    if avg_loss == 0:
-        return 100.0
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+def _pyr_macd(timeframe, bar_count=50):
+    bars = get_tsla_bars(timeframe, bar_count)
+    if not bars or len(bars) < 35:
+        return None, None
+    closes = [float(b["c"]) for b in bars]
+    return _rw_macd_hist(closes)
 
-def _mq_obv(closes, volumes):
-    if len(closes) < 2:
-        return "neutral"
-    
-    obv = 0
-    obv_list = [0]
-    for i in range(1, len(closes)):
-        if closes[i] > closes[i-1]:
-            obv += volumes[i]
-        elif closes[i] < closes[i-1]:
-            obv -= volumes[i]
-        obv_list.append(obv)
-        
-    if len(obv_list) >= 3:
-        if obv_list[-1] > obv_list[-2] and obv_list[-2] > obv_list[-3]:
-            return "up"
-        if obv_list[-1] < obv_list[-2] and obv_list[-2] < obv_list[-3]:
-            return "down"
-    return "neutral"
-
-def _mq_momentum(closes, period=10):
-    if len(closes) <= period:
-        return 0
-    return closes[-1] - closes[-period-1]
-
-def _mq_get_dynamic_threshold(macd_hist):
-    if not macd_hist or len(macd_hist) < 20:
-        return 0.350
-    recent_20 = macd_hist[-20:]
-    max_val = max(recent_20)
-    min_val = min(recent_20)
-    return max(abs(max_val), abs(min_val)) * 0.60
-
-def _mq_send_alert(level, data):
-    # level: 1 (1M), 2 (3M), 3 (5M)
-    now_et = _et_now()
-    time_str = now_et.strftime("%I:%M %p ET")
-    
-    if level == 1:
-        msg = f"""🦟 *MOSQUITO — إنذار مبكر*
-━━━━━━━━━━━━━━━━━━━━
-📍 TSLA: ${data['price']:.2f}
-🕐 الوقت: {time_str}
-📊 الاتجاه: {'📈 CALL (صعود)' if data['dir'] == 'CALL' else '📉 PUT (هبوط)'}
-
-🔴 MACD 1M: ارتد من {data['macd_peak']:.3f}
-   القاع كان قوياً — الزخم يتحول
-
-⏳ انتظر تأكيد 3M
-━━━━━━━━━━━━━━━━━━━━
-⚠️ لا تدخل بعد — فقط استعد"""
-
-    elif level == 2:
-        price_diff = data['price'] - data['signal_price']
-        diff_str = f"+${price_diff:.2f}" if price_diff >= 0 else f"-${abs(price_diff):.2f}"
-        msg = f"""✅ *MOSQUITO — تأكيد 3M*
-━━━━━━━━━━━━━━━━━━━━
-📍 TSLA: ${data['price']:.2f}  ({diff_str} من الإنذار)
-🕐 الوقت: {time_str}
-📊 الاتجاه: {'📈 CALL مؤكد' if data['dir'] == 'CALL' else '📉 PUT مؤكد'}
-
-📊 MACD 3M: عمود {'أخضر' if data['dir'] == 'CALL' else 'أحمر'} جديد ✅
-   الانعكاس حقيقي — ليس شوبي
-
-📈 VWAP: ${data['vwap']:.2f} — السعر {'فوقه ✅' if data['price'] > data['vwap'] else 'تحته ✅'}
-🔵 RSI 3M: {data['rsi']:.0f} — {'صاعد ✅' if data['rsi'] > 50 else 'هابط ✅'}
-
-⏳ انتظر تأكيد 5M للدخول الكامل
-━━━━━━━━━━━━━━━━━━━━
-🟡 الانعكاس مدعوم — استعد للدخول"""
-
+def _pyr_find_best_contract(price, direction, expiry):
+    option_type = "call" if direction == "CALL" else "put"
+    if direction == "CALL":
+        strike_min = round(price - 15, 0)
+        strike_max = round(price - 2, 0)
     else:
-        strike_type = "CALL" if data['dir'] == "CALL" else "PUT"
-        strike = int(round(data['price'] / 5.0) * 5.0)
-        target = 5.20 * 1.10 # dummy example for target
-        stop = 5.20 * 0.50 # dummy example for stop
-        
-        msg = f"""🚀 *MOSQUITO — دخول الآن!*
-━━━━━━━━━━━━━━━━━━━━
-📍 TSLA: ${data['price']:.2f}
-🕐 الوقت: {time_str}
-📊 الاتجاه: {'📈 CALL ✅✅✅' if data['dir'] == 'CALL' else '📉 PUT ✅✅✅'}
+        strike_min = round(price + 2, 0)
+        strike_max = round(price + 15, 0)
+    contracts = get_options_chain(expiry, option_type, strike_min, strike_max)
+    if not contracts:
+        return None
+    best = None
+    best_score = -1
+    for c in contracts:
+        strike = float(c.get("strike_price", 0))
+        itm_amount = (price - strike) if direction == "CALL" else (strike - price)
+        if itm_amount < 2:
+            continue
+        approx_delta = min(0.95, 0.50 + itm_amount * 0.045)
+        if not (PYR_DELTA_MIN <= approx_delta <= PYR_DELTA_MAX):
+            continue
+        symbol = c.get("symbol", "")
+        oi     = int(c.get("open_interest", 0) or 0)
+        vol    = int(c.get("volume", 0) or 0)
+        quote  = get_option_quote(symbol)
+        if not quote or quote["mid"] <= 0:
+            continue
+        spread_pct = (quote["ask"] - quote["bid"]) / quote["mid"] if quote["mid"] > 0 else 1.0
+        if spread_pct > 0.25:
+            continue
+        delta_score  = 1 - abs(approx_delta - 0.75) * 3
+        oi_score     = min(1.0, oi / 5000)
+        vol_score    = min(1.0, vol / 1000)
+        spread_score = max(0, 1 - spread_pct * 4)
+        score = delta_score * 0.35 + oi_score * 0.30 + vol_score * 0.20 + spread_score * 0.15
+        if score > best_score:
+            best_score = score
+            best = {
+                "symbol": symbol, "strike": strike, "type": option_type,
+                "expiry": expiry, "bid": quote["bid"], "ask": quote["ask"],
+                "mid": quote["mid"], "approx_delta": round(approx_delta, 2),
+                "itm_amount": round(itm_amount, 2),
+                "open_interest": oi, "volume": vol,
+                "spread_pct": round(spread_pct * 100, 1),
+            }
+    return best
 
-🎯 العقد المقترح:
-   Strike: ${strike} {strike_type} (0DTE)
-   Delta: ~0.72 (ITM)
-   Mid Price: ~$5.20
+def _pyr_check_entry():
+    snap = get_tsla_snapshot()
+    if not snap or snap["price"] <= 0:
+        return None, 0, 0, {}
+    price = snap["price"]
+    vwap  = snap["vwap"]
+    macd1_curr, macd1_prev = _pyr_macd("1Min", 50)
+    if macd1_curr is None or macd1_prev is None:
+        return None, price, vwap, {"reason": "MACD 1M غير متاح"}
+    macd3_curr, _ = _pyr_macd("3Min", 50)
+    if macd3_curr is None:
+        macd3_curr = 0
+    bull_reversal = (macd1_prev < 0 and macd1_curr > 0)
+    bear_reversal = (macd1_prev > 0 and macd1_curr < 0)
+    if not bull_reversal and not bear_reversal:
+        return None, price, vwap, {"reason": "لا يوجد انعكاس MACD 1M"}
+    direction = "CALL" if bull_reversal else "PUT"
+    if direction == "CALL" and price <= vwap:
+        return None, price, vwap, {"reason": f"CALL مرفوض: تحت VWAP"}
+    if direction == "PUT" and price >= vwap:
+        return None, price, vwap, {"reason": f"PUT مرفوض: فوق VWAP"}
+    if direction == "CALL" and macd3_curr < -0.05:
+        return None, price, vwap, {"reason": f"CALL مرفوض: MACD 3M هابط"}
+    if direction == "PUT" and macd3_curr > 0.05:
+        return None, price, vwap, {"reason": f"PUT مرفوض: MACD 3M صاعد"}
+    reasons = {
+        "direction": direction, "price": price, "vwap": vwap,
+        "macd1_curr": round(macd1_curr, 4), "macd1_prev": round(macd1_prev, 4),
+        "macd3_curr": round(macd3_curr, 4),
+    }
+    return direction, price, vwap, reasons
 
-📊 التأكيدات:
-   MACD 1M ✅ | MACD 3M ✅ | MACD 5M ✅
-   VWAP: {'فوقه ✅' if data['price'] > data['vwap'] else 'تحته ✅'}
-   RSI: {data['rsi']:.0f} {'صاعد ✅' if data['rsi'] > 50 else 'هابط ✅'}
-   OBV: {'صاعد ✅' if data['obv'] == 'up' else 'هابط ✅' if data['obv'] == 'down' else 'محايد ⚠️'}
+def _pyr_send_entry_msg(trade):
+    msg = (
+        f"🦋 *PYRAMID AUTO | {trade['direction']}*\n"
+        f"🕐 دخول: {trade['entry_time']} ET\n"
+        f"📍 TSLA: ${trade['entry_stock_price']:.2f} | "
+        f"{'فوق' if trade['direction']=='CALL' else 'تحت'} VWAP ${trade['vwap']:.2f}\n"
+        f"📈 MACD 1M: {trade['macd1_curr']:+.4f} | MACD 3M: {trade['macd3_curr']:+.4f}\n"
+        f"─────────────────────\n"
+        f"🎯 العقد: `{trade['symbol']}`\n"
+        f"   Strike: ${trade['strike']:.0f} | Delta≈{trade['approx_delta']}\n"
+        f"   سعر الدخول: ${trade['entry_price']:.2f}\n"
+        f"   OI: {trade['open_interest']:,} | Volume: {trade['volume']:,}\n"
+        f"   Spread: {trade['spread_pct']}%\n"
+        f"─────────────────────\n"
+        f"🎯 TP1: ${trade['entry_price']*1.15:.2f} (+15%)\n"
+        f"⚠️ تعزيز عند: ${trade['entry_price']*0.70:.2f} (-30%)\n"
+        f"🛑 SL بعد تعزيز: -20% من المتوسط\n"
+        f"⏰ إغلاق إجباري: 12:10 PM ET"
+    )
+    send_telegram(msg)
 
-💰 الهدف: +10% → ${target:.2f}
-🛑 Stop Loss: -50% → ${stop:.2f}
-━━━━━━━━━━━━━━━━━━━━
-🟢 ادخل الآن — كل الشروط مكتملة"""
+def _pyr_send_add_msg(trade, current_price, avg_cost):
+    import pytz
+    now_str = datetime.now(pytz.timezone("America/New_York")).strftime("%I:%M %p")
+    msg = (
+        f"📊 *PYRAMID — تعزيز*\n"
+        f"🕐 {now_str} ET\n"
+        f"📉 وصل -30% → ${current_price:.2f}\n"
+        f"🔄 شراء 2 عقد إضافيين\n"
+        f"💰 متوسط التكلفة الجديد: ${avg_cost:.2f}\n"
+        f"🎯 TP2: ${avg_cost*1.08:.2f} (+8%)\n"
+        f"🛑 SL: ${avg_cost*0.80:.2f} (-20%)"
+    )
+    send_telegram(msg)
 
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        try:
-            http_requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
-                timeout=5
-            )
-        except Exception as e:
-            logger.error(f"[Mosquito] Telegram Error: {e}")
+def _pyr_send_close_msg(trade, exit_price, exit_type, pnl_pct):
+    import pytz
+    now_str = datetime.now(pytz.timezone("America/New_York")).strftime("%I:%M %p")
+    emoji = "✅" if pnl_pct > 0 else "❌"
+    msg = (
+        f"{emoji} *PYRAMID — إغلاق ({exit_type})*\n"
+        f"🕐 {now_str} ET\n"
+        f"💰 سعر الخروج: ${exit_price:.2f}\n"
+        f"📊 النتيجة: {pnl_pct:+.1f}%\n"
+        f"─────────────────────\n"
+        f"📋 *ملخص الصفقة:*\n"
+        f"   الاتجاه: {trade['direction']}\n"
+        f"   العقد: `{trade['symbol']}`\n"
+        f"   دخول: ${trade['entry_price']:.2f} @ {trade['entry_time']}\n"
+        f"   VWAP: ${trade['vwap']:.2f} | Delta≈{trade['approx_delta']}\n"
+        f"   OI: {trade['open_interest']:,} | Volume: {trade['volume']:,}\n"
+        f"   تعزيز: {'✅ نعم' if trade.get('reinforced') else '❌ لا'}\n"
+        f"   سبب الإغلاق: {exit_type}"
+    )
+    send_telegram(msg)
 
-def _mosquito_loop():
-    logger.info("🦟 Mosquito loop started")
+def _pyr_execute_entry(direction, price, vwap, reasons):
+    import pytz
+    now_str = datetime.now(pytz.timezone("America/New_York")).strftime("%I:%M %p")
+    expiry  = _today_expiry()
+    contract = _pyr_find_best_contract(price, direction, expiry)
+    if not contract:
+        send_telegram(f"⚠️ Pyramid: لم يُعثر على عقد ITM مناسب لـ {direction} @ ${price:.2f}")
+        return
+    order = place_option_order(contract["symbol"], 1, "buy", order_type="market", position_intent="open")
+    if not order:
+        send_telegram(f"❌ Pyramid: فشل تنفيذ أمر الشراء لـ {contract['symbol']}")
+        return
+    trade = {
+        "symbol": contract["symbol"], "direction": direction,
+        "strike": contract["strike"], "expiry": contract["expiry"],
+        "approx_delta": contract["approx_delta"],
+        "open_interest": contract["open_interest"], "volume": contract["volume"],
+        "spread_pct": contract["spread_pct"],
+        "entry_price": contract["mid"], "entry_stock_price": price,
+        "entry_time": now_str, "vwap": vwap,
+        "macd1_curr": reasons.get("macd1_curr", 0),
+        "macd3_curr": reasons.get("macd3_curr", 0),
+        "qty": 1, "reinforced": False, "avg_cost": contract["mid"],
+        "order_id": order.get("id", ""),
+    }
+    with _pyr_lock:
+        _pyr_state["active_trade"] = trade
+        _pyr_state["status_msg"] = f"صفقة مفتوحة: {direction} @ ${contract['mid']:.2f}"
+    _pyr_send_entry_msg(trade)
+    logger.info(f"[Pyramid] ✅ دخول {direction} | {contract['symbol']} @ ${contract['mid']:.2f}")
+
+def _pyr_reinforce(trade, current_price):
+    order = place_option_order(trade["symbol"], 2, "buy", order_type="market", position_intent="open")
+    if not order:
+        send_telegram(f"❌ Pyramid: فشل التعزيز لـ {trade['symbol']}")
+        return
+    total_cost = (trade["entry_price"] * trade["qty"]) + (current_price * 2)
+    new_qty    = trade["qty"] + 2
+    new_avg    = total_cost / new_qty
+    trade["reinforced"] = True
+    trade["qty"]        = new_qty
+    trade["avg_cost"]   = round(new_avg, 2)
+    with _pyr_lock:
+        _pyr_state["active_trade"] = trade
+        _pyr_state["status_msg"] = f"تعزيز @ ${current_price:.2f} | متوسط ${new_avg:.2f}"
+    _pyr_send_add_msg(trade, current_price, new_avg)
+
+def _pyr_close_trade(trade, exit_price, exit_type, pnl_pct):
+    close_position(trade["symbol"])
+    _pyr_send_close_msg(trade, exit_price, exit_type, pnl_pct)
+    trade["exit_price"] = exit_price
+    trade["exit_type"]  = exit_type
+    trade["pnl_pct"]    = round(pnl_pct, 2)
+    with _pyr_lock:
+        _pyr_state["trades_today"].append(dict(trade))
+        _pyr_state["active_trade"] = None
+        _pyr_state["status_msg"]   = f"آخر صفقة: {exit_type} {pnl_pct:+.1f}%"
+
+def _pyr_monitor_trade(trade):
+    quote = get_option_quote(trade["symbol"])
+    if not quote or quote["mid"] <= 0:
+        return
+    current_price = quote["mid"]
+    avg_cost      = trade["avg_cost"]
+    pnl_pct       = (current_price - avg_cost) / avg_cost
+    if not trade["reinforced"] and pnl_pct >= PYR_TP1_PCT:
+        _pyr_close_trade(trade, current_price, "TP1 +15%", pnl_pct * 100)
+        return
+    if not trade["reinforced"]:
+        drop_pct = (current_price - trade["entry_price"]) / trade["entry_price"]
+        if drop_pct <= PYR_ADD_PCT:
+            _pyr_reinforce(trade, current_price)
+            return
+    if trade["reinforced"] and pnl_pct >= PYR_TP2_PCT:
+        _pyr_close_trade(trade, current_price, "TP2 +8%", pnl_pct * 100)
+        return
+    if trade["reinforced"] and pnl_pct <= PYR_SL_PCT:
+        _pyr_close_trade(trade, current_price, "SL -20%", pnl_pct * 100)
+        return
+
+def _pyramid_auto_loop():
+    import pytz
+    et_tz = pytz.timezone("America/New_York")
+    logger.info("[Pyramid] 🦋 V11.0 thread started")
     while True:
         try:
-            now_et = _et_now()
-            
-            # Check if within trading window (10:10-11:30 or 14:00-15:30)
-            time_val = now_et.hour * 100 + now_et.minute
-            is_window_1 = (1010 <= time_val <= 1130)
-            is_window_2 = (1400 <= time_val <= 1530)
-            
-            with _mosquito_lock:
-                _mosquito_state["active"] = is_window_1 or is_window_2
-                _mosquito_state["last_check"] = now_et.strftime("%H:%M:%S ET")
-            
-            if not (is_window_1 or is_window_2):
-                with _mosquito_lock:
-                    _mosquito_state["signal_1m"] = False
-                    _mosquito_state["signal_3m"] = False
-                    _mosquito_state["signal_5m"] = False
-                    _mosquito_state["direction"] = None
+            now_str = datetime.now(et_tz).strftime("%I:%M %p")
+            with _pyr_lock:
+                _pyr_state["last_check"] = now_str
+            if not _is_0dte_day():
+                with _pyr_lock:
+                    _pyr_state["status_msg"] = "عطلة — لا يوجد 0DTE"
+                time.sleep(60)
+                continue
+            if _pyr_is_force_close():
+                with _pyr_lock:
+                    trade = _pyr_state.get("active_trade")
+                    _pyr_state["status_msg"] = "خارج نافذة العمل (12:10 PM+)"
+                if trade:
+                    quote = get_option_quote(trade["symbol"])
+                    ep = quote["mid"] if quote and quote["mid"] > 0 else trade["avg_cost"]
+                    pnl = (ep - trade["avg_cost"]) / trade["avg_cost"] * 100
+                    _pyr_close_trade(trade, ep, "إغلاق إجباري 12:10 PM", pnl)
+                time.sleep(60)
+                continue
+            if not _pyr_in_window():
+                with _pyr_lock:
+                    _pyr_state["status_msg"] = "انتظار نافذة 10:05 AM"
                 time.sleep(30)
                 continue
-                
-            # Get data
-            bars_1m = get_tsla_bars("1Min", 50)
-            if not bars_1m or len(bars_1m) < 40:
-                time.sleep(30)
-                continue
-                
-            closes_1m = [b["c"] for b in bars_1m]
-            vols_1m = [b["v"] for b in bars_1m]
-            current_price = closes_1m[-1]
-            vwap = _get_vwap()
-            if not vwap:
-                vwap = current_price
-                
-            macd_1m = _mq_macd(closes_1m)
-            if not macd_1m or len(macd_1m) < 20:
-                time.sleep(30)
-                continue
-                
-            # Check 1M
-            threshold = _mq_get_dynamic_threshold(macd_1m)
-            threshold = max(threshold, 0.150) # minimum threshold
-            
-            with _mosquito_lock:
-                state = _mosquito_state.copy()
-                
-            if not state["signal_1m"]:
-                # Looking for 1M reversal
-                hist_curr = macd_1m[-1]
-                hist_prev = macd_1m[-2]
-                hist_prev2 = macd_1m[-3]
-                
-                # CALL condition: MACD was deeply negative, now rising
-                if hist_prev2 < -threshold and hist_prev < hist_prev2 and hist_curr > hist_prev:
-                    if current_price > vwap: # VWAP Filter
-                        with _mosquito_lock:
-                            _mosquito_state["signal_1m"] = True
-                            _mosquito_state["direction"] = "CALL"
-                            _mosquito_state["signal_price"] = current_price
-                            _mosquito_state["macd_peak"] = hist_prev
-                            
-                        _mq_send_alert(1, {
-                            "price": current_price,
-                            "dir": "CALL",
-                            "macd_peak": hist_prev
-                        })
-                        time.sleep(30)
-                        continue
-                        
-                # PUT condition: MACD was deeply positive, now falling
-                elif hist_prev2 > threshold and hist_prev > hist_prev2 and hist_curr < hist_prev:
-                    if current_price < vwap: # VWAP Filter
-                        with _mosquito_lock:
-                            _mosquito_state["signal_1m"] = True
-                            _mosquito_state["direction"] = "PUT"
-                            _mosquito_state["signal_price"] = current_price
-                            _mosquito_state["macd_peak"] = hist_prev
-                            
-                        _mq_send_alert(1, {
-                            "price": current_price,
-                            "dir": "PUT",
-                            "macd_peak": hist_prev
-                        })
-                        time.sleep(30)
-                        continue
-                        
-            elif state["signal_1m"] and not state["signal_3m"]:
-                # Check price movement limit
-                if abs(current_price - state["signal_price"]) > 1.50:
-                    with _mosquito_lock:
-                        _mosquito_state["signal_1m"] = False # Reset if moved too much
-                    continue
-                    
-                bars_3m = get_tsla_bars("3Min", 50)
-                if bars_3m and len(bars_3m) >= 40:
-                    closes_3m = [b["c"] for b in bars_3m]
-                    macd_3m = _mq_macd(closes_3m)
-                    rsi_3m = _mq_rsi(closes_3m)
-                    
-                    if macd_3m and len(macd_3m) >= 2:
-                        hist_curr = macd_3m[-1]
-                        hist_prev = macd_3m[-2]
-                        
-                        if state["direction"] == "CALL" and hist_curr > hist_prev and hist_curr > 0:
-                            with _mosquito_lock:
-                                _mosquito_state["signal_3m"] = True
-                            _mq_send_alert(2, {
-                                "price": current_price,
-                                "signal_price": state["signal_price"],
-                                "dir": "CALL",
-                                "vwap": vwap,
-                                "rsi": rsi_3m
-                            })
-                        elif state["direction"] == "PUT" and hist_curr < hist_prev and hist_curr < 0:
-                            with _mosquito_lock:
-                                _mosquito_state["signal_3m"] = True
-                            _mq_send_alert(2, {
-                                "price": current_price,
-                                "signal_price": state["signal_price"],
-                                "dir": "PUT",
-                                "vwap": vwap,
-                                "rsi": rsi_3m
-                            })
-                            
-            elif state["signal_3m"] and not state["signal_5m"]:
-                if abs(current_price - state["signal_price"]) > 1.50:
-                    with _mosquito_lock:
-                        _mosquito_state["signal_1m"] = False
-                        _mosquito_state["signal_3m"] = False
-                    continue
-                    
-                bars_5m = get_tsla_bars("5Min", 50)
-                if bars_5m and len(bars_5m) >= 40:
-                    closes_5m = [b["c"] for b in bars_5m]
-                    vols_5m = [b["v"] for b in bars_5m]
-                    macd_5m = _mq_macd(closes_5m)
-                    rsi_5m = _mq_rsi(closes_5m)
-                    obv_5m = _mq_obv(closes_5m, vols_5m)
-                    
-                    if macd_5m and len(macd_5m) >= 2:
-                        hist_curr = macd_5m[-1]
-                        hist_prev = macd_5m[-2]
-                        
-                        # 5M background check: just ensure it's not strongly opposing
-                        if state["direction"] == "CALL" and hist_curr >= hist_prev:
-                            with _mosquito_lock:
-                                _mosquito_state["signal_5m"] = True
-                            _mq_send_alert(3, {
-                                "price": current_price,
-                                "dir": "CALL",
-                                "vwap": vwap,
-                                "rsi": rsi_5m,
-                                "obv": obv_5m
-                            })
-                            # Reset after full cycle
-                            time.sleep(300) # wait 5 mins before new signals
-                            with _mosquito_lock:
-                                _mosquito_state["signal_1m"] = False
-                                _mosquito_state["signal_3m"] = False
-                                _mosquito_state["signal_5m"] = False
-                        elif state["direction"] == "PUT" and hist_curr <= hist_prev:
-                            with _mosquito_lock:
-                                _mosquito_state["signal_5m"] = True
-                            _mq_send_alert(3, {
-                                "price": current_price,
-                                "dir": "PUT",
-                                "vwap": vwap,
-                                "rsi": rsi_5m,
-                                "obv": obv_5m
-                            })
-                            time.sleep(300)
-                            with _mosquito_lock:
-                                _mosquito_state["signal_1m"] = False
-                                _mosquito_state["signal_3m"] = False
-                                _mosquito_state["signal_5m"] = False
-                                
+            with _pyr_lock:
+                active_trade = _pyr_state.get("active_trade")
+            if active_trade:
+                _pyr_monitor_trade(active_trade)
+            else:
+                with _pyr_lock:
+                    _pyr_state["status_msg"] = f"يراقب... {now_str}"
+                direction, price, vwap, reasons = _pyr_check_entry()
+                if direction:
+                    _pyr_execute_entry(direction, price, vwap, reasons)
+                else:
+                    with _pyr_lock:
+                        _pyr_state["status_msg"] = f"انتظار: {reasons.get('reason','لا إشارة')}"
         except Exception as e:
-            logger.error(f"[Mosquito] Loop error: {e}")
-            
-        time.sleep(15)
+            logger.error(f"[Pyramid] Loop error: {e}")
+        time.sleep(PYR_LOOP_SLEEP)
 
-def start_mosquito():
-    t = threading.Thread(target=_mosquito_loop, daemon=True)
-    t.start()
-    return t
+def _pyr_weekly_report_loop():
+    import pytz
+    et_tz = pytz.timezone("America/New_York")
+    while True:
+        try:
+            now = datetime.now(et_tz)
+            if now.weekday() == 4 and now.hour == 16 and now.minute < 2:
+                with _pyr_lock:
+                    trades = list(_pyr_state["trades_today"])
+                if not trades:
+                    send_telegram("📊 *تقرير Pyramid الأسبوعي*\nلا توجد صفقات مسجلة.")
+                else:
+                    total = len(trades)
+                    tp1   = sum(1 for t in trades if "TP1" in t.get("exit_type",""))
+                    tp2   = sum(1 for t in trades if "TP2" in t.get("exit_type",""))
+                    sl    = sum(1 for t in trades if "SL"  in t.get("exit_type",""))
+                    forced= sum(1 for t in trades if "إجباري" in t.get("exit_type",""))
+                    rein  = sum(1 for t in trades if t.get("reinforced"))
+                    rein_tp = sum(1 for t in trades if t.get("reinforced") and t.get("pnl_pct",0)>0)
+                    rein_rate = (rein_tp/rein*100) if rein > 0 else 0
+                    avg_delta = sum(t.get("approx_delta",0) for t in trades)/total
+                    avg_oi    = sum(t.get("open_interest",0) for t in trades)/total
+                    avg_vol   = sum(t.get("volume",0) for t in trades)/total
+                    msg = (
+                        f"📊 *تقرير Pyramid الأسبوعي*\n"
+                        f"─────────────────────\n"
+                        f"📈 إجمالي الصفقات: {total}\n"
+                        f"✅ TP1 (+15%): {tp1} ({tp1/total*100:.0f}%)\n"
+                        f"✅ TP2 (+8%): {tp2} ({tp2/total*100:.0f}%)\n"
+                        f"❌ SL (-20%): {sl} ({sl/total*100:.0f}%)\n"
+                        f"⏰ إغلاق إجباري: {forced}\n"
+                        f"─────────────────────\n"
+                        f"🔄 صفقات مُعزَّزة: {rein}\n"
+                        f"   ارتدت بعد -30%: {rein_tp} ({rein_rate:.0f}%)\n"
+                        f"─────────────────────\n"
+                        f"📐 متوسط Delta: {avg_delta:.2f}\n"
+                        f"📊 متوسط OI: {avg_oi:,.0f}\n"
+                        f"📊 متوسط Volume: {avg_vol:,.0f}\n"
+                        f"─────────────────────\n"
+                        f"💡 {'التعزيز مفيد ✅' if rein_rate>=60 else 'راجع نسبة التعزيز ⚠️'}"
+                    )
+                    send_telegram(msg)
+        except Exception as e:
+            logger.error(f"[Pyramid] Weekly report error: {e}")
+        time.sleep(60)
 
-def get_mosquito_status():
-    with _mosquito_lock:
+def start_pyramid_auto():
+    with _pyr_lock:
+        if _pyr_state["running"]:
+            return False
+        _pyr_state["running"] = True
+    threading.Thread(target=_pyramid_auto_loop, daemon=True).start()
+    threading.Thread(target=_pyr_weekly_report_loop, daemon=True).start()
+    logger.info("[Pyramid] ✅ V11.0 started")
+    return True
+
+def stop_pyramid_auto():
+    with _pyr_lock:
+        _pyr_state["running"] = False
+        _pyr_state["status_msg"] = "موقوف"
+
+def get_pyramid_status():
+    with _pyr_lock:
+        trade = _pyr_state.get("active_trade")
         return {
-            "active": _mosquito_state["active"],
-            "last_check": _mosquito_state["last_check"],
-            "direction": _mosquito_state["direction"],
-            "signal_1m": _mosquito_state["signal_1m"],
-            "signal_3m": _mosquito_state["signal_3m"],
-            "signal_5m": _mosquito_state["signal_5m"],
-            "signal_price": _mosquito_state["signal_price"]
+            "ok":           True,
+            "running":      _pyr_state["running"],
+            "status":       _pyr_state["status_msg"],
+            "last_check":   _pyr_state["last_check"],
+            "active_trade": {
+                "symbol":      trade["symbol"],
+                "direction":   trade["direction"],
+                "entry_price": trade["entry_price"],
+                "avg_cost":    trade["avg_cost"],
+                "qty":         trade["qty"],
+                "reinforced":  trade["reinforced"],
+                "entry_time":  trade["entry_time"],
+            } if trade else None,
+            "trades_today": len(_pyr_state["trades_today"]),
         }

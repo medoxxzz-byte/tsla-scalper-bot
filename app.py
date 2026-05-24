@@ -2700,6 +2700,15 @@ def dashboard():
     """لوحة مراقبة حية لجميع الـ endpoints."""
     return render_template('dashboard.html')
 
+@app.route('/pyramid/status', methods=['GET'])
+def pyramid_status():
+    """حالة نظام Pyramid Auto Simulation V11.0."""
+    try:
+        from options_scalper import get_pyramid_status
+        return jsonify(get_pyramid_status())
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
 @app.route('/reversal/status', methods=['GET'])
 def reversal_warning_status():
     """حالة نظام تحذير انعكاس TSLA 5M."""
@@ -2771,7 +2780,13 @@ def _start_background_threads():
         # V9.4: ITM Precision Entry Engine
         start_pe_engine()
         logger.info("V9.4 ITM Precision Entry Engine started ✅ 🎯")
-
+    # V11.0: Pyramid Auto Simulation — Paper Trading
+    try:
+        from options_scalper import start_pyramid_auto
+        start_pyramid_auto()
+        logger.info("V11.0 Pyramid Auto Simulation started ✅ 🦋")
+    except Exception as _pyr_err:
+        logger.warning(f"Pyramid Auto not started: {_pyr_err}")
 _start_background_threads()
 
 if __name__ == "__main__":

@@ -2709,6 +2709,24 @@ def pyramid_status():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
+@app.route('/strategy-b/status', methods=['GET'])
+def strategy_b_status():
+    """حالة Strategy B — VWAP Bounce 15M."""
+    try:
+        from options_scalper import get_strategy_b_status
+        return jsonify(get_strategy_b_status())
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+@app.route('/strategy-c/status', methods=['GET'])
+def strategy_c_status():
+    """حالة Strategy C — Opening Range Breakout."""
+    try:
+        from options_scalper import get_strategy_c_status
+        return jsonify(get_strategy_c_status())
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
 @app.route('/reversal/status', methods=['GET'])
 def reversal_warning_status():
     """حالة نظام تحذير انعكاس TSLA 5M."""
@@ -2787,6 +2805,20 @@ def _start_background_threads():
         logger.info("V11.0 Pyramid Auto Simulation started ✅ 🦋")
     except Exception as _pyr_err:
         logger.warning(f"Pyramid Auto not started: {_pyr_err}")
+    # V11.1: Strategy B — VWAP Bounce 15M
+    try:
+        from options_scalper import start_strategy_b
+        start_strategy_b()
+        logger.info("V11.1 Strategy B (VWAP Bounce 15M) started ✅ 🎯")
+    except Exception as _stb_err:
+        logger.warning(f"Strategy B not started: {_stb_err}")
+    # V11.2: Strategy C — Opening Range Breakout
+    try:
+        from options_scalper import start_strategy_c
+        start_strategy_c()
+        logger.info("V11.2 Strategy C (ORB) started ✅ 📈")
+    except Exception as _stc_err:
+        logger.warning(f"Strategy C not started: {_stc_err}")
 _start_background_threads()
 
 if __name__ == "__main__":

@@ -4120,3 +4120,807 @@ def get_pyramid_status():
             } if trade else None,
             "trades_today": len(_pyr_state["trades_today"]),
         }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# V11.1: Strategy B — VWAP Bounce 15M (Paper Trading)
+# الفكرة: السعر يلمس VWAP على 15M ثم يرتد مع MACD 15M انعكاس + حجم عالٍ
+# نافذة العمل: 10:05 AM → 2:30 PM ET
+# TP: +12% | SL: -15% | Delta: 0.70+
+# ══════════════════════════════════════════════════════════════════════════════
+STB_START_MINUTES   = 35       # 9:30 + 35 = 10:05 AM
+STB_END_MINUTES     = 300      # 9:30 + 300 = 2:30 PM
+STB_TP_PCT          = 0.12     # +12%
+STB_SL_PCT          = -0.15    # -15%
+STB_DELTA_MIN       = 0.70
+STB_DELTA_MAX       = 0.90
+STB_VWAP_PROXIMITY  = 0.50     # ±$0.50 من VWAP
+STB_LOOP_SLEEP      = 45       # كل 45 ثانية (15M فريم — لا نحتاج سرعة)
+
+_stb_lock  = threading.Lock()
+_stb_state = {
+    "running":      False,
+    "active_trade": None,
+    "last_check":   "--",
+    "trades_today": [],
+    "status_msg":   "غير نشط",
+}
+
+def _stb_in_window():
+    """هل نحن في نافذة Strategy B (10:05 AM - 2:30 PM ET)."""
+    import pytz
+    et = pytz.timezone("America/New_York")
+    now = datetime.now(et)
+    open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    elapsed = (now - open_time).total_seconds() / 60
+    return STB_START_MINUTES <= elapsed <= STB_END_MINUTES
+
+def _stb_is_force_close():
+    """هل حان وقت الإغلاق الإجباري."""
+    import pytz
+    et = pytz.timezone("America/New_York")
+    now = datetime.now(et)
+    open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    elapsed = (now - open_time).total_seconds() / 60
+    return elapsed >= STB_END_MINUTES
+
+def _stb_check_vwap_bounce():
+    """فحص ارتداد السعر من VWAP على 15M."""
+    # جلب بيانات 15M
+    bars_15m = get_tsla_bars("15Min", 20)
+    if not bars_15m or len(bars_15m) < 12:
+        return None, 0, 0, {"reason": "بيانات 15M غير كافية"}
+
+    closes = [float(b["c"]) for b in bars_15m]
+    volumes = [float(b["v"]) for b in bars_15m]
+    highs = [float(b["h"]) for b in bars_15m]
+    lows = [float(b["l"]) for b in bars_15m]
+
+    price = closes[-1]
+    prev_close = closes[-2]
+
+    # حساب VWAP تقريبي من الشموع
+    snap = get_tsla_snapshot()
+    vwap = snap.get("vwap", 0) if snap else 0
+    if not vwap:
+        return None, price, 0, {"reason": "VWAP غير متاح"}
+
+    # شرط 1: السعر قريب من VWAP (±$0.50) في الشمعة السابقة أو الحالية
+    prev_near_vwap = abs(prev_close - vwap) <= STB_VWAP_PROXIMITY or \
+                     min(abs(lows[-2] - vwap), abs(lows[-1] - vwap)) <= STB_VWAP_PROXIMITY or \
+                     min(abs(highs[-2] - vwap), abs(highs[-1] - vwap)) <= STB_VWAP_PROXIMITY
+    if not prev_near_vwap:
+        return None, price, vwap, {"reason": f"السعر بعيد عن VWAP (${abs(price-vwap):.2f})"}
+
+    # شرط 2: ارتداد — الشمعة الحالية ابتعدت عن VWAP
+    bounce_up = price > vwap + 0.20 and lows[-1] >= vwap - 0.30
+    bounce_down = price < vwap - 0.20 and highs[-1] <= vwap + 0.30
+    if not bounce_up and not bounce_down:
+        return None, price, vwap, {"reason": "لا يوجد ارتداد واضح"}
+
+    # شرط 3: MACD 15M يبدأ بالانعكاس
+    macd_curr, macd_prev = _rw_macd_hist(closes)
+    if macd_curr is None:
+        return None, price, vwap, {"reason": "MACD 15M غير كافٍ"}
+
+    if bounce_up and not (macd_curr > macd_prev):
+        return None, price, vwap, {"reason": "MACD 15M لا يدعم الارتداد الصاعد"}
+    if bounce_down and not (macd_curr < macd_prev):
+        return None, price, vwap, {"reason": "MACD 15M لا يدعم الارتداد الهابط"}
+
+    # شرط 4: حجم الشمعة أكبر من متوسط آخر 10 شموع
+    avg_vol = sum(volumes[-11:-1]) / 10 if len(volumes) >= 11 else sum(volumes[:-1]) / max(len(volumes)-1, 1)
+    current_vol = volumes[-1]
+    if current_vol < avg_vol * 0.8:
+        return None, price, vwap, {"reason": f"حجم ضعيف ({current_vol:.0f} < {avg_vol:.0f})"}
+
+    direction = "CALL" if bounce_up else "PUT"
+    reasons = {
+        "direction": direction, "price": price, "vwap": vwap,
+        "macd_curr": round(macd_curr, 4), "macd_prev": round(macd_prev, 4),
+        "volume": current_vol, "avg_volume": avg_vol,
+        "distance_from_vwap": round(abs(price - vwap), 2),
+    }
+    return direction, price, vwap, reasons
+
+def _stb_find_contract(price, direction, expiry):
+    """اختيار أفضل عقد ITM لـ Strategy B (Delta 0.70+)."""
+    option_type = "call" if direction == "CALL" else "put"
+    if direction == "CALL":
+        strike_min = round(price - 15, 0)
+        strike_max = round(price - 3, 0)
+    else:
+        strike_min = round(price + 3, 0)
+        strike_max = round(price + 15, 0)
+
+    contracts = get_options_chain(expiry, option_type, strike_min, strike_max)
+    if not contracts:
+        return None
+
+    best = None
+    best_score = -1
+    for c in contracts:
+        strike = float(c.get("strike_price", 0))
+        itm_amount = (price - strike) if direction == "CALL" else (strike - price)
+        if itm_amount < 3:
+            continue
+        approx_delta = min(0.95, 0.50 + itm_amount * 0.045)
+        if not (STB_DELTA_MIN <= approx_delta <= STB_DELTA_MAX):
+            continue
+        oi = int(c.get("open_interest", 0))
+        vol = int(c.get("volume", 0))
+        bid = float(c.get("bid", 0))
+        ask = float(c.get("ask", 0))
+        mid = (bid + ask) / 2 if bid and ask else float(c.get("last_price", 0))
+        if mid < 1.0:
+            continue
+        spread_pct = ((ask - bid) / mid * 100) if mid > 0 else 99
+        if spread_pct > 5:
+            continue
+        score = oi * 0.4 + vol * 0.4 + (10 - spread_pct) * 20
+        if score > best_score:
+            best_score = score
+            best = {
+                "symbol": c.get("symbol", ""),
+                "strike": strike,
+                "expiry": expiry,
+                "approx_delta": round(approx_delta, 2),
+                "open_interest": oi,
+                "volume": vol,
+                "mid": round(mid, 2),
+                "spread_pct": round(spread_pct, 1),
+            }
+    return best
+
+def _stb_send_entry_msg(trade):
+    """إرسال رسالة دخول Strategy B على Telegram."""
+    msg = (
+        f"🎯 *STRATEGY B — VWAP Bounce 15M | {trade['direction']}*\n"
+        f"🕐 دخول: {trade['entry_time']} ET\n"
+        f"📍 TSLA: ${trade['entry_stock_price']:.2f} | "
+        f"{'ارتداد فوق' if trade['direction']=='CALL' else 'ارتداد تحت'} VWAP ${trade['vwap']:.2f}\n"
+        f"📊 MACD 15M: {trade['macd_curr']:+.4f}\n"
+        f"📈 Volume: {trade['trade_volume']:,.0f} (متوسط: {trade['avg_volume']:,.0f})\n"
+        f"─────────────────────\n"
+        f"🎯 العقد: `{trade['symbol']}`\n"
+        f"   Strike: ${trade['strike']:.0f} | Delta≈{trade['approx_delta']}\n"
+        f"   سعر الدخول: ${trade['entry_price']:.2f}\n"
+        f"   OI: {trade['open_interest']:,} | Volume: {trade['volume']:,}\n"
+        f"   Spread: {trade['spread_pct']}%\n"
+        f"─────────────────────\n"
+        f"🎯 TP: ${trade['entry_price']*(1+STB_TP_PCT):.2f} (+{STB_TP_PCT*100:.0f}%)\n"
+        f"🛑 SL: ${trade['entry_price']*(1+STB_SL_PCT):.2f} ({STB_SL_PCT*100:.0f}%)\n"
+        f"⏰ إغلاق إجباري: 2:30 PM ET"
+    )
+    send_telegram(msg)
+
+def _stb_send_close_msg(trade, exit_price, exit_type, pnl_pct):
+    """إرسال رسالة إغلاق Strategy B."""
+    import pytz
+    now_str = datetime.now(pytz.timezone("America/New_York")).strftime("%I:%M %p")
+    emoji = "✅" if pnl_pct > 0 else "❌"
+    msg = (
+        f"{emoji} *STRATEGY B — إغلاق ({exit_type})*\n"
+        f"🕐 {now_str} ET\n"
+        f"💰 سعر الخروج: ${exit_price:.2f}\n"
+        f"📊 النتيجة: {pnl_pct:+.1f}%\n"
+        f"─────────────────────\n"
+        f"📋 *ملخص الصفقة:*\n"
+        f"   الاتجاه: {trade['direction']}\n"
+        f"   العقد: `{trade['symbol']}`\n"
+        f"   دخول: ${trade['entry_price']:.2f} @ {trade['entry_time']}\n"
+        f"   VWAP: ${trade['vwap']:.2f} | Delta≈{trade['approx_delta']}\n"
+        f"   OI: {trade['open_interest']:,} | Volume: {trade['volume']:,}\n"
+        f"   المسافة من VWAP: ${trade['distance_from_vwap']:.2f}\n"
+        f"   سبب الإغلاق: {exit_type}"
+    )
+    send_telegram(msg)
+
+def _stb_execute_entry(direction, price, vwap, reasons):
+    """تنفيذ دخول Strategy B."""
+    import pytz
+    now_str = datetime.now(pytz.timezone("America/New_York")).strftime("%I:%M %p")
+    expiry = _today_expiry()
+    contract = _stb_find_contract(price, direction, expiry)
+    if not contract:
+        return
+
+    order = place_option_order(contract["symbol"], 1, "buy", order_type="market", position_intent="open")
+    if not order:
+        send_telegram(f"❌ Strategy B: فشل تنفيذ أمر الشراء لـ {contract['symbol']}")
+        return
+
+    trade = {
+        "strategy": "B", "symbol": contract["symbol"], "direction": direction,
+        "strike": contract["strike"], "expiry": contract["expiry"],
+        "approx_delta": contract["approx_delta"],
+        "open_interest": contract["open_interest"], "volume": contract["volume"],
+        "spread_pct": contract["spread_pct"],
+        "entry_price": contract["mid"], "entry_stock_price": price,
+        "entry_time": now_str, "vwap": vwap,
+        "macd_curr": reasons.get("macd_curr", 0),
+        "trade_volume": reasons.get("volume", 0),
+        "avg_volume": reasons.get("avg_volume", 0),
+        "distance_from_vwap": reasons.get("distance_from_vwap", 0),
+        "order_id": order.get("id", ""),
+    }
+    with _stb_lock:
+        _stb_state["active_trade"] = trade
+        _stb_state["status_msg"] = f"صفقة مفتوحة: {direction} @ ${contract['mid']:.2f}"
+    _stb_send_entry_msg(trade)
+    logger.info(f"[StratB] ✅ دخول {direction} | {contract['symbol']} @ ${contract['mid']:.2f}")
+
+def _stb_close_trade(trade, exit_price, exit_type, pnl_pct):
+    """إغلاق صفقة Strategy B."""
+    order = place_option_order(trade["symbol"], 1, "sell", order_type="market", position_intent="close")
+    trade["exit_price"] = exit_price
+    trade["exit_type"] = exit_type
+    trade["pnl_pct"] = pnl_pct
+    with _stb_lock:
+        _stb_state["active_trade"] = None
+        _stb_state["trades_today"].append(trade)
+        _stb_state["status_msg"] = f"آخر صفقة: {exit_type} ({pnl_pct:+.1f}%)"
+    _stb_send_close_msg(trade, exit_price, exit_type, pnl_pct)
+    logger.info(f"[StratB] إغلاق: {exit_type} | P&L: {pnl_pct:+.1f}%")
+
+def _stb_monitor_trade(trade):
+    """مراقبة صفقة مفتوحة لـ Strategy B."""
+    try:
+        snap = get_tsla_snapshot()
+        if not snap:
+            return
+        price = snap.get("price", 0)
+        if not price:
+            return
+        # تقدير سعر الخيار بناءً على حركة السهم
+        delta = trade["approx_delta"]
+        price_change = price - trade["entry_stock_price"]
+        if trade["direction"] == "PUT":
+            price_change = -price_change
+        estimated_option_price = trade["entry_price"] + (price_change * delta)
+        estimated_option_price = max(0.01, estimated_option_price)
+
+        pnl_pct = (estimated_option_price - trade["entry_price"]) / trade["entry_price"]
+
+        # TP +12%
+        if pnl_pct >= STB_TP_PCT:
+            _stb_close_trade(trade, estimated_option_price, f"TP +{STB_TP_PCT*100:.0f}%", pnl_pct * 100)
+            return
+        # SL -15%
+        if pnl_pct <= STB_SL_PCT:
+            _stb_close_trade(trade, estimated_option_price, f"SL {STB_SL_PCT*100:.0f}%", pnl_pct * 100)
+            return
+    except Exception as e:
+        logger.error(f"[StratB] Monitor error: {e}")
+
+def _strategy_b_loop():
+    """Main loop لـ Strategy B — VWAP Bounce 15M."""
+    import pytz
+    et_tz = pytz.timezone("America/New_York")
+    logger.info("[StratB] 🎯 V11.1 thread started")
+    while True:
+        try:
+            with _stb_lock:
+                if not _stb_state["running"]:
+                    break
+            now = datetime.now(et_tz)
+            now_str = now.strftime("%I:%M %p")
+            with _stb_lock:
+                _stb_state["last_check"] = now_str
+
+            # إغلاق إجباري
+            if _stb_is_force_close():
+                with _stb_lock:
+                    trade = _stb_state.get("active_trade")
+                if trade:
+                    snap = get_tsla_snapshot()
+                    ep = snap.get("price", trade["entry_stock_price"]) if snap else trade["entry_stock_price"]
+                    delta = trade["approx_delta"]
+                    pc = ep - trade["entry_stock_price"]
+                    if trade["direction"] == "PUT":
+                        pc = -pc
+                    est_price = max(0.01, trade["entry_price"] + pc * delta)
+                    pnl = (est_price - trade["entry_price"]) / trade["entry_price"] * 100
+                    _stb_close_trade(trade, est_price, "إغلاق إجباري 2:30 PM", pnl)
+                time.sleep(60)
+                continue
+
+            if not _stb_in_window():
+                with _stb_lock:
+                    _stb_state["status_msg"] = "انتظار نافذة 10:05 AM"
+                time.sleep(30)
+                continue
+
+            with _stb_lock:
+                active_trade = _stb_state.get("active_trade")
+
+            if active_trade:
+                _stb_monitor_trade(active_trade)
+            else:
+                with _stb_lock:
+                    _stb_state["status_msg"] = f"يراقب VWAP... {now_str}"
+                direction, price, vwap, reasons = _stb_check_vwap_bounce()
+                if direction:
+                    _stb_execute_entry(direction, price, vwap, reasons)
+                else:
+                    with _stb_lock:
+                        _stb_state["status_msg"] = f"انتظار: {reasons.get('reason','لا إشارة')}"
+        except Exception as e:
+            logger.error(f"[StratB] Loop error: {e}")
+        time.sleep(STB_LOOP_SLEEP)
+
+def start_strategy_b():
+    """تشغيل Strategy B."""
+    with _stb_lock:
+        if _stb_state["running"]:
+            return False
+        _stb_state["running"] = True
+    threading.Thread(target=_strategy_b_loop, daemon=True).start()
+    logger.info("[StratB] ✅ V11.1 VWAP Bounce 15M started")
+    return True
+
+def get_strategy_b_status():
+    """حالة Strategy B."""
+    with _stb_lock:
+        trade = _stb_state.get("active_trade")
+        return {
+            "ok":           True,
+            "strategy":     "B — VWAP Bounce 15M",
+            "running":      _stb_state["running"],
+            "status":       _stb_state["status_msg"],
+            "last_check":   _stb_state["last_check"],
+            "active_trade": {
+                "symbol":      trade["symbol"],
+                "direction":   trade["direction"],
+                "entry_price": trade["entry_price"],
+                "entry_time":  trade["entry_time"],
+                "vwap":        trade["vwap"],
+            } if trade else None,
+            "trades_today": len(_stb_state["trades_today"]),
+        }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# V11.2: Strategy C — Opening Range Breakout (ORB) (Paper Trading)
+# الفكرة: كسر أعلى/أدنى أول 30 دقيقة مع حجم عالٍ
+# نافذة العمل: 10:05 AM → 12:30 PM ET
+# TP: +10% | SL: -12% | Delta: 0.65+
+# ══════════════════════════════════════════════════════════════════════════════
+STC_START_MINUTES   = 35       # 9:30 + 35 = 10:05 AM
+STC_END_MINUTES     = 180      # 9:30 + 180 = 12:30 PM
+STC_TP_PCT          = 0.10     # +10%
+STC_SL_PCT          = -0.12    # -12%
+STC_DELTA_MIN       = 0.65
+STC_DELTA_MAX       = 0.90
+STC_LOOP_SLEEP      = 30
+
+_stc_lock  = threading.Lock()
+_stc_state = {
+    "running":      False,
+    "active_trade": None,
+    "last_check":   "--",
+    "trades_today": [],
+    "status_msg":   "غير نشط",
+    "or_high":      None,    # Opening Range High
+    "or_low":       None,    # Opening Range Low
+    "or_built":     False,   # هل تم بناء النطاق؟
+}
+
+def _stc_in_window():
+    """هل نحن في نافذة Strategy C (10:05 AM - 12:30 PM ET)."""
+    import pytz
+    et = pytz.timezone("America/New_York")
+    now = datetime.now(et)
+    open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    elapsed = (now - open_time).total_seconds() / 60
+    return STC_START_MINUTES <= elapsed <= STC_END_MINUTES
+
+def _stc_is_force_close():
+    """هل حان وقت الإغلاق الإجباري."""
+    import pytz
+    et = pytz.timezone("America/New_York")
+    now = datetime.now(et)
+    open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    elapsed = (now - open_time).total_seconds() / 60
+    return elapsed >= STC_END_MINUTES
+
+def _stc_build_opening_range():
+    """بناء Opening Range من أول 30 دقيقة (9:30-10:00)."""
+    bars = get_tsla_bars("5Min", 10)
+    if not bars or len(bars) < 6:
+        return None, None
+
+    # أول 6 شموع 5M = 30 دقيقة
+    or_bars = bars[:6]
+    or_high = max(float(b["h"]) for b in or_bars)
+    or_low = min(float(b["l"]) for b in or_bars)
+    return or_high, or_low
+
+def _stc_check_breakout():
+    """فحص كسر Opening Range."""
+    with _stc_lock:
+        or_high = _stc_state.get("or_high")
+        or_low = _stc_state.get("or_low")
+
+    if not or_high or not or_low:
+        return None, 0, 0, {"reason": "Opening Range لم يُبنَ بعد"}
+
+    snap = get_tsla_snapshot()
+    if not snap:
+        return None, 0, 0, {"reason": "بيانات السعر غير متاحة"}
+
+    price = snap.get("price", 0)
+    vwap = snap.get("vwap", 0)
+    if not price:
+        return None, 0, 0, {"reason": "السعر غير متاح"}
+
+    # فحص Volume — شموع 5M الأخيرة
+    bars_5m = get_tsla_bars("5Min", 12)
+    if not bars_5m or len(bars_5m) < 8:
+        return None, price, vwap, {"reason": "بيانات Volume غير كافية"}
+
+    volumes = [float(b["v"]) for b in bars_5m]
+    avg_vol = sum(volumes[:-2]) / max(len(volumes)-2, 1)
+    recent_vol = (volumes[-1] + volumes[-2]) / 2
+
+    # كسر الأعلى
+    if price > or_high + 0.20:
+        if recent_vol < avg_vol * 0.9:
+            return None, price, vwap, {"reason": f"كسر صاعد لكن Volume ضعيف"}
+        direction = "CALL"
+        reasons = {
+            "direction": direction, "price": price, "vwap": vwap,
+            "or_high": or_high, "or_low": or_low,
+            "breakout_amount": round(price - or_high, 2),
+            "volume": recent_vol, "avg_volume": avg_vol,
+        }
+        return direction, price, vwap, reasons
+
+    # كسر الأدنى
+    if price < or_low - 0.20:
+        if recent_vol < avg_vol * 0.9:
+            return None, price, vwap, {"reason": f"كسر هابط لكن Volume ضعيف"}
+        direction = "PUT"
+        reasons = {
+            "direction": direction, "price": price, "vwap": vwap,
+            "or_high": or_high, "or_low": or_low,
+            "breakout_amount": round(or_low - price, 2),
+            "volume": recent_vol, "avg_volume": avg_vol,
+        }
+        return direction, price, vwap, reasons
+
+    return None, price, vwap, {"reason": f"داخل النطاق (${or_low:.2f} - ${or_high:.2f})"}
+
+def _stc_find_contract(price, direction, expiry):
+    """اختيار أفضل عقد ITM لـ Strategy C (Delta 0.65+)."""
+    option_type = "call" if direction == "CALL" else "put"
+    if direction == "CALL":
+        strike_min = round(price - 15, 0)
+        strike_max = round(price - 2, 0)
+    else:
+        strike_min = round(price + 2, 0)
+        strike_max = round(price + 15, 0)
+
+    contracts = get_options_chain(expiry, option_type, strike_min, strike_max)
+    if not contracts:
+        return None
+
+    best = None
+    best_score = -1
+    for c in contracts:
+        strike = float(c.get("strike_price", 0))
+        itm_amount = (price - strike) if direction == "CALL" else (strike - price)
+        if itm_amount < 2:
+            continue
+        approx_delta = min(0.95, 0.50 + itm_amount * 0.045)
+        if not (STC_DELTA_MIN <= approx_delta <= STC_DELTA_MAX):
+            continue
+        oi = int(c.get("open_interest", 0))
+        vol = int(c.get("volume", 0))
+        bid = float(c.get("bid", 0))
+        ask = float(c.get("ask", 0))
+        mid = (bid + ask) / 2 if bid and ask else float(c.get("last_price", 0))
+        if mid < 1.0:
+            continue
+        spread_pct = ((ask - bid) / mid * 100) if mid > 0 else 99
+        if spread_pct > 5:
+            continue
+        score = oi * 0.4 + vol * 0.4 + (10 - spread_pct) * 20
+        if score > best_score:
+            best_score = score
+            best = {
+                "symbol": c.get("symbol", ""),
+                "strike": strike,
+                "expiry": expiry,
+                "approx_delta": round(approx_delta, 2),
+                "open_interest": oi,
+                "volume": vol,
+                "mid": round(mid, 2),
+                "spread_pct": round(spread_pct, 1),
+            }
+    return best
+
+def _stc_send_entry_msg(trade):
+    """إرسال رسالة دخول Strategy C على Telegram."""
+    msg = (
+        f"📈 *STRATEGY C — ORB Breakout | {trade['direction']}*\n"
+        f"🕐 دخول: {trade['entry_time']} ET\n"
+        f"📍 TSLA: ${trade['entry_stock_price']:.2f}\n"
+        f"📊 Opening Range: ${trade['or_low']:.2f} - ${trade['or_high']:.2f}\n"
+        f"💥 كسر بـ ${trade['breakout_amount']:.2f}\n"
+        f"📈 Volume: {trade['trade_volume']:,.0f} (متوسط: {trade['avg_volume']:,.0f})\n"
+        f"─────────────────────\n"
+        f"🎯 العقد: `{trade['symbol']}`\n"
+        f"   Strike: ${trade['strike']:.0f} | Delta≈{trade['approx_delta']}\n"
+        f"   سعر الدخول: ${trade['entry_price']:.2f}\n"
+        f"   OI: {trade['open_interest']:,} | Volume: {trade['volume']:,}\n"
+        f"   Spread: {trade['spread_pct']}%\n"
+        f"─────────────────────\n"
+        f"🎯 TP: ${trade['entry_price']*(1+STC_TP_PCT):.2f} (+{STC_TP_PCT*100:.0f}%)\n"
+        f"🛑 SL: ${trade['entry_price']*(1+STC_SL_PCT):.2f} ({STC_SL_PCT*100:.0f}%)\n"
+        f"⏰ إغلاق إجباري: 12:30 PM ET"
+    )
+    send_telegram(msg)
+
+def _stc_send_close_msg(trade, exit_price, exit_type, pnl_pct):
+    """إرسال رسالة إغلاق Strategy C."""
+    import pytz
+    now_str = datetime.now(pytz.timezone("America/New_York")).strftime("%I:%M %p")
+    emoji = "✅" if pnl_pct > 0 else "❌"
+    msg = (
+        f"{emoji} *STRATEGY C — إغلاق ({exit_type})*\n"
+        f"🕐 {now_str} ET\n"
+        f"💰 سعر الخروج: ${exit_price:.2f}\n"
+        f"📊 النتيجة: {pnl_pct:+.1f}%\n"
+        f"─────────────────────\n"
+        f"📋 *ملخص الصفقة:*\n"
+        f"   الاتجاه: {trade['direction']}\n"
+        f"   العقد: `{trade['symbol']}`\n"
+        f"   دخول: ${trade['entry_price']:.2f} @ {trade['entry_time']}\n"
+        f"   OR: ${trade['or_low']:.2f} - ${trade['or_high']:.2f}\n"
+        f"   Delta≈{trade['approx_delta']} | OI: {trade['open_interest']:,}\n"
+        f"   كسر: ${trade['breakout_amount']:.2f}\n"
+        f"   سبب الإغلاق: {exit_type}"
+    )
+    send_telegram(msg)
+
+def _stc_execute_entry(direction, price, vwap, reasons):
+    """تنفيذ دخول Strategy C."""
+    import pytz
+    now_str = datetime.now(pytz.timezone("America/New_York")).strftime("%I:%M %p")
+    expiry = _today_expiry()
+    contract = _stc_find_contract(price, direction, expiry)
+    if not contract:
+        return
+
+    order = place_option_order(contract["symbol"], 1, "buy", order_type="market", position_intent="open")
+    if not order:
+        send_telegram(f"❌ Strategy C: فشل تنفيذ أمر الشراء لـ {contract['symbol']}")
+        return
+
+    trade = {
+        "strategy": "C", "symbol": contract["symbol"], "direction": direction,
+        "strike": contract["strike"], "expiry": contract["expiry"],
+        "approx_delta": contract["approx_delta"],
+        "open_interest": contract["open_interest"], "volume": contract["volume"],
+        "spread_pct": contract["spread_pct"],
+        "entry_price": contract["mid"], "entry_stock_price": price,
+        "entry_time": now_str, "vwap": vwap,
+        "or_high": reasons.get("or_high", 0),
+        "or_low": reasons.get("or_low", 0),
+        "breakout_amount": reasons.get("breakout_amount", 0),
+        "trade_volume": reasons.get("volume", 0),
+        "avg_volume": reasons.get("avg_volume", 0),
+        "order_id": order.get("id", ""),
+    }
+    with _stc_lock:
+        _stc_state["active_trade"] = trade
+        _stc_state["status_msg"] = f"صفقة مفتوحة: {direction} @ ${contract['mid']:.2f}"
+    _stc_send_entry_msg(trade)
+    logger.info(f"[StratC] ✅ دخول {direction} | {contract['symbol']} @ ${contract['mid']:.2f}")
+
+def _stc_close_trade(trade, exit_price, exit_type, pnl_pct):
+    """إغلاق صفقة Strategy C."""
+    order = place_option_order(trade["symbol"], 1, "sell", order_type="market", position_intent="close")
+    trade["exit_price"] = exit_price
+    trade["exit_type"] = exit_type
+    trade["pnl_pct"] = pnl_pct
+    with _stc_lock:
+        _stc_state["active_trade"] = None
+        _stc_state["trades_today"].append(trade)
+        _stc_state["status_msg"] = f"آخر صفقة: {exit_type} ({pnl_pct:+.1f}%)"
+    _stc_send_close_msg(trade, exit_price, exit_type, pnl_pct)
+    logger.info(f"[StratC] إغلاق: {exit_type} | P&L: {pnl_pct:+.1f}%")
+
+def _stc_monitor_trade(trade):
+    """مراقبة صفقة مفتوحة لـ Strategy C."""
+    try:
+        snap = get_tsla_snapshot()
+        if not snap:
+            return
+        price = snap.get("price", 0)
+        if not price:
+            return
+        delta = trade["approx_delta"]
+        price_change = price - trade["entry_stock_price"]
+        if trade["direction"] == "PUT":
+            price_change = -price_change
+        estimated_option_price = trade["entry_price"] + (price_change * delta)
+        estimated_option_price = max(0.01, estimated_option_price)
+
+        pnl_pct = (estimated_option_price - trade["entry_price"]) / trade["entry_price"]
+
+        # TP +10%
+        if pnl_pct >= STC_TP_PCT:
+            _stc_close_trade(trade, estimated_option_price, f"TP +{STC_TP_PCT*100:.0f}%", pnl_pct * 100)
+            return
+        # SL -12%
+        if pnl_pct <= STC_SL_PCT:
+            _stc_close_trade(trade, estimated_option_price, f"SL {STC_SL_PCT*100:.0f}%", pnl_pct * 100)
+            return
+    except Exception as e:
+        logger.error(f"[StratC] Monitor error: {e}")
+
+def _strategy_c_loop():
+    """Main loop لـ Strategy C — Opening Range Breakout."""
+    import pytz
+    et_tz = pytz.timezone("America/New_York")
+    logger.info("[StratC] 📈 V11.2 thread started")
+
+    while True:
+        try:
+            with _stc_lock:
+                if not _stc_state["running"]:
+                    break
+            now = datetime.now(et_tz)
+            now_str = now.strftime("%I:%M %p")
+            with _stc_lock:
+                _stc_state["last_check"] = now_str
+
+            # بناء Opening Range (مرة واحدة بعد 10:00 AM)
+            open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
+            elapsed = (now - open_time).total_seconds() / 60
+            with _stc_lock:
+                or_built = _stc_state["or_built"]
+
+            if elapsed >= 30 and not or_built:
+                or_high, or_low = _stc_build_opening_range()
+                if or_high and or_low:
+                    with _stc_lock:
+                        _stc_state["or_high"] = or_high
+                        _stc_state["or_low"] = or_low
+                        _stc_state["or_built"] = True
+                    send_telegram(
+                        f"📊 *Strategy C — Opening Range*\n"
+                        f"🔼 High: ${or_high:.2f}\n"
+                        f"🔽 Low: ${or_low:.2f}\n"
+                        f"📐 Range: ${or_high - or_low:.2f}"
+                    )
+                    logger.info(f"[StratC] OR built: ${or_low:.2f} - ${or_high:.2f}")
+
+            # Reset OR في بداية يوم جديد
+            if elapsed < 5:
+                with _stc_lock:
+                    _stc_state["or_built"] = False
+                    _stc_state["or_high"] = None
+                    _stc_state["or_low"] = None
+                    _stc_state["trades_today"] = []
+
+            # إغلاق إجباري
+            if _stc_is_force_close():
+                with _stc_lock:
+                    trade = _stc_state.get("active_trade")
+                if trade:
+                    snap = get_tsla_snapshot()
+                    ep = snap.get("price", trade["entry_stock_price"]) if snap else trade["entry_stock_price"]
+                    delta = trade["approx_delta"]
+                    pc = ep - trade["entry_stock_price"]
+                    if trade["direction"] == "PUT":
+                        pc = -pc
+                    est_price = max(0.01, trade["entry_price"] + pc * delta)
+                    pnl = (est_price - trade["entry_price"]) / trade["entry_price"] * 100
+                    _stc_close_trade(trade, est_price, "إغلاق إجباري 12:30 PM", pnl)
+                time.sleep(60)
+                continue
+
+            if not _stc_in_window():
+                with _stc_lock:
+                    _stc_state["status_msg"] = "انتظار نافذة 10:05 AM"
+                time.sleep(30)
+                continue
+
+            with _stc_lock:
+                active_trade = _stc_state.get("active_trade")
+
+            if active_trade:
+                _stc_monitor_trade(active_trade)
+            else:
+                with _stc_lock:
+                    _stc_state["status_msg"] = f"يراقب OR... {now_str}"
+                direction, price, vwap, reasons = _stc_check_breakout()
+                if direction:
+                    _stc_execute_entry(direction, price, vwap, reasons)
+                else:
+                    with _stc_lock:
+                        _stc_state["status_msg"] = f"انتظار: {reasons.get('reason','لا إشارة')}"
+        except Exception as e:
+            logger.error(f"[StratC] Loop error: {e}")
+        time.sleep(STC_LOOP_SLEEP)
+
+def _stc_weekly_report_combined():
+    """تقرير أسبوعي مقارن لجميع الاستراتيجيات (يعمل مع Pyramid report)."""
+    import pytz
+    et_tz = pytz.timezone("America/New_York")
+    while True:
+        try:
+            now = datetime.now(et_tz)
+            # كل جمعة 4:05 PM (بعد تقرير Pyramid بـ 5 دقائق)
+            if now.weekday() == 4 and now.hour == 16 and 5 <= now.minute < 7:
+                with _stb_lock:
+                    trades_b = list(_stb_state["trades_today"])
+                with _stc_lock:
+                    trades_c = list(_stc_state["trades_today"])
+                with _pyr_lock:
+                    trades_a = list(_pyr_state["trades_today"])
+
+                def _calc_stats(trades, name):
+                    total = len(trades)
+                    if total == 0:
+                        return f"   {name}: لا صفقات"
+                    wins = sum(1 for t in trades if t.get("pnl_pct", 0) > 0)
+                    wr = wins / total * 100
+                    avg_pnl = sum(t.get("pnl_pct", 0) for t in trades) / total
+                    return f"   {name}: {total} صفقات | Win {wr:.0f}% | Avg P&L: {avg_pnl:+.1f}%"
+
+                msg = (
+                    f"📊 *STRATEGY LAB — تقرير أسبوعي مقارن*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"{_calc_stats(trades_a, 'A (Pyramid ITM)')}\n"
+                    f"{_calc_stats(trades_b, 'B (VWAP Bounce)')}\n"
+                    f"{_calc_stats(trades_c, 'C (ORB)')}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n"
+                )
+                # أفضل استراتيجية
+                all_stats = []
+                for name, trades in [("A", trades_a), ("B", trades_b), ("C", trades_c)]:
+                    if trades:
+                        wr = sum(1 for t in trades if t.get("pnl_pct",0)>0) / len(trades) * 100
+                        all_stats.append((name, wr))
+                if all_stats:
+                    best = max(all_stats, key=lambda x: x[1])
+                    msg += f"🏆 أفضل استراتيجية: {best[0]} (Win Rate: {best[1]:.0f}%)\n"
+
+                send_telegram(msg)
+        except Exception as e:
+            logger.error(f"[StratC] Weekly combined report error: {e}")
+        time.sleep(60)
+
+def start_strategy_c():
+    """تشغيل Strategy C."""
+    with _stc_lock:
+        if _stc_state["running"]:
+            return False
+        _stc_state["running"] = True
+    threading.Thread(target=_strategy_c_loop, daemon=True).start()
+    threading.Thread(target=_stc_weekly_report_combined, daemon=True).start()
+    logger.info("[StratC] ✅ V11.2 ORB started")
+    return True
+
+def get_strategy_c_status():
+    """حالة Strategy C."""
+    with _stc_lock:
+        trade = _stc_state.get("active_trade")
+        return {
+            "ok":           True,
+            "strategy":     "C — Opening Range Breakout",
+            "running":      _stc_state["running"],
+            "status":       _stc_state["status_msg"],
+            "last_check":   _stc_state["last_check"],
+            "or_high":      _stc_state.get("or_high"),
+            "or_low":       _stc_state.get("or_low"),
+            "active_trade": {
+                "symbol":      trade["symbol"],
+                "direction":   trade["direction"],
+                "entry_price": trade["entry_price"],
+                "entry_time":  trade["entry_time"],
+            } if trade else None,
+            "trades_today": len(_stc_state["trades_today"]),
+        }

@@ -2798,27 +2798,27 @@ def _start_background_threads():
         # V9.4: ITM Precision Entry Engine
         start_pe_engine()
         logger.info("V9.4 ITM Precision Entry Engine started ✅ 🎯")
-    # V11.0: Pyramid Auto Simulation — Paper Trading
+    # V12.0: Strategy A — True Pyramid (Pyramiding on Profit + MTF)
     try:
         from options_scalper import start_pyramid_auto
-        start_pyramid_auto()
-        logger.info("V11.0 Pyramid Auto Simulation started ✅ 🦋")
+        result = start_pyramid_auto()
+        logger.info(f"V12.0 Pyramid Auto (True Pyramiding+MTF) started ✅ 🦋 result={result}")
     except Exception as _pyr_err:
-        logger.warning(f"Pyramid Auto not started: {_pyr_err}")
+        logger.error(f"Pyramid Auto FAILED to start: {_pyr_err}", exc_info=True)
     # V11.1: Strategy B — VWAP Bounce 15M
     try:
         from options_scalper import start_strategy_b
-        start_strategy_b()
-        logger.info("V11.1 Strategy B (VWAP Bounce 15M) started ✅ 🎯")
+        result = start_strategy_b()
+        logger.info(f"V11.1 Strategy B (VWAP Bounce 15M) started ✅ 🎯 result={result}")
     except Exception as _stb_err:
-        logger.warning(f"Strategy B not started: {_stb_err}")
+        logger.error(f"Strategy B FAILED to start: {_stb_err}", exc_info=True)
     # V11.2: Strategy C — Opening Range Breakout
     try:
         from options_scalper import start_strategy_c
-        start_strategy_c()
-        logger.info("V11.2 Strategy C (ORB) started ✅ 📈")
+        result = start_strategy_c()
+        logger.info(f"V11.2 Strategy C (ORB) started ✅ 📈 result={result}")
     except Exception as _stc_err:
-        logger.warning(f"Strategy C not started: {_stc_err}")
+        logger.error(f"Strategy C FAILED to start: {_stc_err}", exc_info=True)
 _start_background_threads()
 
 if __name__ == "__main__":

@@ -3752,24 +3752,23 @@ def get_reversal_warning_status():
             "alert_count":        len(_reversal_warn_state["alerts_today"]),
             "current_conditions": dict(_reversal_warn_state["current_conditions"]),
         }
-
-
 # ══════════════════════════════════════════════════════════════════════════════
-# V11.0: Pyramid Auto Simulation — Paper Trading
+# V12.0: Strategy A — True Pyramid (Pyramiding on Profit) — Paper Trading
+# الفكرة: دخول بعقد واحد مع تأكيد MTF (15M+5M+1M)، تعزيز على الربح فقط
 # نافذة العمل: 10:05 AM → 12:10 PM ET
-# الملعب: ITM Options (Delta 0.60-0.90) | Alpaca Paper
-# الهدف: جمع بيانات حقيقية لتحسين استراتيجية Pyramid
+# الملعب: ITM Options (Delta 0.65-0.85) | Alpaca Paper
+# الهدف: جمع بيانات حقيقية + Pyramiding صحيح + حماية الرأسمال
 # ══════════════════════════════════════════════════════════════════════════════
-
-PYR_START_MINUTES   = 35
-PYR_END_MINUTES     = 160
-PYR_TP1_PCT         = 0.15
-PYR_ADD_PCT         = -0.30
-PYR_TP2_PCT         = 0.08
-PYR_SL_PCT          = -0.20
-PYR_DELTA_MIN       = 0.60
-PYR_DELTA_MAX       = 0.90
+PYR_START_MINUTES   = 35        # 9:30 + 35 = 10:05 AM
+PYR_END_MINUTES     = 160       # 9:30 + 160 = 12:10 PM
+PYR_TP1_PCT         = 0.12      # +12% → تعزيز (Pyramid on profit)
+PYR_TP_FINAL_PCT    = 0.20      # +20% من المتوسط → إغلاق نهائي
+PYR_SL_INIT_PCT     = -0.15     # -15% قبل التعزيز → إغلاق
+PYR_SL_AFTER_PCT    = 0.00      # Breakeven بعد التعزيز → إغلاق (حماية الربح)
+PYR_DELTA_MIN       = 0.65
+PYR_DELTA_MAX       = 0.85
 PYR_LOOP_SLEEP      = 30
+PYR_MTF_MIN_AGREE   = 2         # على الأقل 2 من 3 إطارات تتفق
 
 _pyr_lock  = threading.Lock()
 _pyr_state = {
@@ -3779,6 +3778,8 @@ _pyr_state = {
     "trades_today": [],
     "status_msg":   "غير نشط",
 }
+
+# ─── أدوات مساعدة ────────────────────────────────────────────────────────────
 
 def _pyr_in_window():
     import pytz
@@ -3797,11 +3798,152 @@ def _pyr_is_force_close():
     return elapsed >= PYR_END_MINUTES
 
 def _pyr_macd(timeframe, bar_count=50):
+    """إرجاع (curr_hist, prev_hist, macd_line_curr, macd_line_prev)"""
     bars = get_tsla_bars(timeframe, bar_count)
     if not bars or len(bars) < 35:
-        return None, None
+        return None, None, None, None
     closes = [float(b["c"]) for b in bars]
-    return _rw_macd_hist(closes)
+    # حساب MACD Line و Signal Line
+    macd_series = []
+    for i in range(26, len(closes) + 1):
+        ef = _rw_ema(closes[:i], 12)
+        es = _rw_ema(closes[:i], 26)
+        if ef and es:
+            macd_series.append(ef - es)
+    if len(macd_series) < 11:
+        return None, None, None, None
+    sig_line_curr = _rw_ema(macd_series, 9)
+    sig_line_prev = _rw_ema(macd_series[:-1], 9) if len(macd_series) > 9 else None
+    if sig_line_curr is None:
+        return None, None, None, None
+    curr_hist = macd_series[-1] - sig_line_curr
+    prev_hist = (macd_series[-2] - sig_line_prev) if sig_line_prev else None
+    macd_line_curr = macd_series[-1]
+    macd_line_prev = macd_series[-2] if len(macd_series) >= 2 else None
+    return curr_hist, prev_hist, macd_line_curr, macd_line_prev
+
+def _pyr_ema9(timeframe, bar_count=30):
+    """حساب EMA9 من آخر شمعة"""
+    bars = get_tsla_bars(timeframe, bar_count)
+    if not bars or len(bars) < 10:
+        return None
+    closes = [float(b["c"]) for b in bars]
+    return _rw_ema(closes, 9)
+
+# ─── فلتر MTF (Multi-Timeframe Trend Confirmation) ───────────────────────────
+
+def _pyr_mtf_score(direction):
+    """
+    يفحص 3 إطارات زمنية ويعطي نقطة لكل واحد يتفق مع الاتجاه.
+    يُرجع (score, details_dict)
+    """
+    score = 0
+    details = {}
+
+    # 1) إطار 15M — MACD Histogram في نفس الاتجاه
+    h15_curr, h15_prev, _, _ = _pyr_macd("15Min", 80)
+    if h15_curr is not None:
+        if direction == "CALL" and h15_curr > 0:
+            score += 1
+            details["15M_macd"] = f"✅ {h15_curr:+.4f}"
+        elif direction == "PUT" and h15_curr < 0:
+            score += 1
+            details["15M_macd"] = f"✅ {h15_curr:+.4f}"
+        else:
+            details["15M_macd"] = f"❌ {h15_curr:+.4f}"
+    else:
+        details["15M_macd"] = "⚠️ N/A"
+
+    # 2) إطار 5M — السعر فوق/تحت VWAP + EMA9
+    snap = get_tsla_snapshot()
+    if snap:
+        price = snap.get("price", 0)
+        vwap  = snap.get("vwap", 0)
+        ema9_5m = _pyr_ema9("5Min", 30)
+        if price and vwap and ema9_5m:
+            if direction == "CALL" and price > vwap and price > ema9_5m:
+                score += 1
+                details["5M_price"] = f"✅ ${price:.2f} > VWAP ${vwap:.2f} > EMA9 ${ema9_5m:.2f}"
+            elif direction == "PUT" and price < vwap and price < ema9_5m:
+                score += 1
+                details["5M_price"] = f"✅ ${price:.2f} < VWAP ${vwap:.2f} < EMA9 ${ema9_5m:.2f}"
+            else:
+                details["5M_price"] = f"❌ price=${price:.2f} vwap=${vwap:.2f} ema9=${ema9_5m:.2f}"
+        else:
+            details["5M_price"] = "⚠️ N/A"
+    else:
+        details["5M_price"] = "⚠️ N/A"
+
+    # 3) إطار 3M — MACD Line يعبر الصفر (Zero Cross)
+    _, _, ml3_curr, ml3_prev = _pyr_macd("3Min", 60)
+    if ml3_curr is not None and ml3_prev is not None:
+        if direction == "CALL" and ml3_prev < 0 and ml3_curr > 0:
+            score += 1
+            details["3M_zero_cross"] = f"✅ {ml3_prev:+.4f}→{ml3_curr:+.4f}"
+        elif direction == "PUT" and ml3_prev > 0 and ml3_curr < 0:
+            score += 1
+            details["3M_zero_cross"] = f"✅ {ml3_prev:+.4f}→{ml3_curr:+.4f}"
+        else:
+            details["3M_zero_cross"] = f"❌ {ml3_prev:+.4f}→{ml3_curr:+.4f}"
+    else:
+        details["3M_zero_cross"] = "⚠️ N/A"
+
+    return score, details
+
+# ─── شروط الدخول ─────────────────────────────────────────────────────────────
+
+def _pyr_check_entry():
+    """
+    شروط الدخول V12.0:
+    1. MACD 1M Zero Cross (سالب→موجب = CALL، موجب→سالب = PUT)
+    2. السعر فوق VWAP للـ CALL / تحت VWAP للـ PUT
+    3. MTF Score >= 2 من 3 (15M + 5M + 3M)
+    """
+    snap = get_tsla_snapshot()
+    if not snap or snap["price"] <= 0:
+        return None, 0, 0, {}
+    price = snap["price"]
+    vwap  = snap["vwap"]
+
+    # شرط 1: MACD 1M Zero Cross
+    _, _, ml1_curr, ml1_prev = _pyr_macd("1Min", 50)
+    if ml1_curr is None or ml1_prev is None:
+        return None, price, vwap, {"reason": "MACD 1M غير متاح"}
+
+    bull_cross = (ml1_prev < 0 and ml1_curr > 0)
+    bear_cross = (ml1_prev > 0 and ml1_curr < 0)
+    if not bull_cross and not bear_cross:
+        return None, price, vwap, {"reason": f"لا يوجد Zero Cross 1M ({ml1_prev:+.4f}→{ml1_curr:+.4f})"}
+
+    direction = "CALL" if bull_cross else "PUT"
+
+    # شرط 2: VWAP
+    if direction == "CALL" and price <= vwap:
+        return None, price, vwap, {"reason": f"CALL مرفوض: تحت VWAP (${price:.2f} ≤ ${vwap:.2f})"}
+    if direction == "PUT" and price >= vwap:
+        return None, price, vwap, {"reason": f"PUT مرفوض: فوق VWAP (${price:.2f} ≥ ${vwap:.2f})"}
+
+    # شرط 3: MTF Score
+    mtf_score, mtf_details = _pyr_mtf_score(direction)
+    if mtf_score < PYR_MTF_MIN_AGREE:
+        return None, price, vwap, {
+            "reason": f"MTF ضعيف ({mtf_score}/3) — {mtf_details}"
+        }
+
+    # جلب MACD Histogram للتسجيل
+    h1_curr, _, _, _ = _pyr_macd("1Min", 50)
+
+    reasons = {
+        "direction": direction, "price": price, "vwap": vwap,
+        "macd1_line_curr": round(ml1_curr, 4),
+        "macd1_line_prev": round(ml1_prev, 4),
+        "macd1_hist": round(h1_curr, 4) if h1_curr else 0,
+        "mtf_score": mtf_score,
+        "mtf_details": mtf_details,
+    }
+    return direction, price, vwap, reasons
+
+# ─── اختيار العقد ────────────────────────────────────────────────────────────
 
 def _pyr_find_best_contract(price, direction, expiry):
     option_type = "call" if direction == "CALL" else "put"
@@ -3850,45 +3992,24 @@ def _pyr_find_best_contract(price, direction, expiry):
             }
     return best
 
-def _pyr_check_entry():
-    snap = get_tsla_snapshot()
-    if not snap or snap["price"] <= 0:
-        return None, 0, 0, {}
-    price = snap["price"]
-    vwap  = snap["vwap"]
-    macd1_curr, macd1_prev = _pyr_macd("1Min", 50)
-    if macd1_curr is None or macd1_prev is None:
-        return None, price, vwap, {"reason": "MACD 1M غير متاح"}
-    macd3_curr, _ = _pyr_macd("3Min", 50)
-    if macd3_curr is None:
-        macd3_curr = 0
-    bull_reversal = (macd1_prev < 0 and macd1_curr > 0)
-    bear_reversal = (macd1_prev > 0 and macd1_curr < 0)
-    if not bull_reversal and not bear_reversal:
-        return None, price, vwap, {"reason": "لا يوجد انعكاس MACD 1M"}
-    direction = "CALL" if bull_reversal else "PUT"
-    if direction == "CALL" and price <= vwap:
-        return None, price, vwap, {"reason": f"CALL مرفوض: تحت VWAP"}
-    if direction == "PUT" and price >= vwap:
-        return None, price, vwap, {"reason": f"PUT مرفوض: فوق VWAP"}
-    if direction == "CALL" and macd3_curr < -0.05:
-        return None, price, vwap, {"reason": f"CALL مرفوض: MACD 3M هابط"}
-    if direction == "PUT" and macd3_curr > 0.05:
-        return None, price, vwap, {"reason": f"PUT مرفوض: MACD 3M صاعد"}
-    reasons = {
-        "direction": direction, "price": price, "vwap": vwap,
-        "macd1_curr": round(macd1_curr, 4), "macd1_prev": round(macd1_prev, 4),
-        "macd3_curr": round(macd3_curr, 4),
-    }
-    return direction, price, vwap, reasons
+# ─── رسائل Telegram ──────────────────────────────────────────────────────────
 
 def _pyr_send_entry_msg(trade):
+    mtf = trade.get("mtf_details", {})
+    mtf_str = (
+        f"   15M MACD: {mtf.get('15M_macd','N/A')}\n"
+        f"   5M Price: {mtf.get('5M_price','N/A')}\n"
+        f"   3M ZeroCross: {mtf.get('3M_zero_cross','N/A')}"
+    )
     msg = (
-        f"🦋 *PYRAMID AUTO | {trade['direction']}*\n"
+        f"🦋 *PYRAMID V12 | {trade['direction']}*\n"
         f"🕐 دخول: {trade['entry_time']} ET\n"
         f"📍 TSLA: ${trade['entry_stock_price']:.2f} | "
         f"{'فوق' if trade['direction']=='CALL' else 'تحت'} VWAP ${trade['vwap']:.2f}\n"
-        f"📈 MACD 1M: {trade['macd1_curr']:+.4f} | MACD 3M: {trade['macd3_curr']:+.4f}\n"
+        f"📈 MACD 1M Line: {trade['macd1_line_curr']:+.4f} (عبر الصفر)\n"
+        f"─────────────────────\n"
+        f"🎯 MTF Score: {trade['mtf_score']}/3\n"
+        f"{mtf_str}\n"
         f"─────────────────────\n"
         f"🎯 العقد: `{trade['symbol']}`\n"
         f"   Strike: ${trade['strike']:.0f} | Delta≈{trade['approx_delta']}\n"
@@ -3898,33 +4019,34 @@ def _pyr_send_entry_msg(trade):
         f"─────────────────────\n"
         f"📊 SPY: {trade.get('spy_direction','N/A')} ({trade.get('spy_change',0):+.3f}%)\n"
         f"─────────────────────\n"
-        f"🎯 TP1: ${trade['entry_price']*1.15:.2f} (+15%)\n"
-        f"⚠️ تعزيز عند: ${trade['entry_price']*0.70:.2f} (-30%)\n"
-        f"🛑 SL بعد تعزيز: -20% من المتوسط\n"
+        f"🎯 TP1 (تعزيز): +{PYR_TP1_PCT*100:.0f}% → إضافة عقد\n"
+        f"🏆 TP Final: +{PYR_TP_FINAL_PCT*100:.0f}% من المتوسط → إغلاق\n"
+        f"🛡️ SL: {PYR_SL_INIT_PCT*100:.0f}% (قبل تعزيز) | Breakeven (بعد تعزيز)\n"
         f"⏰ إغلاق إجباري: 12:10 PM ET"
     )
     send_telegram(msg)
 
-def _pyr_send_add_msg(trade, current_price, avg_cost):
+def _pyr_send_add_msg(trade, current_price, new_avg):
     import pytz
     now_str = datetime.now(pytz.timezone("America/New_York")).strftime("%I:%M %p")
     msg = (
-        f"📊 *PYRAMID — تعزيز*\n"
+        f"📈 *PYRAMID — تعزيز على الربح ✅*\n"
         f"🕐 {now_str} ET\n"
-        f"📉 وصل -30% → ${current_price:.2f}\n"
-        f"🔄 شراء 2 عقد إضافيين\n"
-        f"💰 متوسط التكلفة الجديد: ${avg_cost:.2f}\n"
-        f"🎯 TP2: ${avg_cost*1.08:.2f} (+8%)\n"
-        f"🛑 SL: ${avg_cost*0.80:.2f} (-20%)"
+        f"💰 وصل +{PYR_TP1_PCT*100:.0f}% → ${current_price:.2f}\n"
+        f"🔄 إضافة عقد (إجمالي {trade['qty']} عقود)\n"
+        f"📊 متوسط التكلفة الجديد: ${new_avg:.2f}\n"
+        f"🛡️ SL الجديد: Breakeven ${new_avg:.2f} (لا خسارة)\n"
+        f"🏆 TP Final: ${new_avg * (1 + PYR_TP_FINAL_PCT):.2f} (+{PYR_TP_FINAL_PCT*100:.0f}%)"
     )
     send_telegram(msg)
 
 def _pyr_send_close_msg(trade, exit_price, exit_type, pnl_pct):
     import pytz
     now_str = datetime.now(pytz.timezone("America/New_York")).strftime("%I:%M %p")
-    emoji = "✅" if pnl_pct > 0 else "❌"
+    emoji = "✅" if pnl_pct > 0 else ("🟡" if pnl_pct == 0 else "❌")
+    mtf = trade.get("mtf_details", {})
     msg = (
-        f"{emoji} *PYRAMID — إغلاق ({exit_type})*\n"
+        f"{emoji} *PYRAMID V12 — إغلاق ({exit_type})*\n"
         f"🕐 {now_str} ET\n"
         f"💰 سعر الخروج: ${exit_price:.2f}\n"
         f"📊 النتيجة: {pnl_pct:+.1f}%\n"
@@ -3936,12 +4058,19 @@ def _pyr_send_close_msg(trade, exit_price, exit_type, pnl_pct):
         f"   VWAP: ${trade['vwap']:.2f} | Delta≈{trade['approx_delta']}\n"
         f"   OI: {trade['open_interest']:,} | Volume: {trade['volume']:,}\n"
         f"   تعزيز: {'✅ نعم' if trade.get('reinforced') else '❌ لا'}\n"
+        f"   عدد العقود: {trade.get('qty', 1)}\n"
         f"   سبب الإغلاق: {exit_type}\n"
         f"─────────────────────\n"
         f"📊 SPY: {trade.get('spy_direction','N/A')} ({trade.get('spy_change',0):+.3f}%)\n"
-        f"📉 MAE: {trade.get('mae',0)*100:.1f}% | MFE: {trade.get('mfe',0)*100:.1f}%"
+        f"📉 MAE: {trade.get('mae',0)*100:.1f}% | MFE: {trade.get('mfe',0)*100:.1f}%\n"
+        f"🎯 MTF Score: {trade.get('mtf_score',0)}/3\n"
+        f"   15M: {mtf.get('15M_macd','N/A')}\n"
+        f"   5M: {mtf.get('5M_price','N/A')}\n"
+        f"   3M: {mtf.get('3M_zero_cross','N/A')}"
     )
     send_telegram(msg)
+
+# ─── تنفيذ الدخول ────────────────────────────────────────────────────────────
 
 def _pyr_execute_entry(direction, price, vwap, reasons):
     import pytz
@@ -3949,49 +4078,70 @@ def _pyr_execute_entry(direction, price, vwap, reasons):
     expiry  = _today_expiry()
     contract = _pyr_find_best_contract(price, direction, expiry)
     if not contract:
-        send_telegram(f"⚠️ Pyramid: لم يُعثر على عقد ITM مناسب لـ {direction} @ ${price:.2f}")
+        send_telegram(f"⚠️ Pyramid V12: لم يُعثر على عقد ITM مناسب لـ {direction} @ ${price:.2f}")
         return
     order = place_option_order(contract["symbol"], 1, "buy", order_type="market", position_intent="open")
     if not order:
-        send_telegram(f"❌ Pyramid: فشل تنفيذ أمر الشراء لـ {contract['symbol']}")
+        send_telegram(f"❌ Pyramid V12: فشل تنفيذ أمر الشراء لـ {contract['symbol']}")
         return
     spy_dir, spy_chg = get_spy_direction()
     trade = {
-        "symbol": contract["symbol"], "direction": direction,
-        "strike": contract["strike"], "expiry": contract["expiry"],
-        "approx_delta": contract["approx_delta"],
-        "open_interest": contract["open_interest"], "volume": contract["volume"],
-        "spread_pct": contract["spread_pct"],
-        "entry_price": contract["mid"], "entry_stock_price": price,
-        "entry_time": now_str, "vwap": vwap,
-        "macd1_curr": reasons.get("macd1_curr", 0),
-        "macd3_curr": reasons.get("macd3_curr", 0),
-        "qty": 1, "reinforced": False, "avg_cost": contract["mid"],
-        "order_id": order.get("id", ""),
-        "mae": 0.0, "mfe": 0.0,
-        "spy_direction": spy_dir, "spy_change": spy_chg,
+        "symbol":             contract["symbol"],
+        "direction":          direction,
+        "strike":             contract["strike"],
+        "expiry":             contract["expiry"],
+        "approx_delta":       contract["approx_delta"],
+        "open_interest":      contract["open_interest"],
+        "volume":             contract["volume"],
+        "spread_pct":         contract["spread_pct"],
+        "entry_price":        contract["mid"],
+        "entry_stock_price":  price,
+        "entry_time":         now_str,
+        "vwap":               vwap,
+        "macd1_line_curr":    reasons.get("macd1_line_curr", 0),
+        "macd1_line_prev":    reasons.get("macd1_line_prev", 0),
+        "macd1_hist":         reasons.get("macd1_hist", 0),
+        "mtf_score":          reasons.get("mtf_score", 0),
+        "mtf_details":        reasons.get("mtf_details", {}),
+        "qty":                1,
+        "reinforced":         False,
+        "avg_cost":           contract["mid"],
+        "breakeven_price":    contract["mid"],   # يُحدَّث بعد التعزيز
+        "order_id":           order.get("id", ""),
+        "mae":                0.0,
+        "mfe":                0.0,
+        "spy_direction":      spy_dir,
+        "spy_change":         spy_chg,
     }
     with _pyr_lock:
         _pyr_state["active_trade"] = trade
         _pyr_state["status_msg"] = f"صفقة مفتوحة: {direction} @ ${contract['mid']:.2f}"
     _pyr_send_entry_msg(trade)
-    logger.info(f"[Pyramid] ✅ دخول {direction} | {contract['symbol']} @ ${contract['mid']:.2f}")
+    logger.info(f"[Pyramid V12] ✅ دخول {direction} | {contract['symbol']} @ ${contract['mid']:.2f} | MTF={reasons.get('mtf_score',0)}/3")
+
+# ─── التعزيز على الربح ───────────────────────────────────────────────────────
 
 def _pyr_reinforce(trade, current_price):
-    order = place_option_order(trade["symbol"], 2, "buy", order_type="market", position_intent="open")
+    """تعزيز على الربح: إضافة عقد واحد عند +12%"""
+    order = place_option_order(trade["symbol"], 1, "buy", order_type="market", position_intent="open")
     if not order:
-        send_telegram(f"❌ Pyramid: فشل التعزيز لـ {trade['symbol']}")
+        send_telegram(f"❌ Pyramid V12: فشل التعزيز لـ {trade['symbol']}")
         return
-    total_cost = (trade["entry_price"] * trade["qty"]) + (current_price * 2)
-    new_qty    = trade["qty"] + 2
+    # حساب المتوسط الجديد
+    total_cost = (trade["entry_price"] * trade["qty"]) + (current_price * 1)
+    new_qty    = trade["qty"] + 1
     new_avg    = total_cost / new_qty
-    trade["reinforced"] = True
-    trade["qty"]        = new_qty
-    trade["avg_cost"]   = round(new_avg, 2)
+    trade["reinforced"]      = True
+    trade["qty"]             = new_qty
+    trade["avg_cost"]        = round(new_avg, 2)
+    trade["breakeven_price"] = round(new_avg, 2)  # SL الجديد = Breakeven
     with _pyr_lock:
         _pyr_state["active_trade"] = trade
-        _pyr_state["status_msg"] = f"تعزيز @ ${current_price:.2f} | متوسط ${new_avg:.2f}"
+        _pyr_state["status_msg"] = f"مُعزَّز @ ${current_price:.2f} | متوسط ${new_avg:.2f} | SL=Breakeven"
     _pyr_send_add_msg(trade, current_price, new_avg)
+    logger.info(f"[Pyramid V12] 📈 تعزيز على الربح | {trade['symbol']} @ ${current_price:.2f} | متوسط=${new_avg:.2f}")
+
+# ─── إغلاق الصفقة ────────────────────────────────────────────────────────────
 
 def _pyr_close_trade(trade, exit_price, exit_type, pnl_pct):
     close_position(trade["symbol"])
@@ -4003,71 +4153,105 @@ def _pyr_close_trade(trade, exit_price, exit_type, pnl_pct):
         _pyr_state["trades_today"].append(dict(trade))
         _pyr_state["active_trade"] = None
         _pyr_state["status_msg"]   = f"آخر صفقة: {exit_type} {pnl_pct:+.1f}%"
+    logger.info(f"[Pyramid V12] 🔒 إغلاق {trade['direction']} | {exit_type} | {pnl_pct:+.1f}%")
+
+# ─── مراقبة الصفقة ───────────────────────────────────────────────────────────
 
 def _pyr_monitor_trade(trade):
+    """
+    منطق الإدارة V12.0:
+    قبل التعزيز:
+      - TP1 +12% → تعزيز (إضافة عقد) + SL ينتقل للـ Breakeven
+      - SL -15% → إغلاق
+    بعد التعزيز:
+      - TP Final +20% من المتوسط → إغلاق
+      - SL = Breakeven (المتوسط) → إغلاق (حماية الربح)
+    """
     quote = get_option_quote(trade["symbol"])
     if not quote or quote["mid"] <= 0:
         return
     current_price = quote["mid"]
     avg_cost      = trade["avg_cost"]
     pnl_pct       = (current_price - avg_cost) / avg_cost
+
     # MAE/MFE tracking
     if pnl_pct < trade.get("mae", 0):
-        trade["mae"] = pnl_pct
+        trade["mae"] = round(pnl_pct, 4)
     if pnl_pct > trade.get("mfe", 0):
-        trade["mfe"] = pnl_pct
-    if not trade["reinforced"] and pnl_pct >= PYR_TP1_PCT:
-        _pyr_close_trade(trade, current_price, "TP1 +15%", pnl_pct * 100)
-        return
+        trade["mfe"] = round(pnl_pct, 4)
+
+    # تحديث الحالة
+    with _pyr_lock:
+        _pyr_state["status_msg"] = (
+            f"{'🔄' if trade['reinforced'] else '📊'} {trade['direction']} | "
+            f"${current_price:.2f} | {pnl_pct*100:+.1f}% | "
+            f"{'مُعزَّز' if trade['reinforced'] else 'أولي'}"
+        )
+
     if not trade["reinforced"]:
-        drop_pct = (current_price - trade["entry_price"]) / trade["entry_price"]
-        if drop_pct <= PYR_ADD_PCT:
+        # TP1 → تعزيز على الربح
+        if pnl_pct >= PYR_TP1_PCT:
             _pyr_reinforce(trade, current_price)
             return
-    if trade["reinforced"] and pnl_pct >= PYR_TP2_PCT:
-        _pyr_close_trade(trade, current_price, "TP2 +8%", pnl_pct * 100)
-        return
-    if trade["reinforced"] and pnl_pct <= PYR_SL_PCT:
-        _pyr_close_trade(trade, current_price, "SL -20%", pnl_pct * 100)
-        return
+        # SL أولي
+        if pnl_pct <= PYR_SL_INIT_PCT:
+            _pyr_close_trade(trade, current_price, f"SL {PYR_SL_INIT_PCT*100:.0f}%", pnl_pct * 100)
+            return
+    else:
+        # TP Final
+        if pnl_pct >= PYR_TP_FINAL_PCT:
+            _pyr_close_trade(trade, current_price, f"TP Final +{PYR_TP_FINAL_PCT*100:.0f}%", pnl_pct * 100)
+            return
+        # SL = Breakeven (حماية الربح)
+        if current_price <= trade["breakeven_price"]:
+            _pyr_close_trade(trade, current_price, "SL Breakeven (حماية الربح)", pnl_pct * 100)
+            return
+
+# ─── Main Loop ───────────────────────────────────────────────────────────────
 
 def _pyramid_auto_loop():
     import pytz
     et_tz = pytz.timezone("America/New_York")
-    logger.info("[Pyramid] 🦋 V11.0 thread started")
+    logger.info("[Pyramid V12] 🦋 thread started")
     while True:
         try:
-            now_str = datetime.now(et_tz).strftime("%I:%M %p")
+            with _pyr_lock:
+                if not _pyr_state["running"]:
+                    break
+            now = datetime.now(et_tz)
+            now_str = now.strftime("%I:%M %p")
             with _pyr_lock:
                 _pyr_state["last_check"] = now_str
+
             if not _is_0dte_day():
                 with _pyr_lock:
                     _pyr_state["status_msg"] = "عطلة — لا يوجد 0DTE"
-                time.sleep(60)
+                time.sleep(300)
                 continue
-            if _pyr_is_force_close():
-                with _pyr_lock:
-                    trade = _pyr_state.get("active_trade")
-                    _pyr_state["status_msg"] = "خارج نافذة العمل (12:10 PM+)"
-                if trade:
-                    quote = get_option_quote(trade["symbol"])
-                    ep = quote["mid"] if quote and quote["mid"] > 0 else trade["avg_cost"]
-                    pnl = (ep - trade["avg_cost"]) / trade["avg_cost"] * 100
-                    _pyr_close_trade(trade, ep, "إغلاق إجباري 12:10 PM", pnl)
-                time.sleep(60)
-                continue
-            if not _pyr_in_window():
-                with _pyr_lock:
-                    _pyr_state["status_msg"] = "انتظار نافذة 10:05 AM"
-                time.sleep(30)
-                continue
+
             with _pyr_lock:
                 active_trade = _pyr_state.get("active_trade")
+
+            # إغلاق إجباري
+            if active_trade and _pyr_is_force_close():
+                quote = get_option_quote(active_trade["symbol"])
+                exit_price = quote["mid"] if quote and quote["mid"] > 0 else active_trade["avg_cost"]
+                pnl_pct = (exit_price - active_trade["avg_cost"]) / active_trade["avg_cost"]
+                _pyr_close_trade(active_trade, exit_price, "إغلاق إجباري 12:10 PM", pnl_pct * 100)
+                time.sleep(PYR_LOOP_SLEEP)
+                continue
+
+            if not _pyr_in_window():
+                with _pyr_lock:
+                    _pyr_state["status_msg"] = f"خارج النافذة — {now_str}"
+                time.sleep(PYR_LOOP_SLEEP)
+                continue
+
             if active_trade:
                 _pyr_monitor_trade(active_trade)
             else:
                 with _pyr_lock:
-                    _pyr_state["status_msg"] = f"يراقب... {now_str}"
+                    _pyr_state["status_msg"] = f"يراقب السوق... {now_str}"
                 direction, price, vwap, reasons = _pyr_check_entry()
                 if direction:
                     _pyr_execute_entry(direction, price, vwap, reasons)
@@ -4075,8 +4259,10 @@ def _pyramid_auto_loop():
                     with _pyr_lock:
                         _pyr_state["status_msg"] = f"انتظار: {reasons.get('reason','لا إشارة')}"
         except Exception as e:
-            logger.error(f"[Pyramid] Loop error: {e}")
+            logger.error(f"[Pyramid V12] Loop error: {e}", exc_info=True)
         time.sleep(PYR_LOOP_SLEEP)
+
+# ─── التقرير الأسبوعي ────────────────────────────────────────────────────────
 
 def _pyr_weekly_report_loop():
     import pytz
@@ -4088,50 +4274,62 @@ def _pyr_weekly_report_loop():
                 with _pyr_lock:
                     trades = list(_pyr_state["trades_today"])
                 if not trades:
-                    send_telegram("📊 *تقرير Pyramid الأسبوعي*\nلا توجد صفقات مسجلة.")
+                    send_telegram("📊 *تقرير Pyramid V12 الأسبوعي*\nلا توجد صفقات مسجلة.")
                 else:
-                    total = len(trades)
-                    tp1   = sum(1 for t in trades if "TP1" in t.get("exit_type",""))
-                    tp2   = sum(1 for t in trades if "TP2" in t.get("exit_type",""))
-                    sl    = sum(1 for t in trades if "SL"  in t.get("exit_type",""))
-                    forced= sum(1 for t in trades if "إجباري" in t.get("exit_type",""))
-                    rein  = sum(1 for t in trades if t.get("reinforced"))
-                    rein_tp = sum(1 for t in trades if t.get("reinforced") and t.get("pnl_pct",0)>0)
-                    rein_rate = (rein_tp/rein*100) if rein > 0 else 0
-                    avg_delta = sum(t.get("approx_delta",0) for t in trades)/total
-                    avg_oi    = sum(t.get("open_interest",0) for t in trades)/total
-                    avg_vol   = sum(t.get("volume",0) for t in trades)/total
+                    total   = len(trades)
+                    tp_fin  = sum(1 for t in trades if "TP Final" in t.get("exit_type",""))
+                    tp1_rein= sum(1 for t in trades if t.get("reinforced"))
+                    sl_init = sum(1 for t in trades if f"SL {int(abs(PYR_SL_INIT_PCT)*100)}%" in t.get("exit_type",""))
+                    sl_be   = sum(1 for t in trades if "Breakeven" in t.get("exit_type",""))
+                    forced  = sum(1 for t in trades if "إجباري" in t.get("exit_type",""))
+                    wins    = sum(1 for t in trades if t.get("pnl_pct", 0) > 0)
+                    avg_pnl = sum(t.get("pnl_pct", 0) for t in trades) / total
+                    avg_mae = sum(abs(t.get("mae", 0)) for t in trades) / total * 100
+                    avg_mfe = sum(t.get("mfe", 0) for t in trades) / total * 100
+                    avg_mtf = sum(t.get("mtf_score", 0) for t in trades) / total
+                    # تحليل SPY
+                    bull_trades = [t for t in trades if t.get("spy_direction") == "BULL"]
+                    bear_trades = [t for t in trades if t.get("spy_direction") == "BEAR"]
+                    bull_wins = sum(1 for t in bull_trades if t.get("pnl_pct", 0) > 0)
+                    bear_wins = sum(1 for t in bear_trades if t.get("pnl_pct", 0) > 0)
                     msg = (
-                        f"📊 *تقرير Pyramid الأسبوعي*\n"
+                        f"📊 *تقرير Pyramid V12 الأسبوعي*\n"
                         f"─────────────────────\n"
                         f"📈 إجمالي الصفقات: {total}\n"
-                        f"✅ TP1 (+15%): {tp1} ({tp1/total*100:.0f}%)\n"
-                        f"✅ TP2 (+8%): {tp2} ({tp2/total*100:.0f}%)\n"
-                        f"❌ SL (-20%): {sl} ({sl/total*100:.0f}%)\n"
+                        f"✅ Win Rate: {wins}/{total} ({wins/total*100:.0f}%)\n"
+                        f"💰 متوسط P&L: {avg_pnl:+.1f}%\n"
+                        f"─────────────────────\n"
+                        f"🏆 TP Final (+{PYR_TP_FINAL_PCT*100:.0f}%): {tp_fin}\n"
+                        f"📈 وصل للتعزيز: {tp1_rein}\n"
+                        f"❌ SL أولي ({PYR_SL_INIT_PCT*100:.0f}%): {sl_init}\n"
+                        f"🛡️ SL Breakeven: {sl_be}\n"
                         f"⏰ إغلاق إجباري: {forced}\n"
                         f"─────────────────────\n"
-                        f"🔄 صفقات مُعزَّزة: {rein}\n"
-                        f"   ارتدت بعد -30%: {rein_tp} ({rein_rate:.0f}%)\n"
+                        f"📉 متوسط MAE: {avg_mae:.1f}%\n"
+                        f"📈 متوسط MFE: {avg_mfe:.1f}%\n"
+                        f"🎯 متوسط MTF Score: {avg_mtf:.1f}/3\n"
                         f"─────────────────────\n"
-                        f"📐 متوسط Delta: {avg_delta:.2f}\n"
-                        f"📊 متوسط OI: {avg_oi:,.0f}\n"
-                        f"📊 متوسط Volume: {avg_vol:,.0f}\n"
+                        f"🌐 SPY BULL → Win: {bull_wins}/{len(bull_trades)} ({bull_wins/len(bull_trades)*100:.0f}%)\n" if bull_trades else ""
+                        f"🌐 SPY BEAR → Win: {bear_wins}/{len(bear_trades)} ({bear_wins/len(bear_trades)*100:.0f}%)\n" if bear_trades else ""
                         f"─────────────────────\n"
-                        f"💡 {'التعزيز مفيد ✅' if rein_rate>=60 else 'راجع نسبة التعزيز ⚠️'}"
+                        f"💡 {'MTF يحسّن الجودة ✅' if avg_mtf >= 2.5 else 'راجع شروط MTF ⚠️'}"
                     )
                     send_telegram(msg)
         except Exception as e:
-            logger.error(f"[Pyramid] Weekly report error: {e}")
+            logger.error(f"[Pyramid V12] Weekly report error: {e}")
         time.sleep(60)
+
+# ─── Start / Stop / Status ───────────────────────────────────────────────────
 
 def start_pyramid_auto():
     with _pyr_lock:
         if _pyr_state["running"]:
+            logger.warning("[Pyramid V12] already running")
             return False
         _pyr_state["running"] = True
     threading.Thread(target=_pyramid_auto_loop, daemon=True).start()
     threading.Thread(target=_pyr_weekly_report_loop, daemon=True).start()
-    logger.info("[Pyramid] ✅ V11.0 started")
+    logger.info("[Pyramid V12] ✅ started — True Pyramiding + MTF Filter")
     return True
 
 def stop_pyramid_auto():
@@ -4155,6 +4353,9 @@ def get_pyramid_status():
                 "qty":         trade["qty"],
                 "reinforced":  trade["reinforced"],
                 "entry_time":  trade["entry_time"],
+                "mtf_score":   trade.get("mtf_score", 0),
+                "mae":         round(trade.get("mae", 0) * 100, 1),
+                "mfe":         round(trade.get("mfe", 0) * 100, 1),
             } if trade else None,
             "trades_today": len(_pyr_state["trades_today"]),
         }

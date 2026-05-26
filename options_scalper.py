@@ -222,6 +222,31 @@ def get_tsla_snapshot():
         logger.error(f"[V8] Snapshot error: {e}")
     return None
 
+def get_spy_direction():
+    """جلب اتجاه SPY الحالي — صاعد/هابط/محايد."""
+    try:
+        r = _session.get(
+            f"{ALPACA_DATA_URL}/v2/stocks/SPY/bars",
+            headers=_headers(),
+            params={"timeframe": "5Min", "limit": 3, "feed": "iex"},
+            timeout=10
+        )
+        if r.status_code == 200:
+            bars = r.json().get("bars", [])
+            if len(bars) >= 2:
+                prev_close = float(bars[-2]["c"])
+                curr_close = float(bars[-1]["c"])
+                change_pct = (curr_close - prev_close) / prev_close * 100
+                if change_pct > 0.05:
+                    return "BULL", round(change_pct, 3)
+                elif change_pct < -0.05:
+                    return "BEAR", round(change_pct, 3)
+                else:
+                    return "FLAT", round(change_pct, 3)
+    except Exception as e:
+        logger.error(f"[SPY] Direction error: {e}")
+    return "N/A", 0.0
+
 def get_tsla_bars(timeframe="1Min", limit=20):
     try:
         r = _session.get(
@@ -3871,6 +3896,8 @@ def _pyr_send_entry_msg(trade):
         f"   OI: {trade['open_interest']:,} | Volume: {trade['volume']:,}\n"
         f"   Spread: {trade['spread_pct']}%\n"
         f"─────────────────────\n"
+        f"📊 SPY: {trade.get('spy_direction','N/A')} ({trade.get('spy_change',0):+.3f}%)\n"
+        f"─────────────────────\n"
         f"🎯 TP1: ${trade['entry_price']*1.15:.2f} (+15%)\n"
         f"⚠️ تعزيز عند: ${trade['entry_price']*0.70:.2f} (-30%)\n"
         f"🛑 SL بعد تعزيز: -20% من المتوسط\n"
@@ -3909,7 +3936,10 @@ def _pyr_send_close_msg(trade, exit_price, exit_type, pnl_pct):
         f"   VWAP: ${trade['vwap']:.2f} | Delta≈{trade['approx_delta']}\n"
         f"   OI: {trade['open_interest']:,} | Volume: {trade['volume']:,}\n"
         f"   تعزيز: {'✅ نعم' if trade.get('reinforced') else '❌ لا'}\n"
-        f"   سبب الإغلاق: {exit_type}"
+        f"   سبب الإغلاق: {exit_type}\n"
+        f"─────────────────────\n"
+        f"📊 SPY: {trade.get('spy_direction','N/A')} ({trade.get('spy_change',0):+.3f}%)\n"
+        f"📉 MAE: {trade.get('mae',0)*100:.1f}% | MFE: {trade.get('mfe',0)*100:.1f}%"
     )
     send_telegram(msg)
 
@@ -3925,6 +3955,7 @@ def _pyr_execute_entry(direction, price, vwap, reasons):
     if not order:
         send_telegram(f"❌ Pyramid: فشل تنفيذ أمر الشراء لـ {contract['symbol']}")
         return
+    spy_dir, spy_chg = get_spy_direction()
     trade = {
         "symbol": contract["symbol"], "direction": direction,
         "strike": contract["strike"], "expiry": contract["expiry"],
@@ -3937,6 +3968,8 @@ def _pyr_execute_entry(direction, price, vwap, reasons):
         "macd3_curr": reasons.get("macd3_curr", 0),
         "qty": 1, "reinforced": False, "avg_cost": contract["mid"],
         "order_id": order.get("id", ""),
+        "mae": 0.0, "mfe": 0.0,
+        "spy_direction": spy_dir, "spy_change": spy_chg,
     }
     with _pyr_lock:
         _pyr_state["active_trade"] = trade
@@ -3978,6 +4011,11 @@ def _pyr_monitor_trade(trade):
     current_price = quote["mid"]
     avg_cost      = trade["avg_cost"]
     pnl_pct       = (current_price - avg_cost) / avg_cost
+    # MAE/MFE tracking
+    if pnl_pct < trade.get("mae", 0):
+        trade["mae"] = pnl_pct
+    if pnl_pct > trade.get("mfe", 0):
+        trade["mfe"] = pnl_pct
     if not trade["reinforced"] and pnl_pct >= PYR_TP1_PCT:
         _pyr_close_trade(trade, current_price, "TP1 +15%", pnl_pct * 100)
         return
@@ -4287,6 +4325,8 @@ def _stb_send_entry_msg(trade):
         f"   OI: {trade['open_interest']:,} | Volume: {trade['volume']:,}\n"
         f"   Spread: {trade['spread_pct']}%\n"
         f"─────────────────────\n"
+        f"📊 SPY: {trade.get('spy_direction','N/A')} ({trade.get('spy_change',0):+.3f}%)\n"
+        f"─────────────────────\n"
         f"🎯 TP: ${trade['entry_price']*(1+STB_TP_PCT):.2f} (+{STB_TP_PCT*100:.0f}%)\n"
         f"🛑 SL: ${trade['entry_price']*(1+STB_SL_PCT):.2f} ({STB_SL_PCT*100:.0f}%)\n"
         f"⏰ إغلاق إجباري: 2:30 PM ET"
@@ -4311,7 +4351,10 @@ def _stb_send_close_msg(trade, exit_price, exit_type, pnl_pct):
         f"   VWAP: ${trade['vwap']:.2f} | Delta≈{trade['approx_delta']}\n"
         f"   OI: {trade['open_interest']:,} | Volume: {trade['volume']:,}\n"
         f"   المسافة من VWAP: ${trade['distance_from_vwap']:.2f}\n"
-        f"   سبب الإغلاق: {exit_type}"
+        f"   سبب الإغلاق: {exit_type}\n"
+        f"─────────────────────\n"
+        f"📊 SPY: {trade.get('spy_direction','N/A')} ({trade.get('spy_change',0):+.3f}%)\n"
+        f"📉 MAE: {trade.get('mae',0)*100:.1f}% | MFE: {trade.get('mfe',0)*100:.1f}%"
     )
     send_telegram(msg)
 
@@ -4329,6 +4372,7 @@ def _stb_execute_entry(direction, price, vwap, reasons):
         send_telegram(f"❌ Strategy B: فشل تنفيذ أمر الشراء لـ {contract['symbol']}")
         return
 
+    spy_dir, spy_chg = get_spy_direction()
     trade = {
         "strategy": "B", "symbol": contract["symbol"], "direction": direction,
         "strike": contract["strike"], "expiry": contract["expiry"],
@@ -4342,6 +4386,8 @@ def _stb_execute_entry(direction, price, vwap, reasons):
         "avg_volume": reasons.get("avg_volume", 0),
         "distance_from_vwap": reasons.get("distance_from_vwap", 0),
         "order_id": order.get("id", ""),
+        "mae": 0.0, "mfe": 0.0,
+        "spy_direction": spy_dir, "spy_change": spy_chg,
     }
     with _stb_lock:
         _stb_state["active_trade"] = trade
@@ -4380,6 +4426,12 @@ def _stb_monitor_trade(trade):
         estimated_option_price = max(0.01, estimated_option_price)
 
         pnl_pct = (estimated_option_price - trade["entry_price"]) / trade["entry_price"]
+
+        # MAE/MFE tracking
+        if pnl_pct < trade.get("mae", 0):
+            trade["mae"] = pnl_pct
+        if pnl_pct > trade.get("mfe", 0):
+            trade["mfe"] = pnl_pct
 
         # TP +12%
         if pnl_pct >= STB_TP_PCT:
@@ -4565,6 +4617,10 @@ def _stc_check_breakout():
     if price > or_high + 0.20:
         if recent_vol < avg_vol * 0.9:
             return None, price, vwap, {"reason": f"كسر صاعد لكن Volume ضعيف"}
+        # Fakeout filter: شرط إغلاق شمعة 5M فوق النطاق
+        last_bar_close = float(bars_5m[-1]["c"])
+        if last_bar_close <= or_high:
+            return None, price, vwap, {"reason": "Fakeout — شمعة 5M لم تغلق فوق النطاق"}
         direction = "CALL"
         reasons = {
             "direction": direction, "price": price, "vwap": vwap,
@@ -4578,6 +4634,10 @@ def _stc_check_breakout():
     if price < or_low - 0.20:
         if recent_vol < avg_vol * 0.9:
             return None, price, vwap, {"reason": f"كسر هابط لكن Volume ضعيف"}
+        # Fakeout filter: شرط إغلاق شمعة 5M تحت النطاق
+        last_bar_close = float(bars_5m[-1]["c"])
+        if last_bar_close >= or_low:
+            return None, price, vwap, {"reason": "Fakeout — شمعة 5M لم تغلق تحت النطاق"}
         direction = "PUT"
         reasons = {
             "direction": direction, "price": price, "vwap": vwap,
@@ -4654,6 +4714,8 @@ def _stc_send_entry_msg(trade):
         f"   OI: {trade['open_interest']:,} | Volume: {trade['volume']:,}\n"
         f"   Spread: {trade['spread_pct']}%\n"
         f"─────────────────────\n"
+        f"📊 SPY: {trade.get('spy_direction','N/A')} ({trade.get('spy_change',0):+.3f}%)\n"
+        f"─────────────────────\n"
         f"🎯 TP: ${trade['entry_price']*(1+STC_TP_PCT):.2f} (+{STC_TP_PCT*100:.0f}%)\n"
         f"🛑 SL: ${trade['entry_price']*(1+STC_SL_PCT):.2f} ({STC_SL_PCT*100:.0f}%)\n"
         f"⏰ إغلاق إجباري: 12:30 PM ET"
@@ -4678,7 +4740,10 @@ def _stc_send_close_msg(trade, exit_price, exit_type, pnl_pct):
         f"   OR: ${trade['or_low']:.2f} - ${trade['or_high']:.2f}\n"
         f"   Delta≈{trade['approx_delta']} | OI: {trade['open_interest']:,}\n"
         f"   كسر: ${trade['breakout_amount']:.2f}\n"
-        f"   سبب الإغلاق: {exit_type}"
+        f"   سبب الإغلاق: {exit_type}\n"
+        f"─────────────────────\n"
+        f"📊 SPY: {trade.get('spy_direction','N/A')} ({trade.get('spy_change',0):+.3f}%)\n"
+        f"📉 MAE: {trade.get('mae',0)*100:.1f}% | MFE: {trade.get('mfe',0)*100:.1f}%"
     )
     send_telegram(msg)
 
@@ -4696,6 +4761,7 @@ def _stc_execute_entry(direction, price, vwap, reasons):
         send_telegram(f"❌ Strategy C: فشل تنفيذ أمر الشراء لـ {contract['symbol']}")
         return
 
+    spy_dir, spy_chg = get_spy_direction()
     trade = {
         "strategy": "C", "symbol": contract["symbol"], "direction": direction,
         "strike": contract["strike"], "expiry": contract["expiry"],
@@ -4710,6 +4776,8 @@ def _stc_execute_entry(direction, price, vwap, reasons):
         "trade_volume": reasons.get("volume", 0),
         "avg_volume": reasons.get("avg_volume", 0),
         "order_id": order.get("id", ""),
+        "mae": 0.0, "mfe": 0.0,
+        "spy_direction": spy_dir, "spy_change": spy_chg,
     }
     with _stc_lock:
         _stc_state["active_trade"] = trade
@@ -4747,6 +4815,12 @@ def _stc_monitor_trade(trade):
         estimated_option_price = max(0.01, estimated_option_price)
 
         pnl_pct = (estimated_option_price - trade["entry_price"]) / trade["entry_price"]
+
+        # MAE/MFE tracking
+        if pnl_pct < trade.get("mae", 0):
+            trade["mae"] = pnl_pct
+        if pnl_pct > trade.get("mfe", 0):
+            trade["mfe"] = pnl_pct
 
         # TP +10%
         if pnl_pct >= STC_TP_PCT:

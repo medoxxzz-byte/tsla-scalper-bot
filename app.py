@@ -2823,12 +2823,29 @@ def _start_background_threads():
         logger.info(f"V11.2 Strategy C (ORB) started ✅ 📈 result={result}")
     except Exception as _stc_err:
         logger.error(f"Strategy C FAILED to start: {_stc_err}", exc_info=True)
-# استخدام before_request لضمان بدء الـ threads بعد Gunicorn fork
+# # ── Auto-restart strategies on every request (handles Render sleep/wake) ──────
 @app.before_request
-def _ensure_threads_started():
-    _start_background_threads()
+def _ensure_strategies_alive():
+    """يتحقق من حالة الاستراتيجيات ويُعيد تشغيلها إذا ماتت (بعد نوم Render)"""
+    try:
+        from options_scalper import (
+            get_pyramid_status, start_pyramid_auto,
+            get_strategy_b_status, start_strategy_b,
+            get_strategy_c_status, start_strategy_c
+        )
+        if not get_pyramid_status().get("running"):
+            start_pyramid_auto()
+            logger.info("[AutoRestart] Pyramid V12 restarted ✅")
+        if not get_strategy_b_status().get("running"):
+            start_strategy_b()
+            logger.info("[AutoRestart] Strategy B restarted ✅")
+        if not get_strategy_c_status().get("running"):
+            start_strategy_c()
+            logger.info("[AutoRestart] Strategy C restarted ✅")
+    except Exception as _e:
+        logger.error(f"[AutoRestart] error: {_e}", exc_info=True)
 
-# أيضاً استدعاء مباشر كـ fallback
+# استدعاء مباشر عند بدء التشغيل
 _start_background_threads()
 
 if __name__ == "__main__":

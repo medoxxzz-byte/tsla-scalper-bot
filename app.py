@@ -2749,13 +2749,17 @@ def mosquito_status():
 # ──────────────────────────────────────────────────────────────────────────────
 # Startup
 # ──────────────────────────────────────────────────────────────────────────────
+import os as _os
 _threads_started = False
+_threads_lock = threading.Lock()
 
 def _start_background_threads():
     global _threads_started
-    if _threads_started:
-        return
-    _threads_started = True
+    with _threads_lock:
+        if _threads_started:
+            return
+        _threads_started = True
+    logger.info(f"[Startup] PID={_os.getpid()} — starting background threads")
     threading.Thread(target=keep_alive_worker, daemon=True).start()
     threading.Thread(target=monitor_positions, daemon=True).start()
     logger.info("Background threads started (keep_alive + monitor_positions) ✅")
@@ -2819,6 +2823,12 @@ def _start_background_threads():
         logger.info(f"V11.2 Strategy C (ORB) started ✅ 📈 result={result}")
     except Exception as _stc_err:
         logger.error(f"Strategy C FAILED to start: {_stc_err}", exc_info=True)
+# استخدام before_request لضمان بدء الـ threads بعد Gunicorn fork
+@app.before_request
+def _ensure_threads_started():
+    _start_background_threads()
+
+# أيضاً استدعاء مباشر كـ fallback
 _start_background_threads()
 
 if __name__ == "__main__":

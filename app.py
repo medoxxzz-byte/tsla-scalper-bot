@@ -2831,15 +2831,32 @@ def _ensure_strategies_alive():
         from options_scalper import (
             get_pyramid_status, start_pyramid_auto,
             get_strategy_b_status, start_strategy_b,
-            get_strategy_c_status, start_strategy_c
+            get_strategy_c_status, start_strategy_c,
+            _pyr_state, _pyr_lock,
+            _stb_state, _stb_lock,
+            _stc_state, _stc_lock
         )
-        if not get_pyramid_status().get("running"):
+        import threading as _th
+        # Pyramid
+        pyr_status = get_pyramid_status()
+        if not pyr_status.get("running"):
+            # force reset running flag so start() won't be blocked
+            with _pyr_lock:
+                _pyr_state["running"] = False
             start_pyramid_auto()
             logger.info("[AutoRestart] Pyramid V12 restarted ✅")
-        if not get_strategy_b_status().get("running"):
+        # Strategy B
+        stb_status = get_strategy_b_status()
+        if not stb_status.get("running"):
+            with _stb_lock:
+                _stb_state["running"] = False
             start_strategy_b()
             logger.info("[AutoRestart] Strategy B restarted ✅")
-        if not get_strategy_c_status().get("running"):
+        # Strategy C
+        stc_status = get_strategy_c_status()
+        if not stc_status.get("running"):
+            with _stc_lock:
+                _stc_state["running"] = False
             start_strategy_c()
             logger.info("[AutoRestart] Strategy C restarted ✅")
     except Exception as _e:

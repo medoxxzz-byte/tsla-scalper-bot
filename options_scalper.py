@@ -5199,3 +5199,724 @@ def get_strategy_c_status():
             } if trade else None,
             "trades_today": len(_stc_state["trades_today"]),
         }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# V13.0: Strategy D — Mosquito Trend (ATM Options + Reinforcement)
+# الفكرة: MACD Zero Cross (3M) + VWAP + RSI + OBV → دخول 1 عقد ATM
+#         تعزيز عند +$0.45 → بيع العقدين عند TP أو SL
+# نافذة العمل: 9:35 AM → 2:00 PM ET
+# الملعب: ATM Options (Delta 0.45-0.60) | 0DTE أو أقرب Expiry
+# الهدف: جمع بيانات شاملة (RSI, MACD, OBV, Mom, ATR, SPY, MAE, MFE)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ─── Configuration ───────────────────────────────────────────────────────────
+STD_START_MINUTES   = 5         # 9:30 + 5 = 9:35 AM
+STD_END_MINUTES     = 270       # 9:30 + 270 = 2:00 PM
+STD_TP_DOLLARS      = 0.95      # +$0.95 TP (بيع العقدين)
+STD_SL_DOLLARS      = -0.70     # -$0.70 SL (بيع الكل)
+STD_REINFORCE_AT    = 0.45      # +$0.45 → شراء عقد ثاني
+STD_SL_AFTER_REINFORCE = 0.0    # Breakeven بعد التعزيز (سعر الدخول الأول)
+STD_DELTA_MIN       = 0.45
+STD_DELTA_MAX       = 0.60
+STD_LOOP_SLEEP      = 15        # كل 15 ثانية (3M فريم — نحتاج سرعة)
+STD_RSI_CALL_MIN    = 45
+STD_RSI_CALL_MAX    = 70
+STD_RSI_PUT_MIN     = 30
+STD_RSI_PUT_MAX     = 55
+STD_MAX_TRADES_DAY  = 4         # حد أقصى 4 صفقات باليوم
+
+_std_lock  = threading.Lock()
+_std_state = {
+    "running":      False,
+    "active_trade": None,
+    "last_check":   "--",
+    "trades_today": [],
+    "status_msg":   "غير نشط",
+    "daily_date":   None,
+}
+
+# ─── Time Window ─────────────────────────────────────────────────────────────
+
+def _std_in_window():
+    """هل نحن في نافذة Strategy D (9:35 AM - 2:00 PM ET)."""
+    import pytz
+    et = pytz.timezone("America/New_York")
+    now = datetime.now(et)
+    open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    elapsed = (now - open_time).total_seconds() / 60
+    return STD_START_MINUTES <= elapsed <= STD_END_MINUTES
+
+def _std_is_force_close():
+    """هل حان وقت الإغلاق الإجباري (2:00 PM ET)."""
+    import pytz
+    et = pytz.timezone("America/New_York")
+    now = datetime.now(et)
+    open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    elapsed = (now - open_time).total_seconds() / 60
+    return elapsed >= STD_END_MINUTES
+
+# ─── Indicator Calculations ──────────────────────────────────────────────────
+
+def _std_calc_rsi(bars, period=14):
+    """حساب RSI من bars."""
+    closes = [float(b["c"]) for b in bars]
+    return _rw_rsi(closes, period)
+
+def _std_calc_macd_zero_cross(bars):
+    """
+    فحص MACD Zero Cross على 3M.
+    يُرجع: (direction, macd_line_curr, macd_line_prev) أو (None, ...)
+    """
+    closes = [float(b["c"]) for b in bars]
+    if len(closes) < 38:
+        return None, None, None
+
+    macd_series = []
+    for i in range(26, len(closes) + 1):
+        ef = _rw_ema(closes[:i], 12)
+        es = _rw_ema(closes[:i], 26)
+        if ef and es:
+            macd_series.append(ef - es)
+
+    if len(macd_series) < 3:
+        return None, None, None
+
+    curr_macd = macd_series[-1]
+    prev_macd = macd_series[-2]
+
+    # Zero Cross: سالب → موجب = CALL | موجب → سالب = PUT
+    if prev_macd < 0 and curr_macd > 0:
+        return "CALL", curr_macd, prev_macd
+    elif prev_macd > 0 and curr_macd < 0:
+        return "PUT", curr_macd, prev_macd
+
+    return None, curr_macd, prev_macd
+
+def _std_calc_obv_slope(bars, lookback=5):
+    """حساب OBV slope — هل صاعد أو هابط."""
+    closes = [float(b["c"]) for b in bars]
+    volumes = [int(b["v"]) for b in bars]
+    obv = _rw_obv(closes, volumes)
+    if len(obv) < lookback + 1:
+        return None, None
+    slope = obv[-1] - obv[-lookback]
+    obv_ma = sum(obv[-lookback:]) / lookback if len(obv) >= lookback else obv[-1]
+    return slope, obv[-1] - obv_ma
+
+def _std_calc_momentum(bars, period=10):
+    """حساب Momentum (Rate of Change)."""
+    closes = [float(b["c"]) for b in bars]
+    if len(closes) < period + 1:
+        return None
+    return closes[-1] - closes[-period - 1]
+
+def _std_calc_atr(bars, period=14):
+    """حساب ATR."""
+    if len(bars) < period + 1:
+        return None
+    trs = []
+    for i in range(1, len(bars)):
+        h = float(bars[i]["h"])
+        l = float(bars[i]["l"])
+        pc = float(bars[i-1]["c"])
+        tr = max(h - l, abs(h - pc), abs(l - pc))
+        trs.append(tr)
+    if len(trs) < period:
+        return None
+    return sum(trs[-period:]) / period
+
+def _std_calc_volume_ratio(bars, lookback=20):
+    """حساب نسبة حجم الشمعة الأخيرة مقارنة بالمتوسط."""
+    volumes = [int(b["v"]) for b in bars]
+    if len(volumes) < lookback + 1:
+        return None
+    avg_vol = sum(volumes[-lookback-1:-1]) / lookback
+    if avg_vol == 0:
+        return None
+    return volumes[-1] / avg_vol
+
+# ─── Entry Signal Check ──────────────────────────────────────────────────────
+
+def _std_check_entry():
+    """
+    فحص شروط الدخول لـ Strategy D (Mosquito Trend).
+    شروط CALL: MACD Zero Cross (3M) سالب→موجب + السعر فوق VWAP + RSI 45-70 + OBV صاعد
+    شروط PUT: MACD Zero Cross (3M) موجب→سالب + السعر تحت VWAP + RSI 30-55 + OBV هابط
+    """
+    bars_3m = get_tsla_bars("3Min", 50)
+    if not bars_3m or len(bars_3m) < 38:
+        return None, {"reason": "بيانات 3M غير كافية"}
+
+    # 1. MACD Zero Cross
+    direction, macd_curr, macd_prev = _std_calc_macd_zero_cross(bars_3m)
+    if not direction:
+        reason = f"لا Zero Cross (MACD: {macd_curr:.4f})" if macd_curr is not None else "MACD غير متاح"
+        return None, {"reason": reason}
+
+    # 2. السعر vs VWAP
+    snap = get_tsla_snapshot()
+    if not snap:
+        return None, {"reason": "Snapshot غير متاح"}
+    price = snap["price"]
+    vwap = snap["vwap"]
+
+    if direction == "CALL" and price <= vwap:
+        return None, {"reason": f"CALL لكن السعر ${price:.2f} تحت VWAP ${vwap:.2f}"}
+    if direction == "PUT" and price >= vwap:
+        return None, {"reason": f"PUT لكن السعر ${price:.2f} فوق VWAP ${vwap:.2f}"}
+
+    # 3. RSI
+    rsi = _std_calc_rsi(bars_3m)
+    if rsi is None:
+        return None, {"reason": "RSI غير متاح"}
+
+    if direction == "CALL" and not (STD_RSI_CALL_MIN <= rsi <= STD_RSI_CALL_MAX):
+        return None, {"reason": f"RSI={rsi:.1f} خارج نطاق CALL ({STD_RSI_CALL_MIN}-{STD_RSI_CALL_MAX})"}
+    if direction == "PUT" and not (STD_RSI_PUT_MIN <= rsi <= STD_RSI_PUT_MAX):
+        return None, {"reason": f"RSI={rsi:.1f} خارج نطاق PUT ({STD_RSI_PUT_MIN}-{STD_RSI_PUT_MAX})"}
+
+    # 4. OBV
+    obv_slope, obv_vs_ma = _std_calc_obv_slope(bars_3m)
+    if obv_slope is None:
+        return None, {"reason": "OBV غير متاح"}
+
+    if direction == "CALL" and obv_slope <= 0:
+        return None, {"reason": f"OBV هابط ({obv_slope:,.0f}) — لا يدعم CALL"}
+    if direction == "PUT" and obv_slope >= 0:
+        return None, {"reason": f"OBV صاعد ({obv_slope:,.0f}) — لا يدعم PUT"}
+
+    # ─── كل الشروط تحققت! ───
+    momentum = _std_calc_momentum(bars_3m)
+    atr = _std_calc_atr(bars_3m)
+    vol_ratio = _std_calc_volume_ratio(bars_3m)
+    spy_dir, spy_chg = get_spy_direction()
+    macd_hist, _ = _rw_macd_hist([float(b["c"]) for b in bars_3m])
+
+    entry_data = {
+        "direction": direction,
+        "price": price,
+        "vwap": vwap,
+        "vwap_distance_pct": round((price - vwap) / vwap * 100, 3),
+        "rsi": rsi,
+        "macd_line": round(macd_curr, 4) if macd_curr else 0,
+        "macd_prev": round(macd_prev, 4) if macd_prev else 0,
+        "macd_hist": round(macd_hist, 4) if macd_hist else 0,
+        "obv_slope": obv_slope,
+        "obv_vs_ma": obv_vs_ma,
+        "momentum": round(momentum, 4) if momentum else 0,
+        "atr": round(atr, 4) if atr else 0,
+        "volume_ratio": round(vol_ratio, 2) if vol_ratio else 0,
+        "spy_direction": spy_dir,
+        "spy_change": spy_chg,
+    }
+    return entry_data, {"reason": "✅ كل الشروط تحققت"}
+
+# ─── Contract Selection (ATM) ────────────────────────────────────────────────
+
+def _std_find_contract(price, direction, expiry):
+    """اختيار أفضل عقد ATM لـ Strategy D (Delta 0.45-0.60)."""
+    option_type = "call" if direction == "CALL" else "put"
+
+    if direction == "CALL":
+        strike_min = round(price - 5, 0)
+        strike_max = round(price + 2, 0)
+    else:
+        strike_min = round(price - 2, 0)
+        strike_max = round(price + 5, 0)
+
+    contracts = get_options_chain(expiry, option_type, strike_min, strike_max)
+    if not contracts:
+        # جرب أقرب expiry بعد اليوم
+        from datetime import date, timedelta as td
+        tomorrow = (date.today() + td(days=1)).strftime("%Y-%m-%d")
+        contracts = get_options_chain(tomorrow, option_type, strike_min, strike_max)
+        if contracts:
+            expiry = tomorrow
+
+    if not contracts:
+        return None
+
+    best = None
+    best_score = -1
+    for c in contracts:
+        strike = float(c.get("strike_price", 0))
+        itm_amount = abs(price - strike)
+        # تقدير Delta لـ ATM
+        if direction == "CALL":
+            if strike > price:
+                approx_delta = max(0.30, 0.50 - (strike - price) * 0.04)
+            else:
+                approx_delta = min(0.80, 0.50 + (price - strike) * 0.04)
+        else:
+            if strike < price:
+                approx_delta = max(0.30, 0.50 - (price - strike) * 0.04)
+            else:
+                approx_delta = min(0.80, 0.50 + (strike - price) * 0.04)
+
+        if not (STD_DELTA_MIN <= approx_delta <= STD_DELTA_MAX):
+            continue
+
+        oi = int(c.get("open_interest", 0))
+        vol = int(c.get("volume", 0))
+
+        sym = c.get("symbol", "")
+        quote = get_option_quote(sym)
+        if not quote or quote["mid"] < 0.50:
+            continue
+
+        bid = quote["bid"]
+        ask = quote["ask"]
+        mid = quote["mid"]
+        spread_pct = ((ask - bid) / mid * 100) if mid > 0 else 99
+        if spread_pct > 8:
+            continue
+
+        atm_closeness = max(0, 10 - itm_amount)
+        score = oi * 0.3 + vol * 0.3 + atm_closeness * 50 + (10 - spread_pct) * 20
+
+        if score > best_score:
+            best_score = score
+            best = {
+                "symbol": sym,
+                "strike": strike,
+                "expiry": expiry,
+                "approx_delta": round(approx_delta, 2),
+                "open_interest": oi,
+                "volume": vol,
+                "mid": mid,
+                "bid": bid,
+                "ask": ask,
+                "spread_pct": round(spread_pct, 1),
+            }
+    return best
+
+# ─── Execute Entry ───────────────────────────────────────────────────────────
+
+def _std_execute_entry(entry_data):
+    """تنفيذ دخول Strategy D."""
+    import pytz
+    now_str = datetime.now(pytz.timezone("America/New_York")).strftime("%I:%M %p")
+    direction = entry_data["direction"]
+    price = entry_data["price"]
+    expiry = _today_expiry()
+
+    contract = _std_find_contract(price, direction, expiry)
+    if not contract:
+        logger.warning(f"[StratD] لا يوجد عقد ATM مناسب لـ {direction}")
+        return
+
+    order = place_option_order(contract["symbol"], 1, "buy", order_type="market", position_intent="open")
+    if not order:
+        send_telegram(f"❌ Strategy D: فشل تنفيذ أمر الشراء لـ {contract['symbol']}")
+        return
+
+    trade = {
+        "strategy": "D",
+        "symbol": contract["symbol"],
+        "direction": direction,
+        "strike": contract["strike"],
+        "expiry": contract["expiry"],
+        "approx_delta": contract["approx_delta"],
+        "open_interest": contract["open_interest"],
+        "option_volume": contract["volume"],
+        "spread_pct": contract["spread_pct"],
+        "entry_price": contract["mid"],
+        "entry_stock_price": price,
+        "entry_time": now_str,
+        "vwap": entry_data["vwap"],
+        "qty": 1,
+        "reinforced": False,
+        "order_id": order.get("id", ""),
+        # بيانات المؤشرات عند الدخول
+        "entry_rsi": entry_data["rsi"],
+        "entry_macd_line": entry_data["macd_line"],
+        "entry_macd_prev": entry_data["macd_prev"],
+        "entry_macd_hist": entry_data["macd_hist"],
+        "entry_obv_slope": entry_data["obv_slope"],
+        "entry_obv_vs_ma": entry_data["obv_vs_ma"],
+        "entry_momentum": entry_data["momentum"],
+        "entry_atr": entry_data["atr"],
+        "entry_volume_ratio": entry_data["volume_ratio"],
+        "entry_vwap_distance": entry_data["vwap_distance_pct"],
+        "entry_spy_direction": entry_data["spy_direction"],
+        "entry_spy_change": entry_data["spy_change"],
+        # MAE/MFE
+        "mae": 0.0,
+        "mfe": 0.0,
+        "mae_dollars": 0.0,
+        "mfe_dollars": 0.0,
+    }
+
+    with _std_lock:
+        _std_state["active_trade"] = trade
+        _std_state["status_msg"] = f"🦟 صفقة: {direction} @ ${contract['mid']:.2f}"
+
+    _std_send_entry_msg(trade)
+    logger.info(f"[StratD] ✅ دخول {direction} | {contract['symbol']} @ ${contract['mid']:.2f} | RSI={entry_data['rsi']:.1f}")
+
+# ─── Monitor & Reinforce ─────────────────────────────────────────────────────
+
+def _std_monitor_trade(trade):
+    """مراقبة صفقة مفتوحة + تعزيز + TP/SL."""
+    try:
+        quote = get_option_quote(trade["symbol"])
+        if quote and quote["mid"] > 0:
+            current_price = quote["mid"]
+        else:
+            snap = get_tsla_snapshot()
+            if not snap:
+                return
+            stock_price = snap["price"]
+            delta = trade["approx_delta"]
+            price_change = stock_price - trade["entry_stock_price"]
+            if trade["direction"] == "PUT":
+                price_change = -price_change
+            current_price = max(0.01, trade["entry_price"] + (price_change * delta))
+
+        entry_price = trade["entry_price"]
+        pnl_dollars = current_price - entry_price
+
+        # MAE/MFE tracking
+        if pnl_dollars < trade.get("mae_dollars", 0):
+            trade["mae_dollars"] = pnl_dollars
+            trade["mae"] = pnl_dollars / entry_price
+        if pnl_dollars > trade.get("mfe_dollars", 0):
+            trade["mfe_dollars"] = pnl_dollars
+            trade["mfe"] = pnl_dollars / entry_price
+
+        # التعزيز: +$0.45 → شراء عقد ثاني
+        if not trade["reinforced"] and pnl_dollars >= STD_REINFORCE_AT:
+            order = place_option_order(trade["symbol"], 1, "buy", order_type="market", position_intent="open")
+            if order:
+                trade["reinforced"] = True
+                trade["qty"] = 2
+                trade["reinforce_price"] = current_price
+                import pytz
+                trade["reinforce_time"] = datetime.now(
+                    pytz.timezone("America/New_York")
+                ).strftime("%I:%M %p")
+                with _std_lock:
+                    _std_state["status_msg"] = f"🦟💪 تعزيز! 2 عقود | +${pnl_dollars:.2f}"
+                send_telegram(
+                    f"🦟💪 *STRATEGY D — تعزيز!*\n"
+                    f"📈 الربح: +${pnl_dollars:.2f} ({pnl_dollars/entry_price*100:+.1f}%)\n"
+                    f"🎯 عقد ثاني @ ${current_price:.2f}\n"
+                    f"🛡️ SL → Breakeven (${entry_price:.2f})"
+                )
+                logger.info(f"[StratD] 💪 تعزيز @ ${current_price:.2f} | P&L: +${pnl_dollars:.2f}")
+            return
+
+        # TP: +$0.95
+        if pnl_dollars >= STD_TP_DOLLARS:
+            _std_close_trade(trade, current_price, f"TP +${STD_TP_DOLLARS:.2f}", pnl_dollars)
+            return
+
+        # SL Logic
+        if trade["reinforced"]:
+            if current_price <= entry_price:
+                _std_close_trade(trade, current_price, "SL Breakeven (بعد تعزيز)", current_price - entry_price)
+                return
+        else:
+            if pnl_dollars <= STD_SL_DOLLARS:
+                _std_close_trade(trade, current_price, f"SL ${STD_SL_DOLLARS:.2f}", pnl_dollars)
+                return
+
+    except Exception as e:
+        logger.error(f"[StratD] Monitor error: {e}")
+
+# ─── Close Trade ─────────────────────────────────────────────────────────────
+
+def _std_close_trade(trade, exit_price, exit_type, pnl_dollars):
+    """إغلاق صفقة Strategy D + جمع بيانات الإغلاق."""
+    import pytz
+    et_tz = pytz.timezone("America/New_York")
+    now_str = datetime.now(et_tz).strftime("%I:%M %p")
+
+    qty = trade.get("qty", 1)
+    place_option_order(trade["symbol"], qty, "sell", order_type="market", position_intent="close")
+
+    total_pnl = pnl_dollars
+    if trade["reinforced"]:
+        reinforce_pnl = exit_price - trade.get("reinforce_price", exit_price)
+        total_pnl = pnl_dollars + reinforce_pnl
+
+    pnl_pct = pnl_dollars / trade["entry_price"] * 100
+
+    # جمع بيانات الإغلاق
+    bars_3m = get_tsla_bars("3Min", 50)
+    exit_rsi = _std_calc_rsi(bars_3m) if bars_3m and len(bars_3m) >= 15 else None
+    exit_macd_hist = None
+    if bars_3m and len(bars_3m) >= 38:
+        exit_macd_hist, _ = _rw_macd_hist([float(b["c"]) for b in bars_3m])
+    exit_obv_slope = None
+    if bars_3m and len(bars_3m) >= 6:
+        exit_obv_slope, _ = _std_calc_obv_slope(bars_3m)
+    exit_momentum = _std_calc_momentum(bars_3m) if bars_3m and len(bars_3m) >= 11 else None
+    spy_dir, spy_chg = get_spy_direction()
+
+    snap = get_tsla_snapshot()
+    exit_stock_price = snap["price"] if snap else trade["entry_stock_price"]
+
+    trade["exit_price"] = exit_price
+    trade["exit_stock_price"] = exit_stock_price
+    trade["exit_type"] = exit_type
+    trade["exit_time"] = now_str
+    trade["pnl_dollars"] = round(pnl_dollars, 2)
+    trade["pnl_total"] = round(total_pnl, 2)
+    trade["pnl_pct"] = round(pnl_pct, 1)
+    trade["exit_rsi"] = exit_rsi
+    trade["exit_macd_hist"] = round(exit_macd_hist, 4) if exit_macd_hist else None
+    trade["exit_obv_slope"] = exit_obv_slope
+    trade["exit_momentum"] = round(exit_momentum, 4) if exit_momentum else None
+    trade["exit_spy_direction"] = spy_dir
+    trade["exit_spy_change"] = spy_chg
+
+    with _std_lock:
+        _std_state["active_trade"] = None
+        _std_state["trades_today"].append(trade)
+        emoji = "✅" if pnl_dollars > 0 else "❌"
+        _std_state["status_msg"] = f"{emoji} آخر: {exit_type} ({pnl_pct:+.1f}%)"
+
+    _std_send_close_msg(trade)
+    _std_save_to_csv(trade)
+    logger.info(f"[StratD] إغلاق: {exit_type} | P&L: ${pnl_dollars:+.2f} ({pnl_pct:+.1f}%) | Total: ${total_pnl:+.2f}")
+
+# ─── CSV Data Collection ─────────────────────────────────────────────────────
+
+def _std_save_to_csv(trade):
+    """حفظ بيانات الصفقة في CSV لتحليل لاحق."""
+    import csv
+    csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mosquito_trades.csv")
+
+    file_exists = os.path.exists(csv_path)
+    try:
+        with open(csv_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow([
+                    "date", "entry_time", "exit_time", "direction", "symbol", "strike",
+                    "entry_price", "exit_price", "entry_stock", "exit_stock",
+                    "qty", "reinforced", "pnl_dollars", "pnl_total", "pnl_pct", "exit_type",
+                    "entry_rsi", "entry_macd_line", "entry_macd_hist", "entry_obv_slope",
+                    "entry_momentum", "entry_atr", "entry_volume_ratio", "entry_vwap_distance",
+                    "entry_spy", "entry_spy_chg",
+                    "exit_rsi", "exit_macd_hist", "exit_obv_slope", "exit_momentum",
+                    "exit_spy", "exit_spy_chg",
+                    "mae_dollars", "mfe_dollars", "mae_pct", "mfe_pct",
+                    "vwap"
+                ])
+            writer.writerow([
+                trade.get("expiry", ""),
+                trade.get("entry_time", ""),
+                trade.get("exit_time", ""),
+                trade.get("direction", ""),
+                trade.get("symbol", ""),
+                trade.get("strike", ""),
+                trade.get("entry_price", ""),
+                trade.get("exit_price", ""),
+                trade.get("entry_stock_price", ""),
+                trade.get("exit_stock_price", ""),
+                trade.get("qty", 1),
+                trade.get("reinforced", False),
+                trade.get("pnl_dollars", 0),
+                trade.get("pnl_total", 0),
+                trade.get("pnl_pct", 0),
+                trade.get("exit_type", ""),
+                trade.get("entry_rsi", ""),
+                trade.get("entry_macd_line", ""),
+                trade.get("entry_macd_hist", ""),
+                trade.get("entry_obv_slope", ""),
+                trade.get("entry_momentum", ""),
+                trade.get("entry_atr", ""),
+                trade.get("entry_volume_ratio", ""),
+                trade.get("entry_vwap_distance", ""),
+                trade.get("entry_spy_direction", ""),
+                trade.get("entry_spy_change", ""),
+                trade.get("exit_rsi", ""),
+                trade.get("exit_macd_hist", ""),
+                trade.get("exit_obv_slope", ""),
+                trade.get("exit_momentum", ""),
+                trade.get("exit_spy_direction", ""),
+                trade.get("exit_spy_change", ""),
+                trade.get("mae_dollars", 0),
+                trade.get("mfe_dollars", 0),
+                round(trade.get("mae", 0) * 100, 1),
+                round(trade.get("mfe", 0) * 100, 1),
+                trade.get("vwap", ""),
+            ])
+        logger.info(f"[StratD] 📊 Trade saved to CSV")
+    except Exception as e:
+        logger.error(f"[StratD] CSV save error: {e}")
+
+# ─── Telegram Messages ───────────────────────────────────────────────────────
+
+def _std_send_entry_msg(trade):
+    """إرسال رسالة دخول Strategy D على Telegram."""
+    msg = (
+        f"🦟 <b>STRATEGY D — Mosquito Trend | {trade['direction']}</b>\n"
+        f"🕐 دخول: {trade['entry_time']} ET\n"
+        f"📍 TSLA: ${trade['entry_stock_price']:.2f} | VWAP: ${trade['vwap']:.2f}\n"
+        f"─────────────────────\n"
+        f"🎯 العقد: <code>{trade['symbol']}</code>\n"
+        f"   Strike: ${trade['strike']:.0f} | Delta≈{trade['approx_delta']}\n"
+        f"   سعر الدخول: ${trade['entry_price']:.2f}\n"
+        f"   Spread: {trade['spread_pct']}%\n"
+        f"─────────────────────\n"
+        f"📊 <b>المؤشرات عند الدخول:</b>\n"
+        f"   RSI: {trade['entry_rsi']:.1f}\n"
+        f"   MACD Line: {trade['entry_macd_line']:.4f}\n"
+        f"   MACD Hist: {trade['entry_macd_hist']:.4f}\n"
+        f"   OBV Slope: {trade['entry_obv_slope']:,.0f}\n"
+        f"   Momentum: {trade['entry_momentum']:.4f}\n"
+        f"   ATR: ${trade['entry_atr']:.3f}\n"
+        f"   Vol Ratio: {trade['entry_volume_ratio']:.2f}x\n"
+        f"   VWAP Dist: {trade['entry_vwap_distance']:+.3f}%\n"
+        f"─────────────────────\n"
+        f"🌐 SPY: {trade['entry_spy_direction']} ({trade['entry_spy_change']:+.3f}%)\n"
+        f"─────────────────────\n"
+        f"🎯 TP: +${STD_TP_DOLLARS:.2f} → بيع الكل\n"
+        f"💪 تعزيز: +${STD_REINFORCE_AT:.2f} → عقد ثاني\n"
+        f"🛑 SL: ${STD_SL_DOLLARS:.2f}\n"
+        f"⏰ إغلاق إجباري: 2:00 PM ET"
+    )
+    send_telegram(msg)
+
+def _std_send_close_msg(trade):
+    """إرسال رسالة إغلاق Strategy D."""
+    emoji = "✅" if trade["pnl_dollars"] > 0 else "❌"
+    msg = (
+        f"{emoji} <b>STRATEGY D — إغلاق ({trade['exit_type']})</b>\n"
+        f"🕐 {trade['exit_time']} ET\n"
+        f"─────────────────────\n"
+        f"💰 <b>النتيجة:</b>\n"
+        f"   P&L عقد 1: ${trade['pnl_dollars']:+.2f} ({trade['pnl_pct']:+.1f}%)\n"
+        f"   P&L إجمالي: ${trade['pnl_total']:+.2f}\n"
+        f"   عدد العقود: {trade['qty']} | تعزيز: {'✅' if trade['reinforced'] else '❌'}\n"
+        f"─────────────────────\n"
+        f"📊 <b>المؤشرات عند الإغلاق:</b>\n"
+        f"   RSI: {trade.get('exit_rsi', 'N/A')}\n"
+        f"   MACD Hist: {trade.get('exit_macd_hist', 'N/A')}\n"
+        f"   OBV Slope: {trade.get('exit_obv_slope', 'N/A')}\n"
+        f"   Momentum: {trade.get('exit_momentum', 'N/A')}\n"
+        f"─────────────────────\n"
+        f"📉 MAE: ${trade.get('mae_dollars',0):.2f} | MFE: +${trade.get('mfe_dollars',0):.2f}\n"
+        f"🌐 SPY: {trade.get('exit_spy_direction','N/A')} ({trade.get('exit_spy_change',0):+.3f}%)\n"
+        f"─────────────────────\n"
+        f"📋 <b>ملخص:</b>\n"
+        f"   {trade['direction']} | <code>{trade['symbol']}</code>\n"
+        f"   دخول: ${trade['entry_price']:.2f} → خروج: ${trade['exit_price']:.2f}\n"
+        f"   TSLA: ${trade['entry_stock_price']:.2f} → ${trade.get('exit_stock_price', 0):.2f}"
+    )
+    send_telegram(msg)
+
+# ─── Main Loop ───────────────────────────────────────────────────────────────
+
+def _strategy_d_loop():
+    """Main loop لـ Strategy D — Mosquito Trend."""
+    import pytz
+    et_tz = pytz.timezone("America/New_York")
+    logger.info("[StratD] 🦟 V13.0 Mosquito Trend thread started")
+
+    while True:
+        try:
+            with _std_lock:
+                if not _std_state["running"]:
+                    break
+
+            now = datetime.now(et_tz)
+            now_str = now.strftime("%I:%M %p")
+            today_str = now.strftime("%Y-%m-%d")
+
+            with _std_lock:
+                _std_state["last_check"] = now_str
+                if _std_state["daily_date"] != today_str:
+                    _std_state["daily_date"] = today_str
+                    _std_state["trades_today"] = []
+
+            # إغلاق إجباري عند 2:00 PM
+            if _std_is_force_close():
+                with _std_lock:
+                    trade = _std_state.get("active_trade")
+                if trade:
+                    quote = get_option_quote(trade["symbol"])
+                    exit_price = quote["mid"] if quote and quote["mid"] > 0 else trade["entry_price"]
+                    pnl = exit_price - trade["entry_price"]
+                    _std_close_trade(trade, exit_price, "إغلاق إجباري 2:00 PM", pnl)
+                time.sleep(60)
+                continue
+
+            # خارج النافذة
+            if not _std_in_window():
+                with _std_lock:
+                    _std_state["status_msg"] = "⏳ انتظار نافذة 9:35 AM"
+                time.sleep(30)
+                continue
+
+            with _std_lock:
+                active_trade = _std_state.get("active_trade")
+                trades_count = len(_std_state["trades_today"])
+
+            if active_trade:
+                _std_monitor_trade(active_trade)
+            else:
+                if trades_count >= STD_MAX_TRADES_DAY:
+                    with _std_lock:
+                        _std_state["status_msg"] = f"⛔ الحد اليومي ({STD_MAX_TRADES_DAY} صفقات)"
+                    time.sleep(60)
+                    continue
+
+                entry_data, info = _std_check_entry()
+                if entry_data:
+                    _std_execute_entry(entry_data)
+                else:
+                    with _std_lock:
+                        _std_state["status_msg"] = f"🔍 {info.get('reason', 'لا إشارة')[:50]} | {now_str}"
+
+        except Exception as e:
+            logger.error(f"[StratD] Loop error: {e}")
+        time.sleep(STD_LOOP_SLEEP)
+
+# ─── Start / Stop / Status ───────────────────────────────────────────────────
+
+def start_mosquito():
+    """تشغيل Strategy D (Mosquito Trend)."""
+    with _std_lock:
+        if _std_state["running"]:
+            logger.warning("[StratD] already running")
+            return False
+        _std_state["running"] = True
+    threading.Thread(target=_strategy_d_loop, daemon=True).start()
+    logger.info("[StratD] ✅ V13.0 Mosquito Trend started")
+    return True
+
+def stop_mosquito():
+    """إيقاف Strategy D."""
+    with _std_lock:
+        _std_state["running"] = False
+        _std_state["status_msg"] = "موقوف"
+
+def get_mosquito_status():
+    """حالة Strategy D."""
+    with _std_lock:
+        trade = _std_state.get("active_trade")
+        return {
+            "ok":           True,
+            "strategy":     "D — Mosquito Trend (ATM + Reinforce)",
+            "running":      _std_state["running"],
+            "status":       _std_state["status_msg"],
+            "last_check":   _std_state["last_check"],
+            "active_trade": {
+                "symbol":      trade["symbol"],
+                "direction":   trade["direction"],
+                "entry_price": trade["entry_price"],
+                "entry_time":  trade["entry_time"],
+                "qty":         trade["qty"],
+                "reinforced":  trade["reinforced"],
+                "rsi":         trade["entry_rsi"],
+                "mae":         round(trade.get("mae_dollars", 0), 2),
+                "mfe":         round(trade.get("mfe_dollars", 0), 2),
+            } if trade else None,
+            "trades_today": len(_std_state["trades_today"]),
+            "max_trades":   STD_MAX_TRADES_DAY,
+        }

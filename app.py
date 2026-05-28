@@ -2786,13 +2786,13 @@ def _start_background_threads():
         logger.info("TSLA 5M Reversal Warning System started ✅ 🔔")
     except Exception as _rw_err:
         logger.warning(f"Reversal Warning System not started: {_rw_err}")
-    # V10.5: Mosquito Scanner — Multi-Timeframe MACD Reversal
+    # V13.0: Strategy D — Mosquito Trend (ATM + Reinforcement)
     try:
         from options_scalper import start_mosquito
-        start_mosquito()
-        logger.info("🦟 Mosquito Scanner started ✅")
+        result = start_mosquito()
+        logger.info(f"V13.0 Strategy D (Mosquito Trend) started ✅ 🦟 result={result}")
     except Exception as _mq_err:
-        logger.warning(f"Mosquito Scanner not started: {_mq_err}")
+        logger.error(f"Strategy D (Mosquito) FAILED to start: {_mq_err}", exc_info=True)
     # V8: Options Scalper — autonomous trading engine
     if _V8_AVAILABLE:
         if reversal_map.get("built"):
@@ -2832,15 +2832,16 @@ def _ensure_strategies_alive():
             get_pyramid_status, start_pyramid_auto,
             get_strategy_b_status, start_strategy_b,
             get_strategy_c_status, start_strategy_c,
+            get_mosquito_status, start_mosquito,
             _pyr_state, _pyr_lock,
             _stb_state, _stb_lock,
-            _stc_state, _stc_lock
+            _stc_state, _stc_lock,
+            _std_state, _std_lock
         )
         import threading as _th
         # Pyramid
         pyr_status = get_pyramid_status()
         if not pyr_status.get("running"):
-            # force reset running flag so start() won't be blocked
             with _pyr_lock:
                 _pyr_state["running"] = False
             start_pyramid_auto()
@@ -2859,6 +2860,13 @@ def _ensure_strategies_alive():
                 _stc_state["running"] = False
             start_strategy_c()
             logger.info("[AutoRestart] Strategy C restarted ✅")
+        # Strategy D (Mosquito)
+        std_status = get_mosquito_status()
+        if not std_status.get("running"):
+            with _std_lock:
+                _std_state["running"] = False
+            start_mosquito()
+            logger.info("[AutoRestart] Strategy D (Mosquito) restarted ✅")
     except Exception as _e:
         logger.error(f"[AutoRestart] error: {_e}", exc_info=True)
 

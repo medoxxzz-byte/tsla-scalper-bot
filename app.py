@@ -3012,6 +3012,298 @@ def _ensure_strategies_alive():
     except Exception as _e:
         logger.error(f"[AutoRestart] error: {_e}", exc_info=True)
 
+# ──────────────────────────────────────────────────────────────────────────────
+# V15.0: Dashboard APIs — Volume Levels, Reversal Gauges, Reversal Zones
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route('/api/volume-levels', methods=['GET'])
+def api_volume_levels():
+    """
+    V15.0: جلب مستويات السيولة لـ 5 فريمات زمنية.
+    يُرجع: لكل فريم — الحجم الحالي، المتوسط، النسبة (ratio)، المستوى (1-5)
+    المستويات: 1=ضعيفة جداً، 2=ضعيفة، 3=متوسطة، 4=عالية، 5=عالية جداً
+    """
+    try:
+        from options_scalper import get_tsla_bars as _get_bars
+    except ImportError:
+        _get_bars = None
+
+    def _fetch_bars(timeframe, limit):
+        """جلب شمعات TSLA من Alpaca."""
+        try:
+            if _get_bars:
+                return _get_bars(timeframe, limit)
+        except Exception:
+            pass
+        try:
+            r = _retry_session.get(
+                "https://data.alpaca.markets/v2/stocks/TSLA/bars",
+                headers=alpaca_headers(),
+                params={"timeframe": timeframe, "limit": limit, "feed": "iex", "sort": "asc"},
+                timeout=10
+            )
+            if r.status_code == 200:
+                return r.json().get("bars", [])
+        except Exception as e:
+            logger.error(f"[VolAPI] Bars error ({timeframe}): {e}")
+        return []
+
+    def _classify_volume(ratio):
+        """تصنيف السيولة بناءً على النسبة مقارنة بالمتوسط."""
+        if ratio is None:
+            return 3, "متوسطة"
+        if ratio < 0.5:
+            return 1, "ضعيفة جداً"
+        elif ratio < 0.8:
+            return 2, "ضعيفة"
+        elif ratio < 1.3:
+            return 3, "متوسطة"
+        elif ratio < 2.0:
+            return 4, "عالية"
+        else:
+            return 5, "عالية جداً"
+
+    def _calc_frame(timeframe, limit, lookback):
+        """حساب بيانات السيولة لفريم زمني معين."""
+        bars = _fetch_bars(timeframe, limit)
+        if not bars or len(bars) < lookback + 1:
+            return {"level": 3, "label": "متوسطة", "ratio": None, "current_vol": 0, "avg_vol": 0}
+        volumes = [int(b["v"]) for b in bars]
+        current_vol = volumes[-1]
+        avg_vol = sum(volumes[-lookback-1:-1]) / lookback if lookback > 0 else current_vol
+        ratio = round(current_vol / avg_vol, 2) if avg_vol > 0 else None
+        level, label = _classify_volume(ratio)
+        return {
+            "level": level,
+            "label": label,
+            "ratio": ratio,
+            "current_vol": current_vol,
+            "avg_vol": round(avg_vol)
+        }
+
+    result = {
+        "1H":  _calc_frame("1Hour",  30, 20),
+        "15M": _calc_frame("15Min", 30, 20),
+        "5M":  _calc_frame("5Min",  40, 20),
+        "3M":  _calc_frame("3Min",  40, 20),
+        "1M":  _calc_frame("1Min",  40, 20),
+        "ok": True
+    }
+    return jsonify(result)
+
+
+@app.route('/api/reversal-gauges', methods=['GET'])
+def api_reversal_gauges():
+    """
+    V15.0: عدادات الانعكاس على فريم 5M.
+    يُرجع: CALL/PUT Potential (0-100)، OBV Slope، Volume Reversal، Per Trade Gauge
+    """
+    try:
+        from options_scalper import get_tsla_bars as _get_bars, _rw_rsi, _rw_ema, _rw_obv, _rw_macd_hist
+    except ImportError:
+        return jsonify({"ok": False, "error": "options_scalper not available"})
+
+    try:
+        bars = _get_bars("5Min", 60)
+        if not bars or len(bars) < 30:
+            return jsonify({
+                "ok": True,
+                "call_potential": 50, "put_potential": 50,
+                "obv_gauge": 50, "vol_reversal": 50, "per_trade": 50,
+                "direction": "NEUTRAL", "rsi": None, "macd_hist": None
+            })
+
+        closes  = [float(b["c"]) for b in bars]
+        volumes = [int(b["v"]) for b in bars]
+
+        # RSI
+        rsi = _rw_rsi(closes, 14)
+
+        # MACD Histogram
+        macd_curr, macd_prev = _rw_macd_hist(closes)
+
+        # OBV
+        obv_list = _rw_obv(closes, volumes)
+        obv_slope = 0
+        if len(obv_list) >= 6:
+            obv_slope = obv_list[-1] - obv_list[-6]
+
+        # Volume Ratio (آخر شمعة vs متوسط 20)
+        avg_vol_20 = sum(volumes[-21:-1]) / 20 if len(volumes) >= 21 else sum(volumes) / len(volumes)
+        vol_ratio = volumes[-1] / avg_vol_20 if avg_vol_20 > 0 else 1.0
+
+        # EMA9
+        ema9 = _rw_ema(closes, 9)
+        price = closes[-1]
+
+        # ── حساب CALL Potential (0-100) ──────────────────────────────
+        call_score = 50.0
+        if rsi is not None:
+            if rsi < 30:
+                call_score += 20   # oversold
+            elif rsi < 45:
+                call_score += 10
+            elif rsi > 70:
+                call_score -= 20   # overbought
+            elif rsi > 55:
+                call_score -= 5
+
+        if macd_curr is not None:
+            if macd_curr > 0 and (macd_prev is None or macd_curr > macd_prev):
+                call_score += 15   # MACD صاعد
+            elif macd_curr < 0:
+                call_score -= 15
+
+        if obv_slope > 0:
+            call_score += 10
+        elif obv_slope < 0:
+            call_score -= 10
+
+        if ema9 and price > ema9:
+            call_score += 5
+        elif ema9 and price < ema9:
+            call_score -= 5
+
+        call_score = max(0, min(100, call_score))
+        put_score  = 100 - call_score
+
+        # ── OBV Gauge (0-100) ─────────────────────────────────────────
+        obv_max = max(abs(obv_slope), 1)
+        obv_gauge = min(100, max(0, int(50 + (obv_slope / obv_max) * 50)))
+
+        # ── Volume Reversal Gauge (0-100) ─────────────────────────────
+        vol_gauge = min(100, max(0, int(min(vol_ratio, 3.0) / 3.0 * 100)))
+
+        # ── Per Trade Gauge (0-100) — نسبة الربح المتوقع ──────────────
+        per_trade = int(call_score) if call_score >= 50 else int(put_score)
+
+        # ── الاتجاه العام ─────────────────────────────────────────────
+        if call_score >= 60:
+            direction = "CALL"
+        elif put_score >= 60:
+            direction = "PUT"
+        else:
+            direction = "NEUTRAL"
+
+        return jsonify({
+            "ok": True,
+            "call_potential": round(call_score),
+            "put_potential":  round(put_score),
+            "obv_gauge":      obv_gauge,
+            "vol_reversal":   vol_gauge,
+            "per_trade":      per_trade,
+            "direction":      direction,
+            "rsi":            round(rsi, 1) if rsi else None,
+            "macd_hist":      round(macd_curr, 4) if macd_curr else None,
+            "obv_slope":      round(obv_slope),
+            "vol_ratio":      round(vol_ratio, 2),
+            "ema9":           round(ema9, 2) if ema9 else None,
+            "price":          round(price, 2)
+        })
+
+    except Exception as e:
+        logger.error(f"[GaugeAPI] Error: {e}", exc_info=True)
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route('/api/reversal-zones', methods=['GET'])
+def api_reversal_zones():
+    """
+    V15.0: مناطق الانعكاس السعرية اليومية.
+    يُرجع: قائمة مناطق سعرية (نطاق $2 لكل منطقة) + تنبيه إذا السعر دخل المنطقة.
+    """
+    try:
+        # جلب السعر الحالي
+        price = get_tsla_price_alpaca_snapshot()
+
+        # بناء/استخدام خريطة الانعكاسات الموجودة
+        rmap = build_reversal_map()
+        levels = rmap.get("levels", [])
+
+        # إذا لا توجد مستويات، استخدم Alpaca Snapshot
+        if not levels:
+            try:
+                r = _retry_session.get(
+                    "https://data.alpaca.markets/v2/stocks/TSLA/snapshot",
+                    headers=alpaca_headers(), timeout=8
+                )
+                if r.status_code == 200:
+                    snap = r.json()
+                    daily = snap.get("dailyBar", {})
+                    prev  = snap.get("prevDailyBar", {})
+                    day_h = float(daily.get("h", 0))
+                    day_l = float(daily.get("l", 0))
+                    prev_h = float(prev.get("h", 0))
+                    prev_l = float(prev.get("l", 0))
+                    if day_h > 0:
+                        levels = [
+                            {"name": "Day High",  "price": day_h,  "type": "resistance", "source": "Daily", "strength": "قوية"},
+                            {"name": "Day Low",   "price": day_l,  "type": "support",    "source": "Daily", "strength": "قوية"},
+                            {"name": "Prev High", "price": prev_h, "type": "resistance", "source": "Daily", "strength": "متوسطة"},
+                            {"name": "Prev Low",  "price": prev_l, "type": "support",    "source": "Daily", "strength": "متوسطة"},
+                        ]
+            except Exception as _e:
+                logger.error(f"[ZonesAPI] Snapshot error: {_e}")
+
+        # تحويل المستويات إلى مناطق سعرية ($2 لكل منطقة)
+        zones = []
+        import pytz
+        et = pytz.timezone("America/New_York")
+        now_et = datetime.now(et)
+        weekday_names = {0: "الاثنين", 1: "الثلاثاء", 2: "الأربعاء", 3: "الخميس", 4: "الجمعة", 5: "السبت", 6: "الأحد"}
+        # اليوم التالي
+        next_day = now_et.weekday() + 1
+        if next_day > 6:
+            next_day = 0
+        next_day_name = weekday_names.get(next_day, "غداً")
+        today_name = weekday_names.get(now_et.weekday(), "اليوم")
+
+        for lvl in levels:
+            lvl_price = float(lvl.get("price", 0))
+            if lvl_price <= 0:
+                continue
+            zone_low  = round(lvl_price - 1.0, 2)
+            zone_high = round(lvl_price + 1.0, 2)
+            # تنبيه: هل السعر الحالي داخل المنطقة؟
+            in_zone = (price > 0) and (zone_low <= price <= zone_high)
+            # مسافة السعر من المنطقة
+            dist = round(abs(price - lvl_price), 2) if price > 0 else None
+            near = (dist is not None) and (dist <= 2.0)
+            zones.append({
+                "name":       lvl.get("name", "Level"),
+                "price":      lvl_price,
+                "zone_low":   zone_low,
+                "zone_high":  zone_high,
+                "type":       lvl.get("type", "pivot"),
+                "source":     lvl.get("source", "—"),
+                "strength":   lvl.get("strength", "متوسطة"),
+                "in_zone":    in_zone,
+                "near_zone":  near,
+                "distance":   dist,
+                "day_label":  today_name,
+                "next_day":   next_day_name,
+                "alert":      in_zone or near
+            })
+
+        # ترتيب: المناطق الأقرب للسعر أولاً
+        if price > 0:
+            zones.sort(key=lambda z: abs(z["price"] - price))
+
+        return jsonify({
+            "ok":         True,
+            "price":      round(price, 2) if price > 0 else None,
+            "zones":      zones,
+            "date":       rmap.get("date", get_today()),
+            "today":      today_name,
+            "next_day":   next_day_name,
+            "zone_count": len(zones)
+        })
+
+    except Exception as e:
+        logger.error(f"[ZonesAPI] Error: {e}", exc_info=True)
+        return jsonify({"ok": False, "error": str(e)})
+
+
 # استدعاء مباشر عند بدء التشغيل
 _start_background_threads()
 

@@ -3,11 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TSLA Scalper Bot — Live Dashboard</title>
+  <title>TSLA Scalper Bot — Dashboard V15</title>
   <style>
-    /* ── Reset & Base ─────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
       --bg:        #0b0e14;
       --surface:   #141820;
@@ -27,7 +25,6 @@
       --text-muted:#64748b;
       --font:      'Segoe UI', system-ui, -apple-system, sans-serif;
     }
-
     body {
       background: var(--bg);
       color: var(--text);
@@ -36,11 +33,11 @@
       padding: 0 0 40px;
     }
 
-    /* ── Header ───────────────────────────────────────────────────── */
+    /* ── Header ─────────────────────────────────────────────────────── */
     header {
       background: linear-gradient(135deg, #0f1724 0%, #1a2540 100%);
       border-bottom: 1px solid var(--border);
-      padding: 18px 32px;
+      padding: 14px 20px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -49,407 +46,383 @@
       z-index: 100;
       backdrop-filter: blur(10px);
     }
-
-    .header-left { display: flex; align-items: center; gap: 14px; }
-
+    .header-left { display: flex; align-items: center; gap: 12px; }
     .logo {
-      width: 42px; height: 42px;
+      width: 38px; height: 38px;
       background: linear-gradient(135deg, #4fc3f7, #00e676);
       border-radius: 10px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 20px; font-weight: 900; color: #0b0e14;
-      flex-shrink: 0;
+      font-size: 18px; font-weight: 900; color: #0b0e14;
     }
-
-    .header-title h1 {
-      font-size: 18px; font-weight: 700; color: var(--text);
-      letter-spacing: 0.3px;
-    }
-    .header-title p {
-      font-size: 12px; color: var(--text-muted); margin-top: 2px;
-    }
-
-    .header-right { display: flex; align-items: center; gap: 16px; }
-
+    .header-title h1 { font-size: 16px; font-weight: 700; color: var(--text); }
+    .header-title p  { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+    .header-right { display: flex; align-items: center; gap: 14px; }
     .live-badge {
-      display: flex; align-items: center; gap: 7px;
+      display: flex; align-items: center; gap: 6px;
       background: var(--green-dim);
       border: 1px solid var(--green);
       border-radius: 20px;
-      padding: 5px 14px;
-      font-size: 12px; font-weight: 600; color: var(--green);
+      padding: 4px 12px;
+      font-size: 11px; font-weight: 600; color: var(--green);
     }
     .live-dot {
-      width: 8px; height: 8px;
-      background: var(--green);
-      border-radius: 50%;
+      width: 7px; height: 7px;
+      background: var(--green); border-radius: 50%;
       animation: pulse 1.4s ease-in-out infinite;
     }
-    @keyframes pulse {
-      0%,100% { opacity: 1; transform: scale(1); }
-      50%      { opacity: 0.4; transform: scale(0.7); }
-    }
-
-    .refresh-timer {
-      font-size: 12px; color: var(--text-muted);
-      display: flex; align-items: center; gap: 6px;
-    }
-    .timer-ring {
-      width: 20px; height: 20px;
-      position: relative;
-    }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.7)} }
+    .refresh-timer { font-size: 11px; color: var(--text-muted); display:flex; align-items:center; gap:5px; }
+    .timer-ring { width:18px; height:18px; position:relative; }
     .timer-ring svg { transform: rotate(-90deg); }
-    .timer-ring circle {
-      fill: none; stroke: var(--border); stroke-width: 2;
-    }
-    .timer-ring .progress {
-      stroke: var(--blue); stroke-width: 2;
-      stroke-dasharray: 50.27;
-      stroke-dashoffset: 0;
-      transition: stroke-dashoffset 1s linear;
-    }
+    .timer-ring circle { fill:none; stroke:var(--border); stroke-width:2; }
+    .timer-ring .progress { stroke:var(--blue); stroke-width:2; stroke-dasharray:44; stroke-dashoffset:0; transition:stroke-dashoffset 1s linear; }
 
-    /* ── Main Grid ────────────────────────────────────────────────── */
-    .container { max-width: 1400px; margin: 0 auto; padding: 28px 24px; }
+    /* ── Container ──────────────────────────────────────────────────── */
+    .container { max-width: 900px; margin: 0 auto; padding: 20px 16px; }
 
-    /* ── Section Title ────────────────────────────────────────────── */
+    /* ── Section Title ──────────────────────────────────────────────── */
     .section-title {
       font-size: 11px; font-weight: 700;
       text-transform: uppercase; letter-spacing: 1.5px;
       color: var(--text-muted);
-      margin: 28px 0 14px;
+      margin: 24px 0 12px;
       display: flex; align-items: center; gap: 8px;
     }
-    .section-title::after {
-      content: '';
-      flex: 1; height: 1px;
-      background: var(--border);
-    }
+    .section-title::after { content:''; flex:1; height:1px; background:var(--border); }
 
-    /* ── Top Stats Row ────────────────────────────────────────────── */
+    /* ── Top Stats ──────────────────────────────────────────────────── */
     .stats-row {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 14px;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
       margin-bottom: 4px;
     }
-
     .stat-card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 18px 20px;
-      position: relative;
-      overflow: hidden;
-      transition: border-color 0.3s, transform 0.2s;
+      padding: 14px 16px;
+      position: relative; overflow: hidden;
     }
-    .stat-card:hover { transform: translateY(-2px); border-color: var(--blue); }
-
     .stat-card::before {
-      content: '';
-      position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      content:''; position:absolute; top:0; left:0; right:0; height:3px;
       background: var(--accent, var(--blue));
       border-radius: 12px 12px 0 0;
     }
+    .stat-label { font-size: 10px; color: var(--text-muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:6px; }
+    .stat-value { font-size: 22px; font-weight: 800; color: var(--accent, var(--text)); line-height:1; }
+    .stat-sub   { font-size: 10px; color: var(--text-muted); margin-top:4px; }
 
-    .stat-label {
-      font-size: 11px; color: var(--text-muted);
-      text-transform: uppercase; letter-spacing: 1px;
-      margin-bottom: 8px;
-    }
-    .stat-value {
-      font-size: 26px; font-weight: 800;
-      color: var(--accent, var(--text));
-      line-height: 1;
-    }
-    .stat-sub {
-      font-size: 11px; color: var(--text-muted);
-      margin-top: 6px;
-    }
-
-    /* ── Main Grid Layout ─────────────────────────────────────────── */
-    .main-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-    }
-    @media (max-width: 900px) { .main-grid { grid-template-columns: 1fr; } }
-
-    .full-width { grid-column: 1 / -1; }
-
-    /* ── Card ─────────────────────────────────────────────────────── */
+    /* ── Card ───────────────────────────────────────────────────────── */
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 14px;
       overflow: hidden;
-      transition: border-color 0.3s;
+      margin-bottom: 14px;
     }
-    .card:hover { border-color: #2d3a52; }
-
     .card-header {
-      padding: 16px 20px 14px;
+      padding: 14px 18px 12px;
       border-bottom: 1px solid var(--border);
       display: flex; align-items: center; justify-content: space-between;
     }
-    .card-title {
-      display: flex; align-items: center; gap: 10px;
-      font-size: 14px; font-weight: 700;
-    }
+    .card-title { display:flex; align-items:center; gap:9px; font-size:14px; font-weight:700; }
     .card-icon {
-      width: 32px; height: 32px;
-      border-radius: 8px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 15px;
-      flex-shrink: 0;
+      width:30px; height:30px; border-radius:8px;
+      display:flex; align-items:center; justify-content:center;
+      font-size:14px; flex-shrink:0;
     }
-    .card-body { padding: 18px 20px; }
+    .card-body { padding: 16px 18px; }
 
-    /* ── Status Badge ─────────────────────────────────────────────── */
+    /* ── Badge ──────────────────────────────────────────────────────── */
     .badge {
-      display: inline-flex; align-items: center; gap: 5px;
-      padding: 3px 10px; border-radius: 20px;
-      font-size: 11px; font-weight: 700;
-      text-transform: uppercase; letter-spacing: 0.5px;
+      display:inline-flex; align-items:center; gap:4px;
+      padding:3px 9px; border-radius:20px;
+      font-size:10px; font-weight:700;
+      text-transform:uppercase; letter-spacing:.5px;
     }
-    .badge-green  { background: var(--green-dim);  color: var(--green);  border: 1px solid var(--green); }
-    .badge-red    { background: var(--red-dim);    color: var(--red);    border: 1px solid var(--red); }
-    .badge-yellow { background: var(--yellow-dim); color: var(--yellow); border: 1px solid var(--yellow); }
-    .badge-blue   { background: var(--blue-dim);   color: var(--blue);   border: 1px solid var(--blue); }
-    .badge-purple { background: var(--purple-dim); color: var(--purple); border: 1px solid var(--purple); }
-    .badge-gray   { background: #1e2535; color: var(--text-muted); border: 1px solid var(--border); }
+    .badge-green  { background:var(--green-dim);  color:var(--green);  border:1px solid var(--green); }
+    .badge-red    { background:var(--red-dim);    color:var(--red);    border:1px solid var(--red); }
+    .badge-yellow { background:var(--yellow-dim); color:var(--yellow); border:1px solid var(--yellow); }
+    .badge-blue   { background:var(--blue-dim);   color:var(--blue);   border:1px solid var(--blue); }
+    .badge-gray   { background:#1e2535; color:var(--text-muted); border:1px solid var(--border); }
 
-    /* ── Data Row ─────────────────────────────────────────────────── */
-    .data-row {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 9px 0;
-      border-bottom: 1px solid var(--border);
-    }
-    .data-row:last-child { border-bottom: none; }
-    .data-key {
-      font-size: 12px; color: var(--text-muted);
-      display: flex; align-items: center; gap: 6px;
-    }
-    .data-val {
-      font-size: 13px; font-weight: 600; color: var(--text);
-      text-align: left;
-    }
-    .data-val.green { color: var(--green); }
-    .data-val.red   { color: var(--red); }
-    .data-val.yellow{ color: var(--yellow); }
-    .data-val.blue  { color: var(--blue); }
-
-    /* ── Reversal Warning ─────────────────────────────────────────── */
-    .reversal-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 10px;
-      margin-bottom: 16px;
-    }
-
-    .condition-card {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 14px 16px;
-      transition: all 0.4s ease;
-    }
-    .condition-card.triggered {
-      border-color: var(--red);
-      background: var(--red-dim);
-      animation: flash 0.5s ease-in-out 3;
-    }
-    @keyframes flash {
-      0%,100% { opacity: 1; }
-      50%      { opacity: 0.6; }
-    }
-
-    .condition-name {
-      font-size: 12px; font-weight: 700;
-      color: var(--text-muted);
-      margin-bottom: 6px;
-      display: flex; align-items: center; gap: 6px;
-    }
-    .condition-status {
-      font-size: 18px; font-weight: 800;
-    }
-    .condition-status.ok      { color: var(--green); }
-    .condition-status.warning { color: var(--red); }
-    .condition-detail {
-      font-size: 10px; color: var(--text-muted);
-      margin-top: 4px; line-height: 1.4;
-    }
-
-    /* ── Alert Log ────────────────────────────────────────────────── */
-    .alert-log {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      max-height: 160px;
-      overflow-y: auto;
-    }
-    .alert-log::-webkit-scrollbar { width: 4px; }
-    .alert-log::-webkit-scrollbar-track { background: transparent; }
-    .alert-log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-
-    .alert-item {
-      padding: 10px 14px;
-      border-bottom: 1px solid var(--border);
+    /* ── Volume Table ───────────────────────────────────────────────── */
+    .vol-table {
+      width: 100%;
+      border-collapse: collapse;
       font-size: 12px;
-      display: flex; gap: 10px; align-items: flex-start;
     }
-    .alert-item:last-child { border-bottom: none; }
-    .alert-time { color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
-    .alert-msg  { color: var(--red); }
-    .alert-empty {
-      padding: 20px 14px;
+    .vol-table th {
+      padding: 8px 6px;
       text-align: center;
-      color: var(--text-muted);
-      font-size: 12px;
-    }
-
-    /* ── Options Suggestion ───────────────────────────────────────── */
-    .options-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
-    }
-    .option-box {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 14px 16px;
-    }
-    .option-box.call { border-top: 3px solid var(--green); }
-    .option-box.put  { border-top: 3px solid var(--red); }
-    .option-type {
-      font-size: 10px; font-weight: 800;
-      text-transform: uppercase; letter-spacing: 1px;
-      margin-bottom: 8px;
-    }
-    .option-type.call { color: var(--green); }
-    .option-type.put  { color: var(--red); }
-    .option-symbol {
-      font-size: 11px; color: var(--text-muted);
-      margin-bottom: 10px; font-family: monospace;
-    }
-    .option-stat { display: flex; justify-content: space-between; margin-bottom: 4px; }
-    .option-stat span:first-child { font-size: 11px; color: var(--text-muted); }
-    .option-stat span:last-child  { font-size: 12px; font-weight: 700; color: var(--text); }
-
-    /* ── Trend Indicator ──────────────────────────────────────────── */
-    .trend-box {
-      display: flex; align-items: center; gap: 8px;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 8px 12px;
-      margin-bottom: 8px;
-    }
-    .trend-label { font-size: 11px; color: var(--text-muted); flex: 1; }
-    .trend-val   { font-size: 13px; font-weight: 700; }
-    .trend-up    { color: var(--green); }
-    .trend-down  { color: var(--red); }
-    .trend-none  { color: var(--text-muted); }
-
-    /* ── Endpoint Health Row ──────────────────────────────────────── */
-    .endpoint-row {
-      display: flex; align-items: center;
-      padding: 10px 0;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
       border-bottom: 1px solid var(--border);
+    }
+    .vol-table td {
+      padding: 7px 6px;
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .vol-table tr:last-child td { border-bottom: none; }
+    .vol-table td:first-child {
+      text-align: right;
+      font-weight: 700;
+      color: var(--text-muted);
+      font-size: 11px;
+      padding-right: 10px;
+    }
+    .vol-table th:first-child { text-align: right; padding-right: 10px; }
+
+    /* Volume level cells */
+    .vol-cell {
+      border-radius: 6px;
+      padding: 5px 4px;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+    .vol-cell .ratio { font-size: 10px; font-weight: 400; opacity: 0.8; display:block; margin-top:2px; }
+    .vol-1 { background: #ff222215; color: #ff6666; border: 1px solid #ff222240; }
+    .vol-2 { background: #ff880015; color: #ffaa44; border: 1px solid #ff880040; }
+    .vol-3 { background: #ffc10715; color: var(--yellow); border: 1px solid #ffc10740; }
+    .vol-4 { background: #00e67615; color: #66ffaa; border: 1px solid #00e67640; }
+    .vol-5 { background: #00e67630; color: var(--green); border: 1px solid var(--green); }
+    .vol-loading { background: var(--surface2); color: var(--text-muted); border: 1px solid var(--border); }
+
+    /* Volume header cells */
+    .th-1 { color: #ff6666; }
+    .th-2 { color: #ffaa44; }
+    .th-3 { color: var(--yellow); }
+    .th-4 { color: #66ffaa; }
+    .th-5 { color: var(--green); }
+
+    /* Active column highlight */
+    .vol-active { background: rgba(79, 195, 247, 0.05); }
+
+    /* ── Gauges Section ─────────────────────────────────────────────── */
+    .gauges-wrapper {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+    .gauge-big-wrap {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .gauge-small-grid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
       gap: 12px;
     }
-    .endpoint-row:last-child { border-bottom: none; }
-    .endpoint-dot {
-      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+    .gauge-small-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
     }
-    .endpoint-dot.up   { background: var(--green); box-shadow: 0 0 6px var(--green); }
-    .endpoint-dot.down { background: var(--red);   box-shadow: 0 0 6px var(--red); }
-    .endpoint-dot.loading { background: var(--yellow); animation: pulse 1s infinite; }
-    .endpoint-path { font-size: 12px; font-family: monospace; color: var(--blue); flex: 1; }
-    .endpoint-latency { font-size: 11px; color: var(--text-muted); }
-    .endpoint-status  { font-size: 11px; font-weight: 600; }
-    .endpoint-status.up   { color: var(--green); }
-    .endpoint-status.down { color: var(--red); }
 
-    /* ── PnL Display ──────────────────────────────────────────────── */
-    .pnl-display {
-      text-align: center; padding: 16px 0;
+    /* SVG Gauge */
+    .gauge-svg { display: block; }
+    .gauge-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-align: center;
+      letter-spacing: 0.3px;
     }
-    .pnl-number {
-      font-size: 36px; font-weight: 900;
-      letter-spacing: -1px; line-height: 1;
+    .gauge-label span {
+      display: block;
+      font-size: 9px;
+      font-weight: 400;
+      color: var(--text-muted);
+      opacity: 0.7;
     }
-    .pnl-number.positive { color: var(--green); }
-    .pnl-number.negative { color: var(--red); }
-    .pnl-number.neutral  { color: var(--text-muted); }
-    .pnl-label { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+    .gauge-value {
+      font-size: 13px;
+      font-weight: 800;
+      text-align: center;
+    }
+    .gauge-direction {
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+      padding: 3px 10px;
+      border-radius: 12px;
+    }
+    .dir-call { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+    .dir-put  { background: var(--red-dim);   color: var(--red);   border: 1px solid var(--red); }
+    .dir-neutral { background: #1e2535; color: var(--text-muted); border: 1px solid var(--border); }
 
-    /* ── Portfolio Bar ────────────────────────────────────────────── */
-    .portfolio-bar {
+    .gauge-meta {
+      display: flex;
+      gap: 16px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    .gauge-meta-item {
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+    .gauge-meta-item strong { color: var(--text); }
+
+    /* ── Reversal Zones Table ───────────────────────────────────────── */
+    .zones-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .zones-table th {
+      padding: 8px 10px;
+      text-align: right;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
       background: var(--surface2);
-      border-radius: 8px;
-      height: 8px;
-      overflow: hidden;
-      margin: 12px 0 6px;
     }
-    .portfolio-fill {
-      height: 100%;
-      border-radius: 8px;
-      background: linear-gradient(90deg, var(--green), #00e676aa);
-      transition: width 0.6s ease;
+    .zones-table th:last-child { text-align: center; }
+    .zones-table td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
     }
-    .portfolio-labels {
-      display: flex; justify-content: space-between;
-      font-size: 10px; color: var(--text-muted);
+    .zones-table tr:last-child td { border-bottom: none; }
+    .zones-table tr.zone-alert {
+      background: rgba(255, 68, 68, 0.08);
+      animation: zone-flash 1s ease-in-out infinite alternate;
+    }
+    .zones-table tr.zone-near {
+      background: rgba(255, 193, 7, 0.06);
+    }
+    @keyframes zone-flash {
+      0%   { background: rgba(255, 68, 68, 0.08); }
+      100% { background: rgba(255, 68, 68, 0.18); }
     }
 
-    /* ── Pair Trade ───────────────────────────────────────────────── */
-    .pair-legs {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-      margin-bottom: 12px;
+    .zone-name { font-weight: 700; color: var(--text); }
+    .zone-price { font-weight: 800; font-size: 13px; color: var(--blue); }
+    .zone-range { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+    .zone-type-resistance { color: var(--red); font-size: 10px; font-weight: 700; }
+    .zone-type-support    { color: var(--green); font-size: 10px; font-weight: 700; }
+    .zone-type-pivot      { color: var(--yellow); font-size: 10px; font-weight: 700; }
+    .zone-strength { font-size: 10px; color: var(--text-muted); }
+    .zone-dist { font-size: 11px; font-weight: 600; }
+    .zone-day  { font-size: 10px; color: var(--text-muted); }
+
+    .alert-cell {
+      text-align: center;
     }
-    .pair-leg {
+    .alert-arrow {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      font-size: 18px;
+      font-weight: 900;
+      animation: arrow-pulse 0.6s ease-in-out infinite alternate;
+    }
+    .alert-arrow.active {
+      background: var(--red-dim);
+      border: 1px solid var(--red);
+      color: var(--red);
+    }
+    .alert-arrow.near {
+      background: var(--yellow-dim);
+      border: 1px solid var(--yellow);
+      color: var(--yellow);
+    }
+    .alert-arrow.clear {
       background: var(--surface2);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px;
-      text-align: center;
+      color: var(--text-muted);
+      animation: none;
     }
-    .pair-leg-type { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
-    .pair-leg-type.xom { color: var(--green); }
-    .pair-leg-type.xle { color: var(--red); }
-    .pair-leg-val  { font-size: 20px; font-weight: 800; color: var(--text); }
-    .pair-leg-sub  { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
-
-    /* ── Last Updated ─────────────────────────────────────────────── */
-    .last-updated {
-      text-align: center;
-      font-size: 11px; color: var(--text-muted);
-      margin-top: 8px;
+    @keyframes arrow-pulse {
+      0%   { transform: scale(1); }
+      100% { transform: scale(1.15); }
     }
 
-    /* ── Loading Skeleton ─────────────────────────────────────────── */
+    /* ── Manual ITM Status ──────────────────────────────────────────── */
+    .data-row {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:8px 0; border-bottom:1px solid var(--border);
+    }
+    .data-row:last-child { border-bottom:none; }
+    .data-key { font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:5px; }
+    .data-val { font-size:12px; font-weight:600; color:var(--text); }
+    .data-val.green  { color:var(--green); }
+    .data-val.red    { color:var(--red); }
+    .data-val.yellow { color:var(--yellow); }
+    .data-val.blue   { color:var(--blue); }
+
+    .pnl-display { text-align:center; padding:14px 0; }
+    .pnl-number  { font-size:32px; font-weight:900; letter-spacing:-1px; line-height:1; }
+    .pnl-number.positive { color:var(--green); }
+    .pnl-number.negative { color:var(--red); }
+    .pnl-number.neutral  { color:var(--text-muted); }
+    .pnl-label { font-size:11px; color:var(--text-muted); margin-top:5px; }
+
+    /* ── Strategies Grid ────────────────────────────────────────────── */
+    .strategies-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    @media (max-width: 600px) { .strategies-grid { grid-template-columns: 1fr; } }
+
+    .strat-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+    .strat-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .strat-name { font-size: 12px; font-weight: 700; }
+    .strat-badge {
+      font-size: 9px; font-weight: 700;
+      padding: 2px 7px; border-radius: 10px;
+      text-transform: uppercase;
+    }
+    .strat-running { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+    .strat-stopped { background: var(--red-dim);   color: var(--red);   border: 1px solid var(--red); }
+    .strat-idle    { background: #1e2535; color: var(--text-muted); border: 1px solid var(--border); }
+    .strat-row { display:flex; justify-content:space-between; font-size:11px; padding:3px 0; }
+    .strat-key { color: var(--text-muted); }
+    .strat-val { font-weight: 600; }
+
+    /* ── Scrollbar ──────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width:5px; height:5px; }
+    ::-webkit-scrollbar-track { background:var(--bg); }
+    ::-webkit-scrollbar-thumb { background:var(--border); border-radius:5px; }
+
+    /* ── Last Updated ───────────────────────────────────────────────── */
+    .last-updated { text-align:center; font-size:10px; color:var(--text-muted); margin-top:16px; }
+
+    /* ── Loading Skeleton ───────────────────────────────────────────── */
     .skeleton {
       background: linear-gradient(90deg, var(--surface2) 25%, var(--border) 50%, var(--surface2) 75%);
       background-size: 200% 100%;
       animation: shimmer 1.5s infinite;
-      border-radius: 4px;
-      height: 14px;
+      border-radius: 4px; height: 12px;
     }
-    @keyframes shimmer {
-      0%   { background-position: 200% 0; }
-      100% { background-position: -200% 0; }
-    }
-
-    /* ── Error State ──────────────────────────────────────────────── */
-    .error-state {
-      text-align: center; padding: 20px;
-      color: var(--red); font-size: 12px;
-    }
-
-    /* ── Scrollbar Global ─────────────────────────────────────────── */
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: var(--bg); }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
+    @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
   </style>
 </head>
 <body>
@@ -462,18 +435,18 @@
     <div class="logo">T</div>
     <div class="header-title">
       <h1>TSLA Scalper Bot</h1>
-      <p>Live System Dashboard — V10.2</p>
+      <p>Live Dashboard — V15.0</p>
     </div>
   </div>
   <div class="header-right">
     <div class="refresh-timer">
       <div class="timer-ring">
-        <svg width="20" height="20" viewBox="0 0 20 20">
-          <circle cx="10" cy="10" r="8"/>
-          <circle class="progress" id="timerCircle" cx="10" cy="10" r="8"/>
+        <svg width="18" height="18" viewBox="0 0 18 18">
+          <circle cx="9" cy="9" r="7"/>
+          <circle class="progress" id="timerCircle" cx="9" cy="9" r="7"/>
         </svg>
       </div>
-      <span id="timerLabel">5s</span>
+      <span id="timerLabel">15s</span>
     </div>
     <div class="live-badge">
       <div class="live-dot"></div>
@@ -501,282 +474,282 @@
       <div class="stat-sub" id="portfolioSub">—</div>
     </div>
     <div class="stat-card" style="--accent: var(--yellow)">
-      <div class="stat-label">P&amp;L اليوم</div>
-      <div class="stat-value" id="dailyPnlTop">$0</div>
-      <div class="stat-sub" id="dailyPnlSub">—</div>
-    </div>
-    <div class="stat-card" style="--accent: var(--purple)">
-      <div class="stat-label">تحذيرات اليوم</div>
-      <div class="stat-value" id="warningCountTop">0</div>
-      <div class="stat-sub" id="warningCountSub">Reversal Warnings</div>
-    </div>
-    <div class="stat-card" style="--accent: var(--green)">
       <div class="stat-label">صفقات اليوم</div>
       <div class="stat-value" id="tradesTodayTop">0</div>
       <div class="stat-sub" id="tradesTodaySub">W: 0 | L: 0</div>
     </div>
   </div>
 
-  <!-- ── Main Grid ──────────────────────────────────────────────── -->
-  <div class="section-title">🚨 نظام تحذير الانعكاس (TSLA 5M)</div>
-  <div class="main-grid">
-
-    <!-- Reversal Warning Card -->
-    <div class="card full-width">
-      <div class="card-header">
-        <div class="card-title">
-          <div class="card-icon" style="background:#ff444420; color:var(--red)">⚠️</div>
-          Reversal Warning Monitor
-        </div>
-        <div id="reversalBadge" class="badge badge-green">✅ نشط — لا تحذيرات</div>
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- 1. سيولة السوق العامة                                         -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div class="section-title">💧 سيولة السوق العامة</div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <div class="card-icon" style="background:#4fc3f720; color:var(--blue)">📊</div>
+        مستويات السيولة — 5 فريمات
       </div>
-      <div class="card-body">
-        <div class="reversal-grid">
-          <div class="condition-card" id="cond_bearish">
-            <div class="condition-name">📉 Bearish Divergence</div>
-            <div class="condition-status ok" id="cond_bearish_status">—</div>
-            <div class="condition-detail" id="cond_bearish_detail">RSI يهبط بينما السعر يرتفع</div>
-          </div>
-          <div class="condition-card" id="cond_trend">
-            <div class="condition-name">📊 Trend Breakdown</div>
-            <div class="condition-status ok" id="cond_trend_status">—</div>
-            <div class="condition-detail" id="cond_trend_detail">كسر EMA9 + MACD سلبي</div>
-          </div>
-          <div class="condition-card" id="cond_rejection">
-            <div class="condition-name">🕯️ Price Rejection</div>
-            <div class="condition-status ok" id="cond_rejection_status">—</div>
-            <div class="condition-detail" id="cond_rejection_detail">ذيل علوي طويل / Shooting Star</div>
-          </div>
-          <div class="condition-card" id="cond_volume">
-            <div class="condition-name">📦 Volume Exhaustion</div>
-            <div class="condition-status ok" id="cond_volume_status">—</div>
-            <div class="condition-detail" id="cond_volume_detail">ارتفاع على حجم متراجع + OBV مسطح</div>
-          </div>
-        </div>
-
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
-          <span style="font-size:12px; color:var(--text-muted); font-weight:700; text-transform:uppercase; letter-spacing:1px;">سجل التحذيرات اليوم</span>
-          <span class="badge badge-purple" id="alertCountBadge">0 تحذيرات</span>
-        </div>
-        <div class="alert-log" id="alertLog">
-          <div class="alert-empty">✅ لا توجد تحذيرات اليوم</div>
-        </div>
-        <div class="last-updated">آخر فحص: <span id="lastCheck">—</span></div>
-      </div>
+      <div id="volBadge" class="badge badge-gray">جاري التحميل...</div>
     </div>
-
-    <!-- V8 Scalper Status -->
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">
-          <div class="card-icon" style="background:#4fc3f720; color:var(--blue)">🤖</div>
-          V8 Scalper Engine
-        </div>
-        <div id="v8Badge" class="badge badge-gray">—</div>
-      </div>
-      <div class="card-body">
-        <div class="trend-box">
-          <span class="trend-label">📈 Trend 15M</span>
-          <span class="trend-val trend-none" id="trend15m">—</span>
-        </div>
-        <div class="trend-box">
-          <span class="trend-label">📊 Trend 5M</span>
-          <span class="trend-val trend-none" id="trend5m">—</span>
-        </div>
-        <div class="trend-box">
-          <span class="trend-label">⚡ Trend 1M</span>
-          <span class="trend-val trend-none" id="trend1m">—</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">💰 VWAP</span>
-          <span class="data-val blue" id="vwap">—</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">📊 OR High / Low</span>
-          <span class="data-val" id="orRange">—</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">📅 PDH / PDL</span>
-          <span class="data-val" id="pdRange">—</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">⏸️ Paused Until</span>
-          <span class="data-val" id="pausedUntil">—</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">🚫 Stopped For Day</span>
-          <span class="data-val" id="stoppedDay">—</span>
-        </div>
-      </div>
+    <div class="card-body" style="overflow-x:auto; padding:12px 10px;">
+      <table class="vol-table">
+        <thead>
+          <tr>
+            <th>الفريم</th>
+            <th class="th-1">ضعيفة جداً<br><small style="font-weight:400;opacity:.7">[Very Weak]</small></th>
+            <th class="th-2">ضعيفة<br><small style="font-weight:400;opacity:.7">[Weak]</small></th>
+            <th class="th-3">متوسطة<br><small style="font-weight:400;opacity:.7">[Medium]</small></th>
+            <th class="th-4">عالية<br><small style="font-weight:400;opacity:.7">[High]</small></th>
+            <th class="th-5">عالية جداً<br><small style="font-weight:400;opacity:.7">[Very High]</small></th>
+          </tr>
+        </thead>
+        <tbody id="volTableBody">
+          <tr><td colspan="6" style="text-align:center; padding:20px; color:var(--text-muted);">جاري تحميل بيانات السيولة...</td></tr>
+        </tbody>
+      </table>
     </div>
-
-    <!-- Manual ITM Status -->
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">
-          <div class="card-icon" style="background:#00e67620; color:var(--green)">🎯</div>
-          Manual ITM Trade
-        </div>
-        <div id="manualBadge" class="badge badge-gray">—</div>
-      </div>
-      <div class="card-body">
-        <div class="pnl-display">
-          <div class="pnl-number neutral" id="manualPnl">$0.00</div>
-          <div class="pnl-label" id="manualPnlPct">P&amp;L — لا صفقة مفتوحة</div>
-        </div>
-        <div class="data-row">
-          <span class="data-key">🕐 وقت ET</span>
-          <span class="data-val blue" id="etTime">—</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">📈 سعر TSLA</span>
-          <span class="data-val" id="tslaPriceManual">—</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">📋 الصفقة المفتوحة</span>
-          <span class="data-val" id="openPosition">لا يوجد</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">✅ آخر نتيجة</span>
-          <span class="data-val" id="lastResult">—</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">🏪 ساعات التداول</span>
-          <span class="data-val" id="tradingHours">—</span>
-        </div>
-
-        <div style="margin-top:14px;">
-          <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px; font-weight:700; text-transform:uppercase; letter-spacing:1px;">العقود المقترحة</div>
-          <div class="options-grid">
-            <div class="option-box call">
-              <div class="option-type call">CALL ↑</div>
-              <div class="option-symbol" id="callSymbol">—</div>
-              <div class="option-stat"><span>Strike</span><span id="callStrike">—</span></div>
-              <div class="option-stat"><span>Mid</span><span id="callMid">—</span></div>
-              <div class="option-stat"><span>Delta</span><span id="callDelta">—</span></div>
-            </div>
-            <div class="option-box put">
-              <div class="option-type put">PUT ↓</div>
-              <div class="option-symbol" id="putSymbol">—</div>
-              <div class="option-stat"><span>Strike</span><span id="putStrike">—</span></div>
-              <div class="option-stat"><span>Mid</span><span id="putMid">—</span></div>
-              <div class="option-stat"><span>Delta</span><span id="putDelta">—</span></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Pair Trade Status -->
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">
-          <div class="card-icon" style="background:#ce93d820; color:var(--purple)">⚖️</div>
-          Pair Trade (XOM + XLE)
-        </div>
-        <div id="pairBadge" class="badge badge-gray">—</div>
-      </div>
-      <div class="card-body">
-        <div class="pair-legs">
-          <div class="pair-leg">
-            <div class="pair-leg-type xom">XOM CALL ×2</div>
-            <div class="pair-leg-val" id="xomVal">$0</div>
-            <div class="pair-leg-sub">Long Energy</div>
-          </div>
-          <div class="pair-leg">
-            <div class="pair-leg-type xle">XLE PUT ×4</div>
-            <div class="pair-leg-val" id="xleVal">$0</div>
-            <div class="pair-leg-sub">Short ETF Hedge</div>
-          </div>
-        </div>
-        <div class="data-row">
-          <span class="data-key">💵 التكلفة الإجمالية</span>
-          <span class="data-val" id="pairCost">$0.00</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">📈 القيمة الحالية</span>
-          <span class="data-val" id="pairCurrentVal">$0.00</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">🎯 الهدف (+30%)</span>
-          <span class="data-val green" id="pairTarget">$0.00</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">💰 P&amp;L</span>
-          <span class="data-val" id="pairPnl">$0.00 (0%)</span>
-        </div>
-
-        <!-- Progress bar toward +30% -->
-        <div style="margin-top:14px;">
-          <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-bottom:6px;">
-            <span>تقدم نحو الهدف +30%</span>
-            <span id="pairProgressPct">0%</span>
-          </div>
-          <div class="portfolio-bar">
-            <div class="portfolio-fill" id="pairProgressBar" style="width:0%"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- PE Engine Status -->
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">
-          <div class="card-icon" style="background:#ffc10720; color:var(--yellow)">🔬</div>
-          Precision Entry Engine (PE)
-        </div>
-        <div id="peBadge" class="badge badge-gray">—</div>
-      </div>
-      <div class="card-body">
-        <div class="data-row">
-          <span class="data-key">📡 Signal Active</span>
-          <span class="data-val" id="peSignalActive">—</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">📊 Direction</span>
-          <span class="data-val" id="peDirection">—</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">💲 Signal Price</span>
-          <span class="data-val" id="peSignalPrice">—</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">⏰ Signal Time</span>
-          <span class="data-val" id="peSignalTime">—</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">🌊 CheddarFlow %</span>
-          <span class="data-val" id="peCheddar">—</span>
-        </div>
-        <div class="data-row">
-          <span class="data-key">📋 Signal Reasons</span>
-          <span class="data-val" id="peReasons" style="font-size:11px; text-align:left; max-width:160px; word-break:break-word;">—</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Endpoint Health -->
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">
-          <div class="card-icon" style="background:#4fc3f720; color:var(--blue)">🌐</div>
-          Endpoint Health
-        </div>
-        <span id="endpointSummary" class="badge badge-gray">—</span>
-      </div>
-      <div class="card-body">
-        <div id="endpointList">
-          <!-- populated by JS -->
-        </div>
-      </div>
-    </div>
-
-  </div><!-- /main-grid -->
-
-  <div class="last-updated" style="margin-top:20px;">
-    آخر تحديث شامل: <span id="globalLastUpdate">—</span>
   </div>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- 2. مناطق الانعكاس — عدادات السيارة                           -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div class="section-title">🎯 مناطق الانعكاس — فريم 5 دقائق</div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <div class="card-icon" style="background:#ce93d820; color:var(--purple)">🔄</div>
+        عدادات الانعكاس [M5]
+      </div>
+      <div id="gaugeBadge" class="badge badge-gray">جاري التحميل...</div>
+    </div>
+    <div class="card-body">
+      <div class="gauges-wrapper">
+        <!-- عداد كبير: CALL/PUT Potential -->
+        <div class="gauge-big-wrap">
+          <svg class="gauge-svg" width="200" height="120" viewBox="0 0 200 120">
+            <!-- خلفية القوس -->
+            <path d="M 20 105 A 80 80 0 0 1 180 105" fill="none" stroke="#1c2230" stroke-width="18" stroke-linecap="round"/>
+            <!-- ألوان المناطق -->
+            <path d="M 20 105 A 80 80 0 0 1 60 35"   fill="none" stroke="#ff4444" stroke-width="18" stroke-linecap="round" opacity="0.5"/>
+            <path d="M 60 35  A 80 80 0 0 1 100 20"  fill="none" stroke="#ff8800" stroke-width="18" stroke-linecap="round" opacity="0.5"/>
+            <path d="M 100 20 A 80 80 0 0 1 140 35"  fill="none" stroke="#ffc107" stroke-width="18" stroke-linecap="round" opacity="0.5"/>
+            <path d="M 140 35 A 80 80 0 0 1 180 105" fill="none" stroke="#00e676" stroke-width="18" stroke-linecap="round" opacity="0.5"/>
+            <!-- مؤشر الإبرة -->
+            <line id="bigNeedle" x1="100" y1="105" x2="100" y2="30" stroke="white" stroke-width="3" stroke-linecap="round"
+                  transform="rotate(0 100 105)" style="transition: transform 0.8s ease;"/>
+            <circle cx="100" cy="105" r="6" fill="#e2e8f0"/>
+            <!-- النص -->
+            <text x="30" y="118" fill="#ff4444" font-size="9" font-family="sans-serif">PUT</text>
+            <text x="155" y="118" fill="#00e676" font-size="9" font-family="sans-serif">CALL</text>
+            <text x="100" y="118" fill="#64748b" font-size="8" font-family="sans-serif" text-anchor="middle">M5</text>
+          </svg>
+          <div class="gauge-value" id="bigGaugeVal" style="color:var(--text-muted)">—</div>
+          <div class="gauge-direction dir-neutral" id="bigGaugeDir">NEUTRAL</div>
+          <div class="gauge-label">إمكانية CALL/PUT<span>[CALL/PUT Potential]</span></div>
+        </div>
+
+        <!-- 4 عدادات صغيرة -->
+        <div class="gauge-small-grid">
+          <!-- OBV Reversal -->
+          <div class="gauge-small-wrap">
+            <svg class="gauge-svg" width="110" height="65" viewBox="0 0 110 65">
+              <path d="M 10 58 A 45 45 0 0 1 100 58" fill="none" stroke="#1c2230" stroke-width="12" stroke-linecap="round"/>
+              <path d="M 10 58 A 45 45 0 0 1 55 13"  fill="none" stroke="#ff4444" stroke-width="12" stroke-linecap="round" opacity="0.4"/>
+              <path d="M 55 13 A 45 45 0 0 1 100 58" fill="none" stroke="#00e676" stroke-width="12" stroke-linecap="round" opacity="0.4"/>
+              <line id="obv_needle" x1="55" y1="58" x2="55" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"
+                    transform="rotate(0 55 58)" style="transition: transform 0.8s ease;"/>
+              <circle cx="55" cy="58" r="4" fill="#e2e8f0"/>
+            </svg>
+            <div class="gauge-value" id="obvGaugeVal" style="color:var(--text-muted)">—</div>
+            <div class="gauge-label">انعكاس OBV<span>[OBV Reversal]</span></div>
+          </div>
+
+          <!-- Volume Reversal -->
+          <div class="gauge-small-wrap">
+            <svg class="gauge-svg" width="110" height="65" viewBox="0 0 110 65">
+              <path d="M 10 58 A 45 45 0 0 1 100 58" fill="none" stroke="#1c2230" stroke-width="12" stroke-linecap="round"/>
+              <path d="M 10 58 A 45 45 0 0 1 55 13"  fill="none" stroke="#ff4444" stroke-width="12" stroke-linecap="round" opacity="0.4"/>
+              <path d="M 55 13 A 45 45 0 0 1 100 58" fill="none" stroke="#00e676" stroke-width="12" stroke-linecap="round" opacity="0.4"/>
+              <line id="vol_needle" x1="55" y1="58" x2="55" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"
+                    transform="rotate(0 55 58)" style="transition: transform 0.8s ease;"/>
+              <circle cx="55" cy="58" r="4" fill="#e2e8f0"/>
+            </svg>
+            <div class="gauge-value" id="volGaugeVal" style="color:var(--text-muted)">—</div>
+            <div class="gauge-label">حجم انعكاس<span>[Volume Reversal]</span></div>
+          </div>
+
+          <!-- Volume Reversal 2 (per trade) -->
+          <div class="gauge-small-wrap">
+            <svg class="gauge-svg" width="110" height="65" viewBox="0 0 110 65">
+              <path d="M 10 58 A 45 45 0 0 1 100 58" fill="none" stroke="#1c2230" stroke-width="12" stroke-linecap="round"/>
+              <path d="M 10 58 A 45 45 0 0 1 55 13"  fill="none" stroke="#ff4444" stroke-width="12" stroke-linecap="round" opacity="0.4"/>
+              <path d="M 55 13 A 45 45 0 0 1 100 58" fill="none" stroke="#00e676" stroke-width="12" stroke-linecap="round" opacity="0.4"/>
+              <line id="vol2_needle" x1="55" y1="58" x2="55" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"
+                    transform="rotate(0 55 58)" style="transition: transform 0.8s ease;"/>
+              <circle cx="55" cy="58" r="4" fill="#e2e8f0"/>
+            </svg>
+            <div class="gauge-value" id="vol2GaugeVal" style="color:var(--text-muted)">—</div>
+            <div class="gauge-label">حجم انعكاس<span>[Volume Reversal]</span></div>
+          </div>
+
+          <!-- Per Trade Gauge -->
+          <div class="gauge-small-wrap">
+            <svg class="gauge-svg" width="110" height="65" viewBox="0 0 110 65">
+              <path d="M 10 58 A 45 45 0 0 1 100 58" fill="none" stroke="#1c2230" stroke-width="12" stroke-linecap="round"/>
+              <path d="M 10 58 A 45 45 0 0 1 55 13"  fill="none" stroke="#ff4444" stroke-width="12" stroke-linecap="round" opacity="0.4"/>
+              <path d="M 55 13 A 45 45 0 0 1 100 58" fill="none" stroke="#00e676" stroke-width="12" stroke-linecap="round" opacity="0.4"/>
+              <line id="pt_needle" x1="55" y1="58" x2="55" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"
+                    transform="rotate(0 55 58)" style="transition: transform 0.8s ease;"/>
+              <circle cx="55" cy="58" r="4" fill="#e2e8f0"/>
+            </svg>
+            <div class="gauge-value" id="ptGaugeVal" style="color:var(--text-muted)">—</div>
+            <div class="gauge-label">عداد لكل صفقة<span>[Per Trade Gauge]</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Meta info -->
+      <div class="gauge-meta" id="gaugeMeta">
+        <div class="gauge-meta-item">RSI: <strong id="metaRsi">—</strong></div>
+        <div class="gauge-meta-item">MACD: <strong id="metaMacd">—</strong></div>
+        <div class="gauge-meta-item">OBV Slope: <strong id="metaObv">—</strong></div>
+        <div class="gauge-meta-item">Vol Ratio: <strong id="metaVol">—</strong></div>
+        <div class="gauge-meta-item">EMA9: <strong id="metaEma">—</strong></div>
+        <div class="gauge-meta-item">Price: <strong id="metaPrice">—</strong></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- 3. مناطق انعكاس الأسعار اليومية — Flasher                    -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div class="section-title">🚨 مناطق انعكاس الأسعار اليومية — Flasher</div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <div class="card-icon" style="background:#ff444420; color:var(--red)">📍</div>
+        <span id="zonesTitle">مناطق الانعكاس السعرية</span>
+      </div>
+      <div id="zonesBadge" class="badge badge-gray">جاري التحميل...</div>
+    </div>
+    <div class="card-body" style="padding:10px 0 0;">
+      <div style="overflow-x:auto;">
+        <table class="zones-table">
+          <thead>
+            <tr>
+              <th>صف منشئ للانعكاس السعري المحتمل</th>
+              <th>نطاق سعري Price<br>~ 2 دولار</th>
+              <th>النوع</th>
+              <th>المصدر</th>
+              <th>المسافة</th>
+              <th style="text-align:center;">تنبيه<br>[ALERT]</th>
+            </tr>
+          </thead>
+          <tbody id="zonesTableBody">
+            <tr><td colspan="6" style="text-align:center; padding:20px; color:var(--text-muted);">جاري تحميل مناطق الانعكاس...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="padding:10px 18px 14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div style="font-size:10px; color:var(--text-muted);">
+          السعر الحالي: <strong id="zonesCurrentPrice" style="color:var(--blue)">—</strong>
+          &nbsp;|&nbsp; اليوم: <strong id="zonesToday" style="color:var(--text)">—</strong>
+          &nbsp;|&nbsp; غداً: <strong id="zonesNextDay" style="color:var(--yellow)">—</strong>
+        </div>
+        <div style="font-size:10px; color:var(--text-muted);">آخر تحديث: <span id="zonesLastUpdate">—</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- 4. حالة الصفقة اليدوية ITM                                    -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div class="section-title">🎯 التداول اليدوي ITM</div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <div class="card-icon" style="background:#00e67620; color:var(--green)">🎯</div>
+        Manual ITM Trade
+      </div>
+      <div id="manualBadge" class="badge badge-gray">—</div>
+    </div>
+    <div class="card-body">
+      <div class="pnl-display">
+        <div class="pnl-number neutral" id="manualPnl">$0.00</div>
+        <div class="pnl-label" id="manualPnlPct">P&amp;L — لا صفقة مفتوحة</div>
+      </div>
+      <div class="data-row">
+        <span class="data-key">🕐 وقت ET</span>
+        <span class="data-val blue" id="etTime">—</span>
+      </div>
+      <div class="data-row">
+        <span class="data-key">📈 سعر TSLA</span>
+        <span class="data-val" id="tslaPriceManual">—</span>
+      </div>
+      <div class="data-row">
+        <span class="data-key">📋 الصفقة المفتوحة</span>
+        <span class="data-val" id="openPosition">لا يوجد</span>
+      </div>
+      <div class="data-row">
+        <span class="data-key">✅ آخر نتيجة</span>
+        <span class="data-val" id="lastResult">—</span>
+      </div>
+      <div class="data-row">
+        <span class="data-key">🏪 ساعات التداول</span>
+        <span class="data-val" id="tradingHours">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- 5. حالة الاستراتيجيات التلقائية                               -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div class="section-title">🤖 الاستراتيجيات التلقائية</div>
+  <div class="strategies-grid">
+    <!-- Strategy A: Pyramid -->
+    <div class="strat-card">
+      <div class="strat-header">
+        <div class="strat-name">🦋 Strategy A — Pyramid</div>
+        <div class="strat-badge strat-idle" id="pyrBadge">—</div>
+      </div>
+      <div class="strat-row"><span class="strat-key">صفقة مفتوحة</span><span class="strat-val" id="pyrTrade">—</span></div>
+      <div class="strat-row"><span class="strat-key">صفقات اليوم</span><span class="strat-val" id="pyrCount">0</span></div>
+      <div class="strat-row"><span class="strat-key">آخر فحص</span><span class="strat-val" id="pyrCheck">—</span></div>
+    </div>
+    <!-- Strategy B: VWAP Bounce -->
+    <div class="strat-card">
+      <div class="strat-header">
+        <div class="strat-name">🎯 Strategy B — VWAP</div>
+        <div class="strat-badge strat-idle" id="stbBadge">—</div>
+      </div>
+      <div class="strat-row"><span class="strat-key">صفقة مفتوحة</span><span class="strat-val" id="stbTrade">—</span></div>
+      <div class="strat-row"><span class="strat-key">صفقات اليوم</span><span class="strat-val" id="stbCount">0</span></div>
+      <div class="strat-row"><span class="strat-key">آخر فحص</span><span class="strat-val" id="stbCheck">—</span></div>
+    </div>
+    <!-- Strategy C: ORB -->
+    <div class="strat-card">
+      <div class="strat-header">
+        <div class="strat-name">📈 Strategy C — ORB</div>
+        <div class="strat-badge strat-idle" id="stcBadge">—</div>
+      </div>
+      <div class="strat-row"><span class="strat-key">صفقة مفتوحة</span><span class="strat-val" id="stcTrade">—</span></div>
+      <div class="strat-row"><span class="strat-key">صفقات اليوم</span><span class="strat-val" id="stcCount">0</span></div>
+      <div class="strat-row"><span class="strat-key">آخر فحص</span><span class="strat-val" id="stcCheck">—</span></div>
+    </div>
+    <!-- Strategy D: Mosquito -->
+    <div class="strat-card">
+      <div class="strat-header">
+        <div class="strat-name">🦟 Strategy D — Mosquito</div>
+        <div class="strat-badge strat-idle" id="stdBadge">—</div>
+      </div>
+      <div class="strat-row"><span class="strat-key">صفقة مفتوحة</span><span class="strat-val" id="stdTrade">—</span></div>
+      <div class="strat-row"><span class="strat-key">صفقات اليوم</span><span class="strat-val" id="stdCount">0</span></div>
+      <div class="strat-row"><span class="strat-key">آخر فحص</span><span class="strat-val" id="stdCheck">—</span></div>
+    </div>
+  </div>
+
+  <div class="last-updated">آخر تحديث شامل: <span id="globalLastUpdate">—</span></div>
 
 </div><!-- /container -->
 
@@ -784,195 +757,269 @@
 <!--  JAVASCRIPT                                                     -->
 <!-- ═══════════════════════════════════════════════════════════════ -->
 <script>
-  const BASE = 'https://tsla-scalper-bot.onrender.com';
-  const REFRESH_INTERVAL = 5; // seconds
+  const BASE = '';  // same origin
+  const REFRESH_INTERVAL = 15; // seconds
 
   // ── Timer ────────────────────────────────────────────────────────
   let timerCount = REFRESH_INTERVAL;
   const timerCircle = document.getElementById('timerCircle');
   const timerLabel  = document.getElementById('timerLabel');
-  const CIRCUMFERENCE = 2 * Math.PI * 8; // r=8 → 50.27
+  const CIRCUMFERENCE = 2 * Math.PI * 7; // r=7 → ~44
 
   function updateTimer() {
     timerCount--;
-    if (timerCount < 0) timerCount = REFRESH_INTERVAL;
+    if (timerCount < 0) { timerCount = REFRESH_INTERVAL; fetchAll(); }
     timerLabel.textContent = timerCount + 's';
     const offset = CIRCUMFERENCE * (1 - timerCount / REFRESH_INTERVAL);
     timerCircle.style.strokeDashoffset = offset;
-    if (timerCount === 0) fetchAll();
   }
   setInterval(updateTimer, 1000);
 
   // ── Helpers ──────────────────────────────────────────────────────
-  function fmt$(n) {
-    if (n === null || n === undefined || isNaN(n)) return '—';
-    const v = parseFloat(n);
-    return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
-  }
-  function fmtPrice(n) {
-    if (!n || isNaN(n)) return '—';
-    return '$' + parseFloat(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
-  }
-  function fmtPct(n) {
-    if (n === null || n === undefined || isNaN(n)) return '—';
-    return (parseFloat(n) >= 0 ? '+' : '') + parseFloat(n).toFixed(2) + '%';
-  }
-  function el(id) { return document.getElementById(id); }
-  function setText(id, val) { const e = el(id); if (e) e.textContent = val; }
-  function setClass(id, cls) { const e = el(id); if (e) e.className = cls; }
-  function setHTML(id, html) { const e = el(id); if (e) e.innerHTML = html; }
+  function el(id)         { return document.getElementById(id); }
+  function setText(id, v) { const e = el(id); if (e) e.textContent = v; }
+  function fmtPrice(n)    { if (!n || isNaN(n)) return '—'; return '$' + parseFloat(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}); }
+  function fmt$(n)        { if (n===null||n===undefined||isNaN(n)) return '—'; const v=parseFloat(n); return (v>=0?'+':'')+' $'+Math.abs(v).toFixed(2); }
+  function fmtK(n)        { if (!n || isNaN(n)) return '—'; if (n >= 1000000) return (n/1000000).toFixed(1)+'M'; if (n >= 1000) return (n/1000).toFixed(1)+'K'; return n.toString(); }
 
-  function colorPnl(id, val) {
-    const e = el(id);
-    if (!e) return;
-    const v = parseFloat(val);
-    e.className = 'pnl-number ' + (v > 0 ? 'positive' : v < 0 ? 'negative' : 'neutral');
-  }
-
-  function trendClass(t) {
-    if (!t) return 'trend-none';
-    return t.toLowerCase().includes('bull') || t === 'up' ? 'trend-up' : 'trend-down';
-  }
-  function trendEmoji(t) {
-    if (!t) return '—';
-    const u = t.toLowerCase();
-    if (u.includes('bull') || u === 'up')   return '📈 ' + t.toUpperCase();
-    if (u.includes('bear') || u === 'down') return '📉 ' + t.toUpperCase();
-    return t.toUpperCase();
-  }
-
-  // ── Fetch with latency ───────────────────────────────────────────
-  async function fetchEndpoint(path) {
-    const t0 = Date.now();
+  async function fetchJSON(path) {
     try {
       const r = await fetch(BASE + path, { cache: 'no-store' });
-      const latency = Date.now() - t0;
-      if (!r.ok) return { ok: false, latency, status: r.status };
-      const data = await r.json();
-      return { ok: true, latency, data };
-    } catch(e) {
-      return { ok: false, latency: Date.now() - t0, error: e.message };
-    }
+      if (!r.ok) return null;
+      return await r.json();
+    } catch(e) { return null; }
   }
 
-  // ── Endpoint Health ──────────────────────────────────────────────
-  const ENDPOINTS = [
-    { path: '/reversal/status', label: 'Reversal Warning' },
-    { path: '/manual/status',   label: 'Manual ITM' },
-    { path: '/v8/status',       label: 'V8 Scalper' },
-    { path: '/pe/status',       label: 'Precision Entry' },
-    { path: '/pair/status',     label: 'Pair Trade' },
-    { path: '/pair/scan',       label: 'Pair Scan' },
-    { path: '/journal/entries', label: 'Journal' },
+  // ── Gauge Needle Rotation ────────────────────────────────────────
+  // value: 0-100, 0=full left (PUT), 100=full right (CALL)
+  // Big gauge: -90° (full left) to +90° (full right), center=0°
+  function setBigNeedle(value) {
+    const angle = (value / 100) * 180 - 90;
+    el('bigNeedle').setAttribute('transform', `rotate(${angle} 100 105)`);
+    el('bigGaugeVal').textContent = value + '%';
+    const color = value >= 60 ? 'var(--green)' : value <= 40 ? 'var(--red)' : 'var(--yellow)';
+    el('bigGaugeVal').style.color = color;
+  }
+
+  // Small gauge: -90° to +90°
+  function setSmallNeedle(needleId, value) {
+    const angle = (value / 100) * 180 - 90;
+    el(needleId).setAttribute('transform', `rotate(${angle} 55 58)`);
+  }
+
+  // ── Volume Table Rendering ───────────────────────────────────────
+  const VOL_FRAMES = [
+    { key: '1H',  label: 'ساعة [H1]' },
+    { key: '15M', label: '١٥ د [M15]' },
+    { key: '5M',  label: '٥ د [M5]' },
+    { key: '3M',  label: '٣ د [M3]' },
+    { key: '1M',  label: 'دقيقة [M1]' },
   ];
 
-  let endpointStates = {};
-
-  function renderEndpointList() {
-    const list = el('endpointList');
-    if (!list) return;
-    let html = '';
-    let upCount = 0;
-    ENDPOINTS.forEach(ep => {
-      const s = endpointStates[ep.path] || { status: 'loading' };
-      const isUp = s.status === 'up';
-      const isLoading = s.status === 'loading';
-      if (isUp) upCount++;
-      html += `
-        <div class="endpoint-row">
-          <div class="endpoint-dot ${s.status}"></div>
-          <span class="endpoint-path">${ep.path}</span>
-          <span class="endpoint-latency">${s.latency ? s.latency + 'ms' : ''}</span>
-          <span class="endpoint-status ${s.status}">${isLoading ? '...' : isUp ? 'UP' : 'DOWN'}</span>
-        </div>`;
-    });
-    list.innerHTML = html;
-    const total = ENDPOINTS.length;
-    const badge = el('endpointSummary');
-    if (badge) {
-      badge.textContent = upCount + '/' + total + ' UP';
-      badge.className = 'badge ' + (upCount === total ? 'badge-green' : upCount > 0 ? 'badge-yellow' : 'badge-red');
+  function renderVolTable(data) {
+    if (!data || !data.ok) {
+      el('volTableBody').innerHTML = '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--red)">خطأ في تحميل البيانات</td></tr>';
+      return;
     }
+
+    // تحديد الـ badge بناءً على الفريم 5M
+    const f5 = data['5M'] || {};
+    const badge = el('volBadge');
+    if (badge && f5.label) {
+      const lvl = f5.level || 3;
+      const colors = ['','badge-red','badge-yellow','badge-yellow','badge-green','badge-green'];
+      badge.textContent = 'M5: ' + f5.label;
+      badge.className = 'badge ' + (colors[lvl] || 'badge-gray');
+    }
+
+    // الحدود الفاصلة لكل مستوى (بناءً على ratio)
+    const THRESHOLDS = [
+      { max: 0.5,  level: 1 },
+      { max: 0.8,  level: 2 },
+      { max: 1.3,  level: 3 },
+      { max: 2.0,  level: 4 },
+      { max: 999,  level: 5 },
+    ];
+
+    let html = '';
+    VOL_FRAMES.forEach(frame => {
+      const fd = data[frame.key] || {};
+      const currentLevel = fd.level || 3;
+      const ratio = fd.ratio;
+      const avgVol = fd.avg_vol || 0;
+      const curVol = fd.current_vol || 0;
+
+      html += `<tr>`;
+      html += `<td>${frame.label}</td>`;
+
+      // 5 خلايا — واحدة لكل مستوى
+      for (let lvl = 1; lvl <= 5; lvl++) {
+        const isActive = (currentLevel === lvl);
+        // حساب الحد الأعلى لهذا المستوى
+        const threshold = THRESHOLDS[lvl - 1];
+        // عرض المعدل الطبيعي بـ K
+        const avgK = fmtK(avgVol);
+        const ratioStr = ratio !== null && ratio !== undefined ? ratio.toFixed(1) + '×' : '—';
+
+        if (isActive) {
+          html += `<td class="vol-active">
+            <div class="vol-cell vol-${lvl}">
+              تحت المعدل الطبيعي
+              <span class="ratio">${avgK} | ${ratioStr}</span>
+            </div>
+          </td>`;
+        } else {
+          html += `<td>
+            <div class="vol-cell vol-loading" style="opacity:0.3">
+              تحت المعدل الطبيعي
+              <span class="ratio">${avgK}</span>
+            </div>
+          </td>`;
+        }
+      }
+      html += `</tr>`;
+    });
+
+    el('volTableBody').innerHTML = html;
   }
 
-  // ── Update Reversal Warning ──────────────────────────────────────
-  function updateReversal(data) {
-    const count = data.alert_count || 0;
-    const alerts = data.alerts_today || [];
-    const active = data.active;
-    const lastCheck = data.last_check;
+  // ── Gauges Rendering ─────────────────────────────────────────────
+  function renderGauges(data) {
+    if (!data || !data.ok) {
+      el('gaugeBadge').textContent = 'خطأ';
+      el('gaugeBadge').className = 'badge badge-red';
+      return;
+    }
 
-    // Top stat
-    setText('warningCountTop', count);
+    const call = data.call_potential || 50;
+    const put  = data.put_potential  || 50;
+    const obv  = data.obv_gauge      || 50;
+    const vol  = data.vol_reversal   || 50;
+    const pt   = data.per_trade      || 50;
+    const dir  = data.direction      || 'NEUTRAL';
 
-    // Badge
-    const badge = el('reversalBadge');
+    // عداد كبير
+    setBigNeedle(call);
+
+    // اتجاه
+    const dirEl = el('bigGaugeDir');
+    if (dirEl) {
+      dirEl.textContent = dir === 'CALL' ? '📈 إمكانية شراء [CALL Potential]' :
+                          dir === 'PUT'  ? '📉 إمكانية بيع [PUT Potential]' :
+                          '⚖️ محايد [NEUTRAL]';
+      dirEl.className = 'gauge-direction ' + (dir === 'CALL' ? 'dir-call' : dir === 'PUT' ? 'dir-put' : 'dir-neutral');
+    }
+
+    // badge
+    const badge = el('gaugeBadge');
     if (badge) {
-      if (count > 0) {
-        badge.textContent = '🚨 ' + count + ' تحذير نشط!';
+      badge.textContent = 'M5 — ' + dir;
+      badge.className = 'badge ' + (dir === 'CALL' ? 'badge-green' : dir === 'PUT' ? 'badge-red' : 'badge-yellow');
+    }
+
+    // عدادات صغيرة
+    setSmallNeedle('obv_needle', obv);
+    setSmallNeedle('vol_needle', vol);
+    setSmallNeedle('vol2_needle', vol);
+    setSmallNeedle('pt_needle', pt);
+
+    // قيم العدادات الصغيرة
+    el('obvGaugeVal').textContent = obv + '%';
+    el('obvGaugeVal').style.color = obv >= 60 ? 'var(--green)' : obv <= 40 ? 'var(--red)' : 'var(--yellow)';
+    el('volGaugeVal').textContent = vol + '%';
+    el('volGaugeVal').style.color = vol >= 60 ? 'var(--green)' : vol <= 40 ? 'var(--red)' : 'var(--yellow)';
+    el('vol2GaugeVal').textContent = vol + '%';
+    el('vol2GaugeVal').style.color = vol >= 60 ? 'var(--green)' : vol <= 40 ? 'var(--red)' : 'var(--yellow)';
+    el('ptGaugeVal').textContent = pt + '%';
+    el('ptGaugeVal').style.color = pt >= 60 ? 'var(--green)' : pt <= 40 ? 'var(--red)' : 'var(--yellow)';
+
+    // Meta info
+    setText('metaRsi',   data.rsi   !== null ? data.rsi   : '—');
+    setText('metaMacd',  data.macd_hist !== null ? data.macd_hist : '—');
+    setText('metaObv',   data.obv_slope !== undefined ? (data.obv_slope > 0 ? '+' : '') + data.obv_slope.toLocaleString() : '—');
+    setText('metaVol',   data.vol_ratio !== undefined ? data.vol_ratio + '×' : '—');
+    setText('metaEma',   data.ema9  !== null ? fmtPrice(data.ema9) : '—');
+    setText('metaPrice', data.price !== null ? fmtPrice(data.price) : '—');
+  }
+
+  // ── Zones Table Rendering ────────────────────────────────────────
+  function renderZones(data) {
+    if (!data || !data.ok) {
+      el('zonesTableBody').innerHTML = '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--red)">خطأ في تحميل المناطق</td></tr>';
+      return;
+    }
+
+    const zones = data.zones || [];
+    const price = data.price;
+    const today = data.today || '—';
+    const nextDay = data.next_day || '—';
+
+    setText('zonesCurrentPrice', price ? fmtPrice(price) : '—');
+    setText('zonesToday', today);
+    setText('zonesNextDay', nextDay);
+    setText('zonesLastUpdate', new Date().toLocaleTimeString('ar-SA'));
+
+    // badge
+    const alertZones = zones.filter(z => z.alert).length;
+    const badge = el('zonesBadge');
+    if (badge) {
+      if (alertZones > 0) {
+        badge.textContent = '🚨 ' + alertZones + ' منطقة نشطة!';
         badge.className = 'badge badge-red';
       } else {
-        badge.textContent = '✅ نشط — لا تحذيرات';
+        badge.textContent = zones.length + ' منطقة — لا تنبيهات';
         badge.className = 'badge badge-green';
       }
     }
 
-    // Alert count badge
-    setText('alertCountBadge', count + ' تحذيرات');
+    // title
+    const title = el('zonesTitle');
+    if (title) title.textContent = 'مناطق الانعكاس السعرية — ' + nextDay;
 
-    // Last check — backend sends plain text like "02:34:20 ET"
-    setText('lastCheck', lastCheck || 'لم يتم الفحص بعد');
-
-     // Condition cards — use live current_conditions if available, fallback to alerts_today
-    const condMap = {
-      'BEARISH_DIVERGENCE': 'bearish',
-      'TREND_BREAKDOWN':    'trend',
-      'PRICE_REJECTION':    'rejection',
-      'VOLUME_EXHAUSTION':  'volume',
-    };
-    const liveConds = data.current_conditions || {};
-    const conditions = ['bearish','trend','rejection','volume'];
-    // Reset all to OK first
-    conditions.forEach(c => {
-      const card = el('cond_' + c);
-      const statusEl = el('cond_' + c + '_status');
-      if (card) card.classList.remove('triggered');
-      if (statusEl) { statusEl.textContent = '✅ OK'; statusEl.className = 'condition-status ok'; }
-    });
-    // Apply live conditions (real-time per-candle state)
-    Object.entries(condMap).forEach(([condKey, uiKey]) => {
-      if (liveConds[condKey] === true) {
-        const card = el('cond_' + uiKey);
-        const statusEl = el('cond_' + uiKey + '_status');
-        if (card) card.classList.add('triggered');
-        if (statusEl) { statusEl.textContent = '🚨 TRIGGERED'; statusEl.className = 'condition-status warning'; }
-      }
-    });
-    // Also mark from alerts_today (for detail text)
-    alerts.forEach(a => {
-      const key = condMap[a.condition];
-      if (!key) return;
-      const detailEl = el('cond_' + key + '_detail');
-      if (detailEl && a.detail) detailEl.textContent = a.detail;
-    });;
-
-    // Alert log
-    const logEl = el('alertLog');
-    if (logEl) {
-      if (alerts.length === 0) {
-        logEl.innerHTML = '<div class="alert-empty">✅ لا توجد تحذيرات اليوم</div>';
-      } else {
-        logEl.innerHTML = alerts.map(a => `
-          <div class="alert-item">
-            <span class="alert-time">${a.time || '—'}</span>
-            <span class="alert-msg">🚨 ${a.name || a.condition} @ ${fmtPrice(a.price)}</span>
-          </div>`).join('');
-      }
+    if (zones.length === 0) {
+      el('zonesTableBody').innerHTML = '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--text-muted)">لا توجد مناطق انعكاس محسوبة</td></tr>';
+      return;
     }
+
+    let html = '';
+    zones.forEach(z => {
+      const rowClass = z.in_zone ? 'zone-alert' : z.near_zone ? 'zone-near' : '';
+      const typeClass = z.type === 'resistance' ? 'zone-type-resistance' : z.type === 'support' ? 'zone-type-support' : 'zone-type-pivot';
+      const typeLabel = z.type === 'resistance' ? '↑ مقاومة' : z.type === 'support' ? '↓ دعم' : '⟺ محور';
+      const distColor = z.distance !== null ? (z.distance <= 1.0 ? 'var(--red)' : z.distance <= 2.0 ? 'var(--yellow)' : 'var(--text-muted)') : 'var(--text-muted)';
+      const distText = z.distance !== null ? '$' + z.distance.toFixed(2) : '—';
+
+      // سهم التنبيه
+      let arrowClass = 'clear';
+      let arrowText = '—';
+      if (z.in_zone) { arrowClass = 'active'; arrowText = '⚠'; }
+      else if (z.near_zone) { arrowClass = 'near'; arrowText = '↕'; }
+
+      html += `
+        <tr class="${rowClass}">
+          <td>
+            <div class="zone-name">${z.name}</div>
+            <div class="zone-day">${z.day_label} → ${z.next_day}</div>
+          </td>
+          <td>
+            <div class="zone-price">${fmtPrice(z.price)}</div>
+            <div class="zone-range">${fmtPrice(z.zone_low)} — ${fmtPrice(z.zone_high)}</div>
+          </td>
+          <td><span class="${typeClass}">${typeLabel}</span></td>
+          <td><span class="zone-strength">${z.source || '—'}</span></td>
+          <td><span class="zone-dist" style="color:${distColor}">${distText}</span></td>
+          <td class="alert-cell">
+            <div class="alert-arrow ${arrowClass}">${arrowText}</div>
+          </td>
+        </tr>`;
+    });
+
+    el('zonesTableBody').innerHTML = html;
   }
 
-  // ── Update Manual Status ─────────────────────────────────────────
-  function updateManual(data) {
+  // ── Manual Status ────────────────────────────────────────────────
+  function renderManual(data) {
+    if (!data) return;
     setText('etTime', data.et_time || '—');
     setText('tslaPriceManual', fmtPrice(data.tsla_price));
     setText('tslaPriceTop', fmtPrice(data.tsla_price));
@@ -988,9 +1035,12 @@
       badge.className = 'badge ' + (hasPos ? 'badge-yellow' : 'badge-gray');
     }
 
-    setText('manualPnl', hasPos ? fmt$(pnl) : '$0.00');
-    colorPnl('manualPnl', hasPos ? pnl : 0);
-    setText('manualPnlPct', hasPos ? fmtPct(pnlPct) + ' من الدخول' : 'لا صفقة مفتوحة');
+    const pnlEl = el('manualPnl');
+    if (pnlEl) {
+      pnlEl.textContent = hasPos ? fmt$(pnl) : '$0.00';
+      pnlEl.className = 'pnl-number ' + (hasPos ? (pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : 'neutral') : 'neutral');
+    }
+    setText('manualPnlPct', hasPos ? (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '% من الدخول' : 'لا صفقة مفتوحة');
 
     if (data.position) {
       const pos = data.position;
@@ -1000,165 +1050,29 @@
     }
 
     const lastPnl = data.last_pnl;
-    const lastReason = data.last_reason;
     if (lastPnl && lastPnl !== 0) {
-      setText('lastResult', fmt$(lastPnl) + (lastReason ? ' (' + lastReason + ')' : ''));
       const e = el('lastResult');
-      if (e) e.className = 'data-val ' + (lastPnl > 0 ? 'green' : 'red');
+      if (e) { e.textContent = fmt$(lastPnl); e.className = 'data-val ' + (lastPnl > 0 ? 'green' : 'red'); }
     } else {
       setText('lastResult', '—');
     }
-
     setText('tradingHours', data.is_trading_hours ? '🟢 نشط' : '🔴 مغلق');
-
-    // Suggested contracts
-    const sc = data.suggested_call || {};
-    const sp = data.suggested_put  || {};
-    setText('callSymbol', sc.symbol || '—');
-    setText('callStrike', sc.strike ? '$' + sc.strike : '—');
-    setText('callMid',    sc.mid    ? '$' + parseFloat(sc.mid).toFixed(2) : '—');
-    setText('callDelta',  sc.delta  ? parseFloat(sc.delta).toFixed(2) : '—');
-    setText('putSymbol',  sp.symbol || '—');
-    setText('putStrike',  sp.strike ? '$' + sp.strike : '—');
-    setText('putMid',     sp.mid    ? '$' + parseFloat(sp.mid).toFixed(2) : '—');
-    setText('putDelta',   sp.delta  ? parseFloat(sp.delta).toFixed(2) : '—');
   }
 
-  // ── Update V8 Status ─────────────────────────────────────────────
-  function updateV8(data) {
+  // ── Strategy Status ──────────────────────────────────────────────
+  function renderStrategy(prefix, data) {
+    if (!data) return;
     const running = data.running;
-    const stopped = data.stopped_for_day || data.stopped_permanent;
-
-    const badge = el('v8Badge');
+    const badge = el(prefix + 'Badge');
     if (badge) {
-      if (stopped) { badge.textContent = '🛑 متوقف'; badge.className = 'badge badge-red'; }
-      else if (running) { badge.textContent = '🚀 يعمل'; badge.className = 'badge badge-green'; }
-      else { badge.textContent = '⏸️ متوقف مؤقتاً'; badge.className = 'badge badge-yellow'; }
+      badge.textContent = running ? '🚀 يعمل' : '⏸️ متوقف';
+      badge.className = 'strat-badge ' + (running ? 'strat-running' : 'strat-idle');
     }
-
-    // Trends
-    const t15 = el('trend15m');
-    const t5  = el('trend5m');
-    const t1  = el('trend1m');
-    if (t15) { t15.textContent = trendEmoji(data.trend_15m); t15.className = 'trend-val ' + trendClass(data.trend_15m); }
-    if (t5)  { t5.textContent  = trendEmoji(data.trend_5m);  t5.className  = 'trend-val ' + trendClass(data.trend_5m); }
-    if (t1)  { t1.textContent  = trendEmoji(data.trend);     t1.className  = 'trend-val ' + trendClass(data.trend); }
-
-    setText('vwap', fmtPrice(data.vwap));
-    setText('orRange', fmtPrice(data.opening_range_high) + ' / ' + fmtPrice(data.opening_range_low));
-    setText('pdRange',  fmtPrice(data.pdh) + ' / ' + fmtPrice(data.pdl));
-
-    const paused = data.paused_until || 0;
-    if (paused > Date.now() / 1000) {
-      const remaining = Math.round(paused - Date.now() / 1000);
-      setText('pausedUntil', remaining + 'ث متبقية');
-      const e = el('pausedUntil'); if (e) e.className = 'data-val yellow';
-    } else {
-      setText('pausedUntil', 'لا');
-      const e = el('pausedUntil'); if (e) e.className = 'data-val green';
-    }
-
-    const stoppedEl = el('stoppedDay');
-    if (stoppedEl) {
-      stoppedEl.textContent = stopped ? 'نعم 🛑' : 'لا ✅';
-      stoppedEl.className = 'data-val ' + (stopped ? 'red' : 'green');
-    }
-
-    // Portfolio
-    const pStart = data.portfolio_start || 0;
-    const pCur   = data.portfolio_current || 0;
-    const dailyPnl = data.daily_pnl || 0;
-    setText('portfolioTop', '$' + Math.round(pCur).toLocaleString('en-US'));
-    setText('portfolioSub', 'بداية: $' + Math.round(pStart).toLocaleString('en-US'));
-
-    const dpEl = el('dailyPnlTop');
-    if (dpEl) {
-      dpEl.textContent = fmt$(dailyPnl);
-      dpEl.className = 'stat-value ' + (dailyPnl > 0 ? '' : dailyPnl < 0 ? '' : '');
-      dpEl.style.color = dailyPnl > 0 ? 'var(--green)' : dailyPnl < 0 ? 'var(--red)' : 'var(--text-muted)';
-    }
-    setText('dailyPnlSub', 'Total: ' + fmt$(data.total_pnl || 0));
-
-    // Trades
-    setText('tradesTodayTop', data.trades_today || 0);
-    setText('tradesTodaySub', 'W: ' + (data.wins || 0) + ' | L: ' + (data.losses || 0));
-  }
-
-  // ── Update Pair Status ───────────────────────────────────────────
-  function updatePair(data) {
-    const hasPos = data.has_position;
-    const pnlD   = data.pnl_dollar || 0;
-    const pnlP   = data.pnl_pct    || 0;
-    const cost   = data.total_cost  || 0;
-    const curVal = data.current_value || 0;
-    const target = data.target_value  || 0;
-
-    const badge = el('pairBadge');
-    if (badge) {
-      badge.textContent = hasPos ? '📊 صفقة مفتوحة' : '⏳ لا صفقة';
-      badge.className = 'badge ' + (hasPos ? 'badge-purple' : 'badge-gray');
-    }
-
-    setText('pairCost',       fmtPrice(cost));
-    setText('pairCurrentVal', fmtPrice(curVal));
-    setText('pairTarget',     fmtPrice(target));
-
-    const pnlEl = el('pairPnl');
-    if (pnlEl) {
-      pnlEl.textContent = fmt$(pnlD) + ' (' + fmtPct(pnlP) + ')';
-      pnlEl.className = 'data-val ' + (pnlD > 0 ? 'green' : pnlD < 0 ? 'red' : '');
-    }
-
-    // XOM / XLE placeholder values
-    setText('xomVal', fmtPrice(cost * 0.33));
-    setText('xleVal', fmtPrice(cost * 0.67));
-
-    // Progress bar toward +30%
-    const progress = Math.min(100, Math.max(0, (pnlP / 30) * 100));
-    const bar = el('pairProgressBar');
-    if (bar) bar.style.width = progress + '%';
-    setText('pairProgressPct', progress.toFixed(1) + '%');
-  }
-
-  // ── Update PE Status ─────────────────────────────────────────────
-  function updatePE(data) {
-    const running = data.running;
-    const signalActive = data.signal_active;
-
-    const badge = el('peBadge');
-    if (badge) {
-      if (signalActive) { badge.textContent = '⚡ إشارة نشطة!'; badge.className = 'badge badge-yellow'; }
-      else if (running) { badge.textContent = '🔬 يراقب';       badge.className = 'badge badge-blue'; }
-      else              { badge.textContent = '⏸️ متوقف';       badge.className = 'badge badge-gray'; }
-    }
-
-    const saEl = el('peSignalActive');
-    if (saEl) {
-      saEl.textContent = signalActive ? '✅ نعم' : '❌ لا';
-      saEl.className = 'data-val ' + (signalActive ? 'green' : 'red');
-    }
-
-    const dir = data.signal_direction || '';
-    const dirEl = el('peDirection');
-    if (dirEl) {
-      dirEl.textContent = dir ? (dir.toUpperCase() === 'CALL' ? '📈 CALL' : '📉 PUT') : '—';
-      dirEl.className = 'data-val ' + (dir.toUpperCase() === 'CALL' ? 'green' : dir ? 'red' : '');
-    }
-
-    setText('peSignalPrice', fmtPrice(data.signal_price));
-    setText('peSignalTime',  data.signal_time || '—');
-
-    const ched = data.cheddar_call_pct;
-    const chedEl = el('peCheddar');
-    if (chedEl) {
-      chedEl.textContent = ched !== null && ched !== undefined ? ched + '%' : '—';
-      if (ched !== null && ched !== undefined) {
-        chedEl.className = 'data-val ' + (ched > 60 ? 'green' : ched < 40 ? 'red' : 'yellow');
-      }
-    }
-
-    const reasons = data.signal_reasons || [];
-    setText('peReasons', reasons.length > 0 ? reasons.join(', ') : '—');
+    const trade = data.active_trade || data.current_trade;
+    setText(prefix + 'Trade', trade ? '✅ مفتوحة' : 'لا يوجد');
+    const count = data.trades_today ? data.trades_today.length : (data.trade_count || 0);
+    setText(prefix + 'Count', count);
+    setText(prefix + 'Check', data.last_check || '—');
   }
 
   // ── Main Fetch ───────────────────────────────────────────────────
@@ -1166,49 +1080,46 @@
     const now = new Date().toLocaleTimeString('ar-SA');
     setText('globalLastUpdate', now);
 
-    // Fetch all in parallel
-    const [reversalRes, manualRes, v8Res, peRes, pairRes] = await Promise.all([
-      fetchEndpoint('/reversal/status'),
-      fetchEndpoint('/manual/status'),
-      fetchEndpoint('/v8/status'),
-      fetchEndpoint('/pe/status'),
-      fetchEndpoint('/pair/status'),
+    // جلب كل البيانات بالتوازي
+    const [volData, gaugeData, zonesData, manualData, pyrData, stbData, stcData, stdData] = await Promise.all([
+      fetchJSON('/api/volume-levels'),
+      fetchJSON('/api/reversal-gauges'),
+      fetchJSON('/api/reversal-zones'),
+      fetchJSON('/manual/status'),
+      fetchJSON('/pyramid/status'),
+      fetchJSON('/strategy-b/status'),
+      fetchJSON('/strategy-c/status'),
+      fetchJSON('/mosquito/status'),
     ]);
 
-    // Update endpoint health states
-    endpointStates['/reversal/status'] = { status: reversalRes.ok ? 'up' : 'down', latency: reversalRes.latency };
-    endpointStates['/manual/status']   = { status: manualRes.ok   ? 'up' : 'down', latency: manualRes.latency };
-    endpointStates['/v8/status']       = { status: v8Res.ok       ? 'up' : 'down', latency: v8Res.latency };
-    endpointStates['/pe/status']       = { status: peRes.ok       ? 'up' : 'down', latency: peRes.latency };
-    endpointStates['/pair/status']     = { status: pairRes.ok     ? 'up' : 'down', latency: pairRes.latency };
+    renderVolTable(volData);
+    renderGauges(gaugeData);
+    renderZones(zonesData);
+    renderManual(manualData);
+    renderStrategy('pyr', pyrData);
+    renderStrategy('stb', stbData);
+    renderStrategy('stc', stcData);
+    renderStrategy('std', stdData);
 
-    // Fetch extra endpoints for health only
-    const [pairScanRes, journalRes] = await Promise.all([
-      fetchEndpoint('/pair/scan'),
-      fetchEndpoint('/journal/entries'),
-    ]);
-    endpointStates['/pair/scan']       = { status: pairScanRes.ok ? 'up' : 'down', latency: pairScanRes.latency };
-    endpointStates['/journal/entries'] = { status: journalRes.ok  ? 'up' : 'down', latency: journalRes.latency };
-
-    renderEndpointList();
-
-    // Update cards
-    if (reversalRes.ok) updateReversal(reversalRes.data);
-    if (manualRes.ok)   updateManual(manualRes.data);
-    if (v8Res.ok)       updateV8(v8Res.data);
-    if (peRes.ok)       updatePE(peRes.data);
-    if (pairRes.ok)     updatePair(pairRes.data);
+    // تحديث المحفظة من V8 status
+    try {
+      const v8Data = await fetchJSON('/v8/status');
+      if (v8Data) {
+        const pCur = v8Data.portfolio_current || 0;
+        const pStart = v8Data.portfolio_start || 0;
+        if (pCur > 0) {
+          setText('portfolioTop', '$' + Math.round(pCur).toLocaleString('en-US'));
+          setText('portfolioSub', 'بداية: $' + Math.round(pStart).toLocaleString('en-US'));
+        }
+        setText('tradesTodayTop', v8Data.trades_today || 0);
+        setText('tradesTodaySub', 'W: ' + (v8Data.wins || 0) + ' | L: ' + (v8Data.losses || 0));
+      }
+    } catch(e) {}
   }
 
   // ── Init ─────────────────────────────────────────────────────────
   timerCircle.style.strokeDasharray = CIRCUMFERENCE;
   timerCircle.style.strokeDashoffset = 0;
-
-  // Mark all endpoints as loading initially
-  ENDPOINTS.forEach(ep => { endpointStates[ep.path] = { status: 'loading' }; });
-  renderEndpointList();
-
-  // First fetch immediately
   fetchAll();
 </script>
 </body>

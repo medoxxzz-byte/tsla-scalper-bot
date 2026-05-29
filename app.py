@@ -2549,6 +2549,141 @@ def journal_export_csv():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/journal/export/excel', methods=['GET'])
+def journal_export_excel():
+    """تصدير جميع الصفقات كملف Excel (.xlsx) مع تنسيق كامل."""
+    try:
+        import io
+        from flask import Response
+        from openpyxl import Workbook
+        from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        from options_scalper import get_journal_entries
+        from datetime import datetime
+
+        entries = get_journal_entries(limit=10000)
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "سجل الصفقات"
+
+        # ألوان
+        green_fill  = PatternFill("solid", fgColor="1A6B3C")
+        red_fill    = PatternFill("solid", fgColor="8B0000")
+        header_fill = PatternFill("solid", fgColor="1E3A5F")
+        alt_fill    = PatternFill("solid", fgColor="0D1F33")
+        white_font  = Font(color="FFFFFF", bold=True, name="Calibri", size=11)
+        normal_font = Font(color="FFFFFF", name="Calibri", size=10)
+        center_align = Alignment(horizontal="center", vertical="center")
+        thin_border = Border(
+            left=Side(style="thin", color="2A4A6B"),
+            right=Side(style="thin", color="2A4A6B"),
+            top=Side(style="thin", color="2A4A6B"),
+            bottom=Side(style="thin", color="2A4A6B")
+        )
+
+        # عنوان التقرير
+        ws.merge_cells('A1:N1')
+        title_cell = ws['A1']
+        title_cell.value = f"سجل صفقات TSLA — {datetime.now().strftime('%Y-%m-%d')}"
+        title_cell.font = Font(color="FFD700", bold=True, size=14, name="Calibri")
+        title_cell.fill = PatternFill("solid", fgColor="0A1628")
+        title_cell.alignment = center_align
+        ws.row_dimensions[1].height = 30
+
+        # رأس الجدول
+        headers = [
+            '#', 'التاريخ', 'النوع', 'الرمز', 'Strike',
+            'دخول ($)', 'خروج ($)', 'P&L ($)', 'P&L (%)',
+            'الحالة', 'سبب الإغلاق', 'TSLA', 'VWAP', 'ملاحظات'
+        ]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=2, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = white_font
+            cell.alignment = center_align
+            cell.border = thin_border
+        ws.row_dimensions[2].height = 22
+
+        # بيانات الصفقات
+        for row_idx, e in enumerate(entries, 3):
+            is_win = (e.get('pnl_dollar') or 0) > 0
+            is_open = e.get('status') == 'open'
+            row_fill = PatternFill("solid", fgColor="0D2B1A") if is_win else \
+                       PatternFill("solid", fgColor="2B0D0D") if not is_open else \
+                       alt_fill
+
+            pnl = e.get('pnl_dollar')
+            pnl_pct = e.get('pnl_pct')
+
+            row_data = [
+                e.get('id', row_idx - 2),
+                e.get('created_at', '')[:16] if e.get('created_at') else '',
+                e.get('direction', '').upper(),
+                e.get('symbol', ''),
+                e.get('strike', ''),
+                e.get('entry_price', ''),
+                e.get('exit_price', '') if not is_open else 'مفتوحة',
+                f"+${pnl:.2f}" if pnl and pnl > 0 else (f"-${abs(pnl):.2f}" if pnl and pnl < 0 else ''),
+                f"{pnl_pct:+.1f}%" if pnl_pct else '',
+                'ربح ✅' if is_win else ('مفتوحة ⏳' if is_open else 'خسارة ❌'),
+                e.get('close_reason', '') or e.get('exit_reason', ''),
+                e.get('tsla_price', ''),
+                e.get('vwap', ''),
+                e.get('notes', '')
+            ]
+
+            for col, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_idx, column=col, value=value)
+                cell.fill = row_fill
+                cell.font = Font(
+                    color="00FF88" if is_win else ("FF4444" if not is_open else "FFFFFF"),
+                    name="Calibri", size=10,
+                    bold=(col == 8)  # P&L bold
+                )
+                cell.alignment = center_align
+                cell.border = thin_border
+            ws.row_dimensions[row_idx].height = 18
+
+        # عرض الأعمدة
+        col_widths = [5, 18, 8, 22, 8, 10, 10, 10, 8, 12, 20, 8, 8, 25]
+        for i, width in enumerate(col_widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = width
+
+        # صف الملخص
+        if entries:
+            closed = [e for e in entries if e.get('status') == 'closed']
+            wins = [e for e in closed if (e.get('pnl_dollar') or 0) > 0]
+            total_pnl = sum(e.get('pnl_dollar') or 0 for e in closed)
+            win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0
+
+            summary_row = len(entries) + 4
+            ws.merge_cells(f'A{summary_row}:N{summary_row}')
+            summary_cell = ws[f'A{summary_row}']
+            summary_cell.value = (
+                f"إجمالي: {len(entries)} صفقة | مغلقة: {len(closed)} | "
+                f"نسبة الفوز: {win_rate}% | صافي P&L: ${total_pnl:+.2f}"
+            )
+            summary_cell.font = Font(color="FFD700", bold=True, size=11, name="Calibri")
+            summary_cell.fill = PatternFill("solid", fgColor="0A1628")
+            summary_cell.alignment = center_align
+
+        ws.sheet_view.showGridLines = False
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        filename = f"tsla_trades_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        return Response(
+            output.getvalue(),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers={'Content-Disposition': f'attachment; filename={filename}'}
+        )
+    except Exception as e:
+        import traceback
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
 @app.route('/journal/db/info', methods=['GET'])
 def journal_db_info():
     """معلومات عن قاعدة بيانات Journal."""
@@ -2786,6 +2921,13 @@ def _start_background_threads():
         logger.info("TSLA 5M Reversal Warning System started ✅ 🔔")
     except Exception as _rw_err:
         logger.warning(f"Reversal Warning System not started: {_rw_err}")
+    # Pair Trade: استعادة الصفقة المفتوحة إذا كانت موجودة
+    try:
+        from options_scalper import _load_pair_state
+        _load_pair_state()
+        logger.info("Pair Trade state loaded ✅")
+    except Exception as _pair_load_err:
+        logger.warning(f"Pair Trade state load failed: {_pair_load_err}")
     # V13.0: Strategy D — Mosquito Trend (ATM + Reinforcement)
     try:
         from options_scalper import start_mosquito

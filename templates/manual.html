@@ -627,7 +627,7 @@ body {
     <!-- Header -->
     <div class="pt-header">
       <div class="pt-dir" id="ptDirLabel">📈 CALL</div>
-      <div class="pt-sub">تحقق قبل الدخول — 5 أسئلة سريعة</div>
+      <div class="pt-sub">تحقق قبل الدخول — 3 أسئلة سريعة</div>
     </div>
 
     <!-- س١: CheddarFlow -->
@@ -636,45 +636,27 @@ body {
       <input type="number" class="pt-input" id="ptCheddar" placeholder="مثال: 72" min="0" max="100">
     </div>
 
-    <!-- س٢: Gamma Flip -->
+    <!-- س٢: VWAP -->
     <div class="pt-question">
-      <div class="pt-q-label"><div class="pt-q-num">٢</div>السعر بالنسبة لـ Gamma Flip؟</div>
-      <div class="pt-options cols3">
-        <div class="pt-opt" data-q="gf" data-v="above"   onclick="selectOpt(this)">✅ فوق</div>
-        <div class="pt-opt" data-q="gf" data-v="below"   onclick="selectOpt(this)">⚠️ تحت</div>
-        <div class="pt-opt" data-q="gf" data-v="unknown" onclick="selectOpt(this)">❓ ما أعرف</div>
-      </div>
-    </div>
-
-    <!-- س٣: VWAP -->
-    <div class="pt-question">
-      <div class="pt-q-label"><div class="pt-q-num">٣</div>السعر بالنسبة لـ VWAP؟</div>
+      <div class="pt-q-label"><div class="pt-q-num">٢</div>السعر بالنسبة لـ VWAP؟</div>
       <div class="pt-options cols2">
         <div class="pt-opt" data-q="vwap" data-v="above" onclick="selectOpt(this)">📈 فوق</div>
         <div class="pt-opt" data-q="vwap" data-v="below" onclick="selectOpt(this)">📉 تحت</div>
       </div>
     </div>
 
-    <!-- س٤: Opening Range -->
+    <!-- س٣: سبب الدخول -->
     <div class="pt-question">
-      <div class="pt-q-label"><div class="pt-q-num">٤</div>السعر بالنسبة لـ Opening Range؟</div>
+      <div class="pt-q-label"><div class="pt-q-num">٣</div>ما سبب دخولك؟ <span style="font-size:10px;color:#666;">(اختر كل ما ينطبق)</span></div>
       <div class="pt-options" style="grid-template-columns:1fr 1fr;">
-        <div class="pt-opt" data-q="or" data-v="above_high" onclick="selectOpt(this)">🚀 فوق OR High</div>
-        <div class="pt-opt" data-q="or" data-v="inside"     onclick="selectOpt(this)">↔️ داخل OR</div>
-        <div class="pt-opt" data-q="or" data-v="below_low"  onclick="selectOpt(this)">⬇️ تحت OR Low</div>
-        <div class="pt-opt" data-q="or" data-v="unknown"    onclick="selectOpt(this)">❓ ما حسبت OR</div>
-      </div>
-    </div>
-
-    <!-- س٥: سبب الدخول -->
-    <div class="pt-question">
-      <div class="pt-q-label"><div class="pt-q-num">٥</div>ما سبب دخولك؟</div>
-      <div class="pt-options" style="grid-template-columns:1fr 1fr;">
-        <div class="pt-opt" data-q="reason" data-v="telegram_signal"  onclick="selectOpt(this)">📡 إشارة التلقرام</div>
-        <div class="pt-opt" data-q="reason" data-v="cheddar_sweep"    onclick="selectOpt(this)">🌊 CheddarFlow sweep</div>
-        <div class="pt-opt" data-q="reason" data-v="key_level_bounce" onclick="selectOpt(this)">🎯 ارتداد من مستوى</div>
-        <div class="pt-opt" data-q="reason" data-v="macd_zero"        onclick="selectOpt(this)">📊 MACD منطقة الصفر</div>
-        <div class="pt-opt" data-q="reason" data-v="multi_confluence" onclick="selectOpt(this)" style="grid-column:1/-1;">✅ توافق أكثر من 3 مؤشرات</div>
+        <div class="pt-opt multi" data-q="reason" data-v="telegram_signal"  onclick="selectMulti(this)">📡 إشارة التلقرام</div>
+        <div class="pt-opt multi" data-q="reason" data-v="cheddar_sweep"    onclick="selectMulti(this)">🌊 CheddarFlow sweep</div>
+        <div class="pt-opt multi" data-q="reason" data-v="key_level_bounce" onclick="selectMulti(this)">🎯 ارتداد من مستوى</div>
+        <div class="pt-opt multi" data-q="reason" data-v="macd_zero"        onclick="selectMulti(this)">📊 MACD منطقة الصفر</div>
+        <div class="pt-opt multi" data-q="reason" data-v="multi_confluence" onclick="selectMulti(this)">✅ توافق +3 مؤشرات</div>
+        <div class="pt-opt multi" data-q="reason" data-v="reversal_map"     onclick="selectMulti(this)">🗺️ خارطة الانعكاسات</div>
+        <div class="pt-opt multi" data-q="reason" data-v="bollinger_top"    onclick="selectMulti(this)">🔴 أعلى البولنجر</div>
+        <div class="pt-opt multi" data-q="reason" data-v="bollinger_bottom" onclick="selectMulti(this)">🟢 أسفل البولنجر</div>
       </div>
     </div>
 
@@ -686,7 +668,7 @@ body {
 
     <!-- Fast Track -->
     <div class="pt-fast-track">
-      مسار سريع متبقي اليوم: <span class="ft-count" id="ftCount">3</span> مرات —
+      مسار سريع متبقي اليوم: <span class="ft-count" id="ftCount">10</span> مرات —
       <a onclick="fastTrack()">تجاوز الأسئلة</a>
     </div>
   </div>
@@ -702,14 +684,14 @@ let lastCheddar = null;
 let pendingTradeType = null;  // 'call' أو 'put'
 
 // إجابات الأسئلة
-let ptAnswers = { gf: '', vwap: '', or: '', reason: '' };
+let ptAnswers = { vwap: '', reasons: [] };
 
 // Fast Track — يُحفظ في localStorage
 function getFTCount() {
   const today = new Date().toDateString();
   const saved = JSON.parse(localStorage.getItem('ft_data') || '{}');
-  if (saved.date !== today) return 3;
-  return Math.max(0, 3 - (saved.used || 0));
+  if (saved.date !== today) return 10;
+  return Math.max(0, 10 - (saved.used || 0));
 }
 function useFT() {
   const today = new Date().toDateString();
@@ -1036,7 +1018,7 @@ async function refresh() {
 function startPreTrade(type) {
   if (hasPos) return;
   pendingTradeType = type;
-  ptAnswers = { gf: '', vwap: '', or: '', reason: '' };
+  ptAnswers = { vwap: '', reasons: [] };
 
   // إعادة تعيين الأزرار
   document.querySelectorAll('.pt-opt').forEach(el => el.classList.remove('selected'));
@@ -1064,10 +1046,17 @@ function startPreTrade(type) {
 function selectOpt(el) {
   const q = el.dataset.q;
   const v = el.dataset.v;
-  // إلغاء تحديد نفس المجموعة
   document.querySelectorAll(`.pt-opt[data-q="${q}"]`).forEach(o => o.classList.remove('selected'));
   el.classList.add('selected');
   ptAnswers[q] = v;
+}
+
+function selectMulti(el) {
+  el.classList.toggle('selected');
+  const v = el.dataset.v;
+  const idx = ptAnswers.reasons.indexOf(v);
+  if (idx === -1) ptAnswers.reasons.push(v);
+  else ptAnswers.reasons.splice(idx, 1);
 }
 
 function cancelPreTrade() {
@@ -1080,20 +1069,18 @@ async function confirmPreTrade() {
   document.getElementById('preTradeModal').classList.remove('active');
   await executeTrade(pendingTradeType, {
     cheddar_flow:  document.getElementById('ptCheddar').value,
-    gamma_flip:    ptAnswers.gf,
     vwap_position: ptAnswers.vwap,
-    or_position:   ptAnswers.or,
-    entry_reason:  ptAnswers.reason,
+    entry_reason:  ptAnswers.reasons.join(','),
   });
 }
 
 function fastTrack() {
   const remaining = getFTCount();
   if (remaining <= 0) {
-    alert('انتهى المسار السريع لهذا اليوم (3/3)\nاستخدم الأسئلة للدخول');
+    alert('انتهى المسار السريع لهذا اليوم (10/10)\nاستخدم الأسئلة للدخول');
     return;
   }
-  if (!confirm('مسار سريع — تجاوز الأسئلة؟\nمتبقي: ' + remaining + ' مرات اليوم')) return;
+  if (!confirm('مسار سريع — تجاوز الأسئلة؟\nمتبقي: ' + remaining + ' من 10 مرات اليوم')) return;
   useFT();
   document.getElementById('preTradeModal').classList.remove('active');
   executeTrade(pendingTradeType, {});

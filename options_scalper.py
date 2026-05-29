@@ -63,10 +63,14 @@ ITM_CONTRACTS      = 1      # عقد واحد ITM
 ITM_DELTA_MIN      = 0.60
 ITM_DELTA_MAX      = 0.92
 ITM_ENTRY_BELOW    = 0.015  # احتياطي
-ITM_TP_DOLLARS     = 0.20   # +$0.20 جني أرباح (Market Order)
-ITM_SL_DOLLARS     = 0.65   # -$0.65 بيع تلقائي (Market Order)
-ITM_ALERT1_DOLLARS = 0.30   # تنبيه 1 عند -$0.30
-ITM_ALERT2_DOLLARS = 0.50   # تنبيه 2 عند -$0.50
+ITM_TP_DOLLARS     = 0.80   # +$0.80 جني أرباح (Market Order)
+ITM_SL_DOLLARS     = 0.65   # -$0.65 بيع تلقائي (قبل التعزيز)
+ITM_REINFORCE_TRIGGER = 0.35  # عند -$0.35 اشتري 2 عقد إضافي
+ITM_REINFORCE_QTY  = 2      # عدد عقود التعزيز
+ITM_REINFORCE_TP   = 0.80   # الكل يبيع عند +$0.80 من سعر التعزيز
+ITM_REINFORCE_SL   = 0.40   # بعد التعزيز: إذا نزل -$0.40 من سعر التعزيز → أغلق الكل
+ITM_ALERT1_DOLLARS = 0.20   # تنبيه 1 عند -$0.20
+ITM_ALERT2_DOLLARS = 0.35   # تنبيه 2 عند -$0.35 (عند التعزيز)
 ITM_TP_PCT         = 0.40   # احتياطي
 ITM_SL_PCT         = 0.16   # احتياطي
 ITM_MIN_VOLUME     = 100
@@ -1900,9 +1904,12 @@ def get_scalper_status():
 
 # حالة الخط 2 اليدوي
 _manual_state = {
-    "position": None,      # الصفقة المفتوحة
-    "alert1_sent": False,  # تنبيه -$0.30
-    "alert2_sent": False,  # تنبيه -$0.50
+    "position": None,           # الصفقة المفتوحة
+    "alert1_sent": False,       # تنبيه -$0.20
+    "alert2_sent": False,       # تنبيه -$0.35 (عند التعزيز)
+    "reinforce_done": False,    # تم التعزيز
+    "reinforce_price": None,    # سعر التعزيز
+    "reinforce_qty": 0,         # عدد عقود التعزيز
     "monitor_active": False,
     "last_price": 0.0,
     "pnl_dollar": 0.0,
@@ -2058,6 +2065,9 @@ def execute_manual_itm(option_type):
     _manual_state["position"] = position
     _manual_state["alert1_sent"] = False
     _manual_state["alert2_sent"] = False
+    _manual_state["reinforce_done"] = False
+    _manual_state["reinforce_price"] = None
+    _manual_state["reinforce_qty"] = 0
     _manual_state["last_price"] = mid
     _manual_state["pnl_dollar"] = 0.0
     
@@ -2183,18 +2193,100 @@ def close_manual_itm(reason="manual"):
     return True, result
 
 
-def _manual_monitor_loop():
+def close_manual_itm_all(reason="manual"):
     """
-    حلقة مراقبة صفقة الخط 2 اليدوي.
-    تتحقق كل 10 ثواني من:
-    - TP: +$0.20 → بيع تلقائي
-    - SL: -$0.65 → بيع تلقائي
-    - تنبيه 1: -$0.30
-    - تنبيه 2: -$0.50
+    بيع كل العقود (1 أصلي + 2 تعزيز) بعد التعزيز.
     """
     global _manual_state
     
-    logger.info("[V9 Manual] Monitor started")
+    pos = _manual_state["position"]
+    if not pos:
+        return False, {"error": "لا توجد صفقة مفتوحة"}
+    
+    symbol = pos["symbol"]
+    total_qty = 1 + _manual_state["reinforce_qty"]  # 1 + 2 = 3
+    
+    quote = get_option_quote(symbol)
+    current_price = quote["mid"] if quote and quote["mid"] > 0 else pos["entry_price"]
+    
+    # بيع كل العقود
+    order = place_option_order(
+        symbol=symbol, qty=total_qty, side="sell",
+        order_type="market", position_intent="sell_to_close"
+    )
+    
+    # حساب P&L الكلي
+    pnl_original = round((current_price - pos["entry_price"]) * 100, 2)
+    reinforce_price = _manual_state["reinforce_price"]
+    pnl_reinforce = round((current_price - reinforce_price) * 100 * _manual_state["reinforce_qty"], 2) if reinforce_price else 0
+    pnl_total = round(pnl_original + pnl_reinforce, 2)
+    
+    result = {
+        "symbol": symbol,
+        "entry_price": pos["entry_price"],
+        "reinforce_price": reinforce_price,
+        "exit_price": current_price,
+        "total_qty": total_qty,
+        "pnl_original": pnl_original,
+        "pnl_reinforce": pnl_reinforce,
+        "pnl_total": pnl_total,
+        "reason": reason,
+        "exit_time": _et_now().strftime("%I:%M:%S %p")
+    }
+    
+    pos["status"] = "closed"
+    pos["pnl"] = pnl_total
+    _manual_state["position"] = None
+    _manual_state["monitor_active"] = False
+    _manual_state["last_reason"] = reason
+    _manual_state["last_pnl"] = pnl_total
+    
+    # تحديث السجل
+    journal_id = _manual_state.get("journal_id")
+    if journal_id:
+        reason_ar = {"TP": "جني أرباح تلقائي", "SL": "ستوب لوس تلقائي", "MANUAL": "إغلاق يدوي"}.get(reason, reason)
+        update_journal_entry(journal_id, {
+            "status": "closed",
+            "exit_price": current_price,
+            "exit_time": _et_now().strftime("%I:%M:%S %p ET"),
+            "pnl_dollar": pnl_total,
+            "close_reason": reason_ar + f" (تعزيز {_manual_state['reinforce_qty']} عقود)"
+        })
+        _manual_state["journal_id"] = None
+    
+    direction = "CALL 📈" if pos.get("type") == "call" else "PUT 📉"
+    emoji = "✅" if pnl_total >= 0 else "🔴"
+    reason_ar = {"TP": "جني أرباح تلقائي ✅", "SL": "ستوب لوس تلقائي 🛑", "MANUAL": "إغلاق يدوي 👆"}.get(reason, reason)
+    msg = (
+        f"{emoji} <b>V9 إغلاق بعد التعزيز — {direction}</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📋 {symbol}\n"
+        f"📥 دخول أصلي: ${pos['entry_price']:.2f}\n"
+        f"🔄 تعزيز عند: ${reinforce_price:.2f}\n"
+        f"📤 خروج: ${current_price:.2f}\n"
+        f"📊 عدد العقود: {total_qty}\n"
+        f"💰 P&L الكلي: ${pnl_total:+.2f}\n"
+        f"📌 السبب: {reason_ar}\n"
+        f"🕐 {_et_now().strftime('%I:%M %p')} ET"
+    )
+    send_telegram(msg)
+    
+    logger.info(f"[V9 Manual] Closed ALL {total_qty} contracts @ ${current_price:.2f} | PnL=${pnl_total:+.2f} | Reason={reason}")
+    return True, result
+
+
+def _manual_monitor_loop():
+    """
+    حلقة مراقبة صفقة ITM اليدوي.
+    - TP: +$0.80 → بيع الكل تلقائياً
+    - SL قبل التعزيز: -$0.65 → بيع تلقائي
+    - تعزيز: عند -$0.35 → شراء 2 عقد إضافي
+    - TP بعد التعزيز: +$0.80 من سعر التعزيز → بيع الكل
+    - SL بعد التعزيز: -$0.40 من سعر التعزيز → بيع الكل
+    """
+    global _manual_state
+    
+    logger.info("[V9 Manual] Monitor started (TP=$0.80, Reinforce@-$0.35)")
     
     while _manual_state["monitor_active"]:
         try:
@@ -2216,58 +2308,106 @@ def _manual_monitor_loop():
             
             # تحديث الحالة
             pos["current_price"] = current_price
-            pos["pnl"] = round(pnl_dollar * 100, 2)
+            total_qty = 1 + _manual_state["reinforce_qty"]
+            pos["pnl"] = round(pnl_dollar * 100 * total_qty, 2)
             _manual_state["last_price"] = current_price
             _manual_state["pnl_dollar"] = pnl_dollar
             
-            # ── TP تلقائي: +$0.20 ──
-            if current_price >= pos["tp_price"]:
-                logger.info(f"[V9 Manual] TP hit! ${current_price:.2f} >= ${pos['tp_price']:.2f}")
-                close_manual_itm(reason="TP")
-                break
+            direction = "CALL 📈" if pos.get("type") == "call" else "PUT 📉"
+            reinforce_done = _manual_state["reinforce_done"]
+            reinforce_price = _manual_state["reinforce_price"]
             
-            # ── SL تلقائي: -$0.65 ──
-            if current_price <= pos["sl_price"]:
-                logger.info(f"[V9 Manual] SL hit! ${current_price:.2f} <= ${pos['sl_price']:.2f}")
-                close_manual_itm(reason="SL")
-                break
+            # ── مرحلة ما بعد التعزيز ──
+            if reinforce_done and reinforce_price:
+                tp_after = round(reinforce_price + ITM_REINFORCE_TP, 2)
+                sl_after = round(reinforce_price - ITM_REINFORCE_SL, 2)
+                
+                # TP بعد التعزيز
+                if current_price >= tp_after:
+                    logger.info(f"[V9 Manual] TP (after reinforce) hit! ${current_price:.2f} >= ${tp_after:.2f}")
+                    close_manual_itm_all(reason="TP")
+                    break
+                
+                # SL بعد التعزيز
+                if current_price <= sl_after:
+                    logger.info(f"[V9 Manual] SL (after reinforce) hit! ${current_price:.2f} <= ${sl_after:.2f}")
+                    close_manual_itm_all(reason="SL")
+                    break
             
-            # ── تنبيه 1: -$0.30 ──
-            if not _manual_state["alert1_sent"] and current_price <= pos["alert1_price"]:
+            # ── مرحلة ما قبل التعزيز ──
+            else:
+                # TP تلقائي: +$0.80 من سعر الدخول
+                if current_price >= pos["tp_price"]:
+                    logger.info(f"[V9 Manual] TP hit! ${current_price:.2f} >= ${pos['tp_price']:.2f}")
+                    close_manual_itm(reason="TP")
+                    break
+                
+                # SL تلقائي: -$0.65 من سعر الدخول (قبل التعزيز)
+                if current_price <= pos["sl_price"]:
+                    logger.info(f"[V9 Manual] SL hit! ${current_price:.2f} <= ${pos['sl_price']:.2f}")
+                    close_manual_itm(reason="SL")
+                    break
+                
+                # تعزيز: عند -$0.35
+                if not reinforce_done and pnl_dollar <= -ITM_REINFORCE_TRIGGER:
+                    logger.info(f"[V9 Manual] Reinforce triggered at ${current_price:.2f} (pnl={pnl_dollar:+.2f})")
+                    reinforce_order = place_option_order(
+                        symbol=symbol, qty=ITM_REINFORCE_QTY, side="buy",
+                        order_type="market", position_intent="buy_to_open"
+                    )
+                    if reinforce_order:
+                        _manual_state["reinforce_done"] = True
+                        _manual_state["reinforce_price"] = current_price
+                        _manual_state["reinforce_qty"] = ITM_REINFORCE_QTY
+                        tp_after = round(current_price + ITM_REINFORCE_TP, 2)
+                        sl_after = round(current_price - ITM_REINFORCE_SL, 2)
+                        msg = (
+                            f"🔄 <b>V9 تعزيز — {direction}</b>\n"
+                            f"━━━━━━━━━━━━━━━\n"
+                            f"📋 {symbol}\n"
+                            f"📥 دخول أصلي: ${entry_price:.2f}\n"
+                            f"🔄 سعر التعزيز: ${current_price:.2f}\n"
+                            f"📊 +{ITM_REINFORCE_QTY} عقود إضافية (المجموع: 3 عقود)\n"
+                            f"🎯 TP جديد: ${tp_after:.2f} (+$0.80 من سعر التعزيز)\n"
+                            f"🛑 SL جديد: ${sl_after:.2f} (-$0.40 من سعر التعزيز)\n"
+                            f"🕐 {_et_now().strftime('%I:%M %p')} ET"
+                        )
+                        send_telegram(msg)
+                        logger.info(f"[V9 Manual] Reinforce done: {ITM_REINFORCE_QTY} contracts @ ${current_price:.2f}")
+                    else:
+                        logger.error("[V9 Manual] Reinforce order FAILED")
+            
+            # ── تنبيه 1: -$0.20 ──
+            if not _manual_state["alert1_sent"] and pnl_dollar <= -ITM_ALERT1_DOLLARS:
                 _manual_state["alert1_sent"] = True
-                logger.warning(f"[V9 Manual] ALERT 1: -$0.30 | ${current_price:.2f}")
-                direction = "CALL 📈" if pos.get("type") == "call" else "PUT 📉"
+                logger.warning(f"[V9 Manual] ALERT 1: -$0.20 | ${current_price:.2f}")
                 msg = (
-                    f"⚠️ <b>V9 تنبيه 1 — {direction}</b>\n"
+                    f"⚠️ <b>V9 تنبيه — {direction}</b>\n"
                     f"━━━━━━━━━━━━━━━\n"
                     f"📋 {pos.get('symbol', '')}\n"
-                    f"💵 السعر الحالي: ${current_price:.2f}\n"
-                    f"📥 دخول: ${pos['entry_price']:.2f}\n"
-                    f"📉 خسارة: <b>-$0.30</b> لكل عقد (-$30)\n"
-                    f"🛑 SL عند: ${pos['sl_price']:.2f} (-$0.65)\n"
+                    f"💵 السعر: ${current_price:.2f} | دخول: ${entry_price:.2f}\n"
+                    f"📉 خسارة: <b>-$0.20</b> (-$20)\n"
+                    f"🔄 التعزيز سيبدأ عند -$0.35\n"
                     f"🕐 {_et_now().strftime('%I:%M %p')} ET"
                 )
                 send_telegram(msg)
             
-            # ── تنبيه 2: -$0.50 ──
-            if not _manual_state["alert2_sent"] and current_price <= pos["alert2_price"]:
+            # ── تنبيه 2: -$0.35 (عند التعزيز) ──
+            if not _manual_state["alert2_sent"] and pnl_dollar <= -ITM_ALERT2_DOLLARS:
                 _manual_state["alert2_sent"] = True
-                logger.warning(f"[V9 Manual] ALERT 2: -$0.50 | ${current_price:.2f}")
-                direction = "CALL 📈" if pos.get("type") == "call" else "PUT 📉"
+                logger.warning(f"[V9 Manual] ALERT 2: -$0.35 (reinforce zone) | ${current_price:.2f}")
                 msg = (
-                    f"🚨 <b>V9 تحذير — {direction}</b>\n"
+                    f"🚨 <b>V9 منطقة التعزيز — {direction}</b>\n"
                     f"━━━━━━━━━━━━━━━\n"
                     f"📋 {pos.get('symbol', '')}\n"
-                    f"💵 السعر الحالي: ${current_price:.2f}\n"
-                    f"📥 دخول: ${pos['entry_price']:.2f}\n"
-                    f"📉 خسارة: <b>-$0.50</b> لكل عقد (-$50)\n"
-                    f"🛑 SL تلقائي عند: ${pos['sl_price']:.2f}\n"
-                    f"⏰ <b>قرار مطلوب الآن!</b>\n"
+                    f"💵 السعر: ${current_price:.2f} | دخول: ${entry_price:.2f}\n"
+                    f"📉 خسارة: <b>-$0.35</b>\n"
+                    f"🔄 جاري التعزيز بـ {ITM_REINFORCE_QTY} عقود...\n"
                     f"🕐 {_et_now().strftime('%I:%M %p')} ET"
                 )
                 send_telegram(msg)
             
-            time.sleep(5)  # V10: تقليل من 10 إلى 5 ثوانٍ لتحسين استجابة P&L
+            time.sleep(5)
             
         except Exception as e:
             logger.error(f"[V9 Manual Monitor] Error: {e}")
@@ -3075,6 +3215,34 @@ PAIR_TP_PCT        = 0.30
 PAIR_DTE_MIN       = 14
 PAIR_DTE_MAX       = 21
 
+PAIR_STATE_FILE = "/tmp/pair_state.json"
+
+def _save_pair_state():
+    """حفظ حالة Pair Trade في ملف مؤقت."""
+    try:
+        import json
+        with open(PAIR_STATE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(_pair_state, f, ensure_ascii=False, default=str)
+    except Exception as e:
+        logger.error(f"[Pair] Save state error: {e}")
+
+def _load_pair_state():
+    """تحميل حالة Pair Trade من الملف عند بدء التشغيل."""
+    try:
+        import json, os
+        if os.path.exists(PAIR_STATE_FILE):
+            with open(PAIR_STATE_FILE, 'r', encoding='utf-8') as f:
+                saved = json.load(f)
+            if saved.get("position") and saved["position"].get("status") == "open":
+                _pair_state.update(saved)
+                _pair_state["monitor_active"] = True
+                logger.info("[Pair] Restored open position from file — restarting monitor")
+                _start_pair_monitor()
+            else:
+                logger.info("[Pair] No open position in saved state")
+    except Exception as e:
+        logger.error(f"[Pair] Load state error: {e}")
+
 _pair_state = {
     "position": None,
     "monitor_active": False,
@@ -3303,6 +3471,7 @@ def execute_pair_trade():
         f"🕐 {_et_now().strftime('%I:%M %p')} ET"
     )
     send_telegram(msg)
+    _save_pair_state()  # حفظ الحالة لمنع الاختفاء عند restart
     _start_pair_monitor()
 
     return True, {
@@ -3364,6 +3533,7 @@ def close_pair_trade(reason="manual"):
         f"🕐 {_et_now().strftime('%I:%M %p')} ET"
     )
     send_telegram(msg)
+    _save_pair_state()  # تحديث الملف بعد الإغلاق
     logger.info(f"[Pair] Closed | PnL=${pnl_dollar:+.2f} ({pnl_pct:+.1f}%) | Reason={reason}")
 
     return True, {

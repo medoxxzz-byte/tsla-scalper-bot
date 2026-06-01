@@ -5404,6 +5404,8 @@ _std_state = {
     "trades_today": [],
     "status_msg":   "غير نشط",
     "daily_date":   None,
+    "last_failed_entry": 0,   # timestamp آخر فشل تنفيذ
+    "failed_entry_count": 0,  # عدد محاولات الفشل المتتالية
 }
 
 # ─── Time Window ─────────────────────────────────────────────────────────────
@@ -5678,7 +5680,14 @@ def _std_execute_entry(entry_data):
 
     order = place_option_order(contract["symbol"], 1, "buy", order_type="market", position_intent="open")
     if not order:
-        send_telegram(f"❌ Strategy D: فشل تنفيذ أمر الشراء لـ {contract['symbol']}")
+        with _std_lock:
+            _std_state["last_failed_entry"] = time.time()
+            _std_state["failed_entry_count"] = _std_state.get("failed_entry_count", 0) + 1
+            fail_count = _std_state["failed_entry_count"]
+        # أرسل رسالة فشل مرة واحدة فقط (ليس في كل محاولة)
+        if fail_count == 1:
+            send_telegram(f"❌ Strategy D: فشل تنفيذ أمر الشراء لـ {contract['symbol']}\n⏳ إيقاف مؤقت 2 دقيقة")
+        logger.warning(f"[StratD] Order failed (attempt {fail_count}) — cooldown 120s")
         return
 
     trade = {
@@ -6035,6 +6044,23 @@ def _strategy_d_loop():
                         _std_state["status_msg"] = f"⛔ الحد اليومي ({STD_MAX_TRADES_DAY} صفقات)"
                     time.sleep(60)
                     continue
+
+                # تحقق من Cooldown بعد فشل التنفيذ (120 ثانية)
+                with _std_lock:
+                    last_failed = _std_state.get("last_failed_entry", 0)
+                    fail_count  = _std_state.get("failed_entry_count", 0)
+
+                if last_failed and (time.time() - last_failed) < 120:
+                    remaining = int(120 - (time.time() - last_failed))
+                    with _std_lock:
+                        _std_state["status_msg"] = f"⏳ Cooldown بعد فشل التنفيذ — {remaining}s"
+                    time.sleep(STD_LOOP_SLEEP)
+                    continue
+                elif last_failed and (time.time() - last_failed) >= 120:
+                    # انتهى الـ Cooldown — أعد ضبط العداد
+                    with _std_lock:
+                        _std_state["last_failed_entry"] = 0
+                        _std_state["failed_entry_count"] = 0
 
                 entry_data, info = _std_check_entry()
                 if entry_data:

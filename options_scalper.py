@@ -5678,7 +5678,7 @@ def _std_execute_entry(entry_data):
         logger.warning(f"[StratD] لا يوجد عقد ATM مناسب لـ {direction}")
         return
 
-    order = place_option_order(contract["symbol"], 1, "buy", order_type="market", position_intent="open")
+    order = place_option_order(contract["symbol"], 1, "buy", order_type="market", position_intent="buy_to_open")
     if not order:
         with _std_lock:
             _std_state["last_failed_entry"] = time.time()

@@ -464,8 +464,9 @@
 </div>
 
 <!-- Add Entry Button -->
-<div class="add-btn-wrap">
-  <button class="add-btn" onclick="openModal()">+ تسجيل صفقة جديدة</button>
+<div class="add-btn-wrap" style="display:flex;gap:10px;flex-wrap:wrap;">
+  <button class="add-btn" onclick="openModal()" style="flex:1;">+ تسجيل صفقة جديدة</button>
+  <button onclick="cleanupGhosts()" style="flex:0 0 auto;background:#1c2230;border:1px solid #ff4444;color:#ff4444;font-size:12px;padding:10px 16px;border-radius:10px;cursor:pointer;">🧹 تنظيف الوهمية</button>
 </div>
 
 <!-- Entries List -->
@@ -853,6 +854,21 @@ async function saveEntry() {
   } catch(e) {
     alert('خطأ في الاتصال');
   }
+}
+
+
+// ── Cleanup Ghost Trades (V10 FIX) ──
+async function cleanupGhosts() {
+  try {
+    const r = await fetch('/journal/cleanup-ghosts', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      alert('✅ ' + d.message);
+      loadEntries();
+    } else {
+      alert('❌ خطأ: ' + (d.error || ''));
+    }
+  } catch(e) { alert('❌ خطأ في الاتصال'); }
 }
 
 // ── Lightbox ──

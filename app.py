@@ -2327,36 +2327,24 @@ def manual_buy():
 
     if success:
         logger.info(f"[V9 Manual] Buy {option_type.upper()} executed: {result.get('symbol')} @ ${result.get('entry_price')}")
-        # ── تسجيل تلقائي في السجل مع بيانات pre_trade (V10) ──
+        # ── تحديث بيانات pre_trade على الـ record الذي أنشأه options_scalper (V10 FIX) ──
+        # لا نُنشئ record جديد — options_scalper أنشأه بالفعل في execute_manual_itm()
         try:
-            from options_scalper import add_journal_entry, get_manual_status
-            ms = get_manual_status()
-            journal_entry = {
-                "status":        "open",
-                "direction":     option_type.upper(),
-                "symbol":        result.get("symbol", ""),
-                "strike":        result.get("strike", 0),
-                "entry_price":   result.get("entry_price", 0),
-                "tsla_price":    ms.get("tsla_price", 0),
-                "delta":         result.get("delta", 0),
-                "gex_position":  "",
-                "cheddar_flow":  pre_trade.get("cheddar_flow", ""),
-                "gamma_flip":    pre_trade.get("gamma_flip", ""),
-                "vwap_position": pre_trade.get("vwap_position", ""),
-                "or_position":   pre_trade.get("or_position", ""),
-                "entry_reason":  pre_trade.get("entry_reason", ""),
-                "notes":         "",
-                "images":        [],
-                "exit_price":    None,
-                "pnl_dollar":    None,
-                "exit_reason":   None,
-                "exit_time":     None,
-            }
-            entry_id = add_journal_entry(journal_entry)
-            _active_journal_id = entry_id
-            result["journal_id"] = entry_id
+            from options_scalper import update_journal_entry, get_manual_status
+            # journal_id موجود في result من execute_manual_itm
+            journal_id = result.get("journal_id")
+            if journal_id and pre_trade:
+                # تحديث بيانات pre_trade فقط على الـ record الموجود
+                update_journal_entry(journal_id, {
+                    "cheddar_flow":  pre_trade.get("cheddar_flow", ""),
+                    "gamma_flip":    pre_trade.get("gamma_flip", ""),
+                    "vwap_position": pre_trade.get("vwap_position", ""),
+                    "or_position":   pre_trade.get("or_position", ""),
+                    "entry_reason":  pre_trade.get("entry_reason", ""),
+                })
+            _active_journal_id = journal_id
         except Exception as je:
-            logger.warning(f"[V10] Journal auto-save failed: {je}")
+            logger.warning(f"[V10] Journal pre_trade update failed: {je}")
         return jsonify({"success": True, **result})
     else:
         logger.warning(f"[V9 Manual] Buy failed: {result.get('error')}")
@@ -2704,6 +2692,58 @@ def journal_db_info():
             'total_pnl': stats.get('total_pnl', 0),
         })
     except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# V10 FIX — تنظيف الصفقات المفتوحة الوهمية (Ghost Open Trades Cleanup)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route('/journal/cleanup-ghosts', methods=['POST'])
+def journal_cleanup_ghosts():
+    """
+    V10 FIX: تنظيف الصفقات المفتوحة الوهمية.
+    تُغلق كل صفقة بحالة 'open' ليس لها صفقة مغلقة مطابقة (نفس created_at).
+    تُستدعى مرة واحدة لتنظيف البيانات القديمة.
+    """
+    try:
+        from options_scalper import _JOURNAL_DB, _journal_db_lock, _get_db_conn
+        import sqlite3
+        
+        cleaned = 0
+        with _journal_db_lock:
+            conn = _get_db_conn()
+            # جلب كل الصفقات المفتوحة
+            open_rows = conn.execute(
+                "SELECT id, created_at, direction, entry_price FROM trades WHERE status = 'open' ORDER BY id"
+            ).fetchall()
+            
+            for row in open_rows:
+                row_id = row['id']
+                created_at = row['created_at']
+                
+                # تحقق: هل يوجد صفقة مغلقة بنفس created_at (يعني هي مكررة)؟
+                closed_match = conn.execute(
+                    "SELECT id FROM trades WHERE status = 'closed' AND created_at = ? AND id != ?",
+                    (created_at, row_id)
+                ).fetchone()
+                
+                if closed_match:
+                    # هذه الصفقة مكررة — احذفها
+                    conn.execute("DELETE FROM trades WHERE id = ?", (row_id,))
+                    cleaned += 1
+                    logger.info(f"[V10 Cleanup] Deleted ghost open trade #{row_id} (duplicate of closed #{closed_match['id']})")
+            
+            conn.commit()
+            conn.close()
+        
+        return jsonify({
+            'ok': True,
+            'cleaned': cleaned,
+            'message': f'تم حذف {cleaned} صفقة مفتوحة وهمية'
+        })
+    except Exception as e:
+        logger.error(f"[V10 Cleanup] Error: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 

@@ -2113,7 +2113,8 @@ def execute_manual_itm(option_type):
         "alert2_price": alert2_price,
         "approx_delta": contract["approx_delta"],
         "entry_time": position["entry_time"],
-        "entry_tsla": price
+        "entry_tsla": price,
+        "journal_id": journal_id  # V10 FIX: لمنع إنشاء record مكرر في app.py
     }
 
 

@@ -662,6 +662,65 @@
     </div>
   </div>
 
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- 💧 Cheddar Flow Vision Analyzer                               -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div class="section-title">💧 محلل سيولة Cheddar Flow</div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <div class="card-icon" style="background:#4fc3f720; color:#4fc3f7">🔍</div>
+        تحليل صورة Cheddar Flow بالذكاء الاصطناعي
+      </div>
+      <div id="flowBadge" class="badge badge-gray">جاهز</div>
+    </div>
+    <div class="card-body" style="padding:14px 16px;">
+      <!-- منطقة رفع الصورة -->
+      <div id="flowDropZone" style="border:2px dashed #334155; border-radius:12px; padding:20px; text-align:center; cursor:pointer; transition:border-color .2s; margin-bottom:12px;"
+           onclick="document.getElementById('flowFileInput').click()"
+           ondragover="event.preventDefault(); this.style.borderColor='#4fc3f7';"
+           ondragleave="this.style.borderColor='#334155';"
+           ondrop="handleFlowDrop(event)">
+        <div style="font-size:32px; margin-bottom:6px;">📸</div>
+        <div style="color:#94a3b8; font-size:13px;">اسحب صورة Cheddar Flow هنا أو اضغط للاختيار</div>
+        <input type="file" id="flowFileInput" accept="image/*" style="display:none" onchange="analyzeFlowImage(this.files[0])">
+      </div>
+      <!-- معاينة الصورة -->
+      <div id="flowPreview" style="display:none; margin-bottom:12px; text-align:center;">
+        <img id="flowPreviewImg" style="max-width:100%; max-height:200px; border-radius:8px; border:1px solid #334155;">
+      </div>
+      <!-- زر التحليل -->
+      <button id="flowAnalyzeBtn" onclick="triggerFlowAnalysis()" style="width:100%; padding:12px; background:#1e3a5f; border:1px solid #4fc3f7; color:#4fc3f7; border-radius:10px; font-size:14px; cursor:pointer; display:none;">
+        🔍 تحليل السيولة بالذكاء الاصطناعي
+      </button>
+      <!-- النتيجة -->
+      <div id="flowResult" style="display:none; margin-top:14px; padding:14px; border-radius:10px; background:#0f1923; border:1px solid #334155;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <div style="font-size:22px; font-weight:700;" id="flowSignalText">—</div>
+          <div style="font-size:12px; color:#94a3b8;" id="flowSignalTime">—</div>
+        </div>
+        <div style="display:flex; gap:16px; margin-bottom:10px;">
+          <div style="flex:1; text-align:center; background:#0d2137; border-radius:8px; padding:10px;">
+            <div style="font-size:20px; font-weight:700; color:#22c55e;" id="flowCallPct">—%</div>
+            <div style="font-size:10px; color:#94a3b8;">Call Flow</div>
+          </div>
+          <div style="flex:1; text-align:center; background:#0d2137; border-radius:8px; padding:10px;">
+            <div style="font-size:20px; font-weight:700; color:#ef4444;" id="flowPutPct">—%</div>
+            <div style="font-size:10px; color:#94a3b8;">Put Flow</div>
+          </div>
+        </div>
+        <div style="font-size:12px; color:#94a3b8; line-height:1.6;" id="flowReason">—</div>
+        <div id="flowRows" style="margin-top:10px; font-size:11px; color:#64748b;"></div>
+      </div>
+      <!-- Loading -->
+      <div id="flowLoading" style="display:none; text-align:center; padding:20px; color:#94a3b8;">
+        <div style="font-size:24px; margin-bottom:6px;">⏳</div>
+        جاري التحليل بالذكاء الاصطناعي...
+      </div>
+    </div>
+  </div>
+
   <!-- ══════════════════════════════════════════════════════════════ -->
   <!-- 4. حالة الصفقة اليدوية ITM                                    -->
   <!-- ══════════════════════════════════════════════════════════════ -->
@@ -1121,6 +1180,81 @@
   timerCircle.style.strokeDasharray = CIRCUMFERENCE;
   timerCircle.style.strokeDashoffset = 0;
   fetchAll();
+
+  // ── Cheddar Flow Vision Analyzer ──
+  let _flowFile = null;
+
+  function handleFlowDrop(event) {
+    event.preventDefault();
+    document.getElementById('flowDropZone').style.borderColor = '#334155';
+    const file = event.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) analyzeFlowImage(file);
+  }
+
+  function analyzeFlowImage(file) {
+    if (!file) return;
+    _flowFile = file;
+    const reader = new FileReader();
+    reader.onload = e => {
+      document.getElementById('flowPreviewImg').src = e.target.result;
+      document.getElementById('flowPreview').style.display = 'block';
+      document.getElementById('flowAnalyzeBtn').style.display = 'block';
+      document.getElementById('flowResult').style.display = 'none';
+      document.getElementById('flowBadge').textContent = 'صورة جاهزة';
+      document.getElementById('flowBadge').className = 'badge badge-yellow';
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function triggerFlowAnalysis() {
+    if (!_flowFile) return;
+    document.getElementById('flowLoading').style.display = 'block';
+    document.getElementById('flowResult').style.display = 'none';
+    document.getElementById('flowAnalyzeBtn').disabled = true;
+    document.getElementById('flowBadge').textContent = 'جاري التحليل...';
+    document.getElementById('flowBadge').className = 'badge badge-gray';
+    try {
+      const formData = new FormData();
+      formData.append('image', _flowFile);
+      const resp = await fetch('/analyze-flow', { method: 'POST', body: formData });
+      const data = await resp.json();
+      document.getElementById('flowLoading').style.display = 'none';
+      document.getElementById('flowAnalyzeBtn').disabled = false;
+      if (!data.ok) {
+        document.getElementById('flowBadge').textContent = 'خطأ';
+        document.getElementById('flowBadge').className = 'badge badge-red';
+        alert('خطأ: ' + (data.error || 'غير معروف'));
+        return;
+      }
+      const sig = data.signal;
+      const sigColors = { CALL: '#22c55e', PUT: '#ef4444', WAIT: '#eab308' };
+      const sigEmojis = { CALL: 'CALL', PUT: 'PUT', WAIT: 'WAIT' };
+      const badgeClasses = { CALL: 'badge-green', PUT: 'badge-red', WAIT: 'badge-yellow' };
+      document.getElementById('flowSignalText').textContent = sigEmojis[sig] || sig;
+      document.getElementById('flowSignalText').style.color = sigColors[sig] || '#fff';
+      document.getElementById('flowCallPct').textContent = data.call_pct.toFixed(0) + '%';
+      document.getElementById('flowPutPct').textContent = data.put_pct.toFixed(0) + '%';
+      document.getElementById('flowReason').textContent = data.reason;
+      document.getElementById('flowSignalTime').textContent = new Date().toLocaleTimeString('ar-SA');
+      let rowsHtml = '<div style="border-top:1px solid #1e293b; padding-top:8px; margin-top:8px;">أول 3 صفوف:</div>';
+      (data.rows || []).forEach((r, i) => {
+        const icon = (r.type || '').toLowerCase() === 'call' ? 'C' : 'P';
+        rowsHtml += '<div>' + (i+1) + '. [' + icon + '] ' + (r.type||'') + ' | ' + (r.side||'') + ' | ' + (r.order||'') + '</div>';
+      });
+      document.getElementById('flowRows').innerHTML = rowsHtml;
+      document.getElementById('flowResult').style.display = 'block';
+      document.getElementById('flowResult').style.borderColor = sigColors[sig] || '#334155';
+      document.getElementById('flowBadge').textContent = sig;
+      document.getElementById('flowBadge').className = 'badge ' + (badgeClasses[sig] || 'badge-gray');
+    } catch(e) {
+      document.getElementById('flowLoading').style.display = 'none';
+      document.getElementById('flowAnalyzeBtn').disabled = false;
+      document.getElementById('flowBadge').textContent = 'خطأ';
+      document.getElementById('flowBadge').className = 'badge badge-red';
+      alert('خطأ في الاتصال: ' + e.message);
+    }
+  }
+
 </script>
 </body>
 </html>

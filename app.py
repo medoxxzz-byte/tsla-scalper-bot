@@ -828,7 +828,7 @@ def monitor_positions():
                     pnl = (current_price - entry) * pos["qty"]
                     if current_price >= tp:
                         hit_tp = True
-                        close_reason = "🎯 وصل الهدف"
+                        close_reason = "🎯 وصل الهدf"
                     elif current_price <= sl:
                         hit_sl = True
                         close_reason = "🛑 وقف الخسارة"
@@ -836,7 +836,7 @@ def monitor_positions():
                     pnl = (entry - current_price) * pos["qty"]
                     if current_price <= tp:
                         hit_tp = True
-                        close_reason = "🎯 وصل الهدف"
+                        close_reason = "🎯 وصل الهدf"
                     elif current_price >= sl:
                         hit_sl = True
                         close_reason = "🛑 وقف الخسارة"
@@ -1232,7 +1232,7 @@ def format_trade_alert_v71(data, stars_adjusted, primary_opt=None, alt_opt=None,
         strength = "جيد"
         action_text = "✅ فرصة جيدة — دخل مع حذر"
     else:
-        strength = "ضعيف"
+        strength = "ضعيf"
         action_text = "⚠️ إشارة ضعيفة — الأفضل تنتظر"
 
     stars_display = "⭐" * stars_adjusted
@@ -2468,7 +2468,7 @@ def journal_upload_image(entry_id):
     if not _V8_AVAILABLE:
         return jsonify({"success": False}), 503
     if 'image' not in request.files:
-        return jsonify({"success": False, "error": "لا يوجد ملف"}), 400
+        return jsonify({"success": False, "error": "لا يوجد ملf"}), 400
     file = request.files['image']
     if not file or file.filename == '':
         return jsonify({"success": False, "error": "ملف فارغ"}), 400
@@ -3342,6 +3342,207 @@ def api_reversal_zones():
     except Exception as e:
         logger.error(f"[ZonesAPI] Error: {e}", exc_info=True)
         return jsonify({"ok": False, "error": str(e)})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# V10 — Cheddar Flow Vision Analyzer (تحليل صور السيولة بالذكاء الاصطناعي)
+# ──────────────────────────────────────────────────────────────────────────────
+
+OPENAI_API_KEY_FLOW = os.environ.get("OPENAI_API_KEY", "")
+
+CHEDDAR_VISION_PROMPT = """أنت محلل خوارزمي لسيولة عقود الأوبشن.
+من هذه الصورة لواجهة Cheddar Flow:
+
+1. استخرج نسبة Call Flow % ونسبة Put Flow %.
+2. اقرأ أول 3 أسطر فقط من جدول الصفقات واستخرج:
+   - نوع العقد: Call أو Put
+   - جهة التنفيذ: Ask أو Above أو Bid
+   - نوع الطلب: Sweep أو Block
+
+أعد البيانات بصيغة JSON فقط دون أي شرح:
+{
+  "call_pct": 72,
+  "put_pct": 28,
+  "rows": [
+    {"type": "Call", "side": "Ask", "order": "Sweep"},
+    {"type": "Call", "side": "Above", "order": "Sweep"},
+    {"type": "Put", "side": "Bid", "order": "Block"}
+  ]
+}"""
+
+
+def _analyze_cheddar_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
+    """
+    ترسل الصورة إلى GPT-4o Vision وتسترجع JSON.
+    """
+    import base64
+    import json as _json
+    api_key = OPENAI_API_KEY_FLOW
+    if not api_key:
+        raise ValueError("لم يتم تعيين OPENAI_API_KEY في متغيرات البيئة")
+    
+    img_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    
+    payload = {
+        "model": "gpt-4o",
+        "max_tokens": 500,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": CHEDDAR_VISION_PROMPT},
+                    {"type": "image_url", "image_url": {
+                        "url": f"data:{mime_type};base64,{img_b64}",
+                        "detail": "high"
+                    }}
+                ]
+            }
+        ]
+    }
+    
+    resp = http_requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json=payload,
+        timeout=30
+    )
+    resp.raise_for_status()
+    
+    content = resp.json()["choices"][0]["message"]["content"].strip()
+    # تنظيف النص واستخراج JSON
+    if content.startswith("```"):
+        content = content.split("```")[1]
+        if content.startswith("json"):
+            content = content[4:]
+    return _json.loads(content.strip())
+
+
+def _apply_flow_decision(data: dict) -> dict:
+    """
+    خوارزمية اتخاذ القرار بناءً على بيانات Cheddar Flow.
+    تُرجع: {"signal": "CALL"|"PUT"|"WAIT", "reason": "...", "call_pct": ..., "put_pct": ...}
+    """
+    call_pct = float(data.get("call_pct", 50))
+    put_pct  = float(data.get("put_pct",  50))
+    rows     = data.get("rows", [])
+    
+    # حساب عدد Call Sweeps على Ask/Above
+    call_sweeps = sum(
+        1 for r in rows
+        if str(r.get("type", "")).lower() == "call"
+        and str(r.get("order", "")).lower() == "sweep"
+        and str(r.get("side", "")).lower() in ("ask", "above")
+    )
+    # حساب عدد Put Sweeps على Ask/Above
+    put_sweeps = sum(
+        1 for r in rows
+        if str(r.get("type", "")).lower() == "put"
+        and str(r.get("order", "")).lower() == "sweep"
+        and str(r.get("side", "")).lower() in ("ask", "above")
+    )
+    
+    # فحص فخ السيولة: Call عالية لكن أول 3 صفوف تظهر Put قوية
+    fakeout = (
+        call_pct >= 60
+        and put_sweeps >= 2
+    )
+    
+    if fakeout:
+        signal = "WAIT"
+        reason = f"فخ سيولة — Call عالية ({call_pct:.0f}%) لكن {put_sweeps} Put Sweeps مفاجئة في أول 3 صفوf"
+    elif call_pct > 65 and call_sweeps >= 2:
+        signal = "CALL"
+        reason = f"سيولة صاعدة شرسة — Call {call_pct:.0f}% | {call_sweeps} Call Sweeps على Ask/Above"
+    elif put_pct > 65 and put_sweeps >= 2:
+        signal = "PUT"
+        reason = f"سيولة هابطة شرسة — Put {put_pct:.0f}% | {put_sweeps} Put Sweeps على Ask/Above"
+    else:
+        signal = "WAIT"
+        reason = f"لا يوجد إشارة واضحة — Call {call_pct:.0f}% / Put {put_pct:.0f}% | Call Sweeps: {call_sweeps} | Put Sweeps: {put_sweeps}"
+    
+    return {
+        "signal":     signal,
+        "reason":     reason,
+        "call_pct":   call_pct,
+        "put_pct":    put_pct,
+        "call_sweeps": call_sweeps,
+        "put_sweeps":  put_sweeps,
+        "rows":       rows
+    }
+
+
+def _format_flow_telegram(result: dict) -> str:
+    """تنسيق رسالة تيليغرام لنتيجة تحليل Cheddar Flow."""
+    signal = result["signal"]
+    emoji  = {"CALL": "🚀", "PUT": "🩸", "WAIT": "🛑"}.get(signal, "❓")
+    color  = {"CALL": "🟢", "PUT": "🔴", "WAIT": "🟡"}.get(signal, "⚪")
+    
+    rows_text = ""
+    for i, r in enumerate(result.get("rows", []), 1):
+        t = r.get("type", "?"); s = r.get("side", "?"); o = r.get("order", "?")
+        icon = "🟢" if t.lower() == "call" else "🔴"
+        rows_text += f"  {i}. {icon} {t} | {s} | {o}\n"
+    
+    return (
+        f"{color} <b>Cheddar Flow — {signal} {emoji}</b>\n"
+        f"───────────────\n"
+        f"📊 السيولة الكلية:\n"
+        f"  🟢 Call: <b>{result['call_pct']:.0f}%</b>  |  🔴 Put: <b>{result['put_pct']:.0f}%</b>\n"
+        f"🔍 أول 3 صفوف:\n{rows_text}"
+        f"🧠 القرار: {result['reason']}\n"
+        f"⏰ {get_et_now().strftime('%I:%M %p')} ET"
+    )
+
+
+@app.route('/analyze-flow', methods=['POST'])
+def analyze_flow():
+    """
+    V10 Cheddar Flow Vision Analyzer.
+    استقبال صورة Cheddar Flow وتحليلها بـ GPT-4o Vision.
+    الإرسال: POST multipart/form-data بمفتاح 'image'
+    """
+    try:
+        # استقبال الصورة
+        if 'image' not in request.files:
+            return jsonify({'ok': False, 'error': 'يجب إرسال ملف باسم image'}), 400
+        
+        img_file  = request.files['image']
+        img_bytes = img_file.read()
+        mime_type = img_file.content_type or 'image/jpeg'
+        
+        if len(img_bytes) == 0:
+            return jsonify({'ok': False, 'error': 'الصورة فارغة'}), 400
+        
+        # تحليل الصورة بالذكاء الاصطناعي
+        logger.info(f"[FlowAnalyzer] Analyzing image ({len(img_bytes)//1024}KB)...")
+        vision_data = _analyze_cheddar_image(img_bytes, mime_type)
+        
+        # تطبيق خوارزمية القرار
+        result = _apply_flow_decision(vision_data)
+        
+        # إرسال التوصية على تيليغرام
+        tg_msg = _format_flow_telegram(result)
+        send_telegram(tg_msg)
+        
+        logger.info(f"[FlowAnalyzer] Signal: {result['signal']} | {result['reason']}")
+        
+        return jsonify({
+            'ok':     True,
+            'signal': result['signal'],
+            'reason': result['reason'],
+            'call_pct':    result['call_pct'],
+            'put_pct':     result['put_pct'],
+            'call_sweeps': result['call_sweeps'],
+            'put_sweeps':  result['put_sweeps'],
+            'rows':        result['rows']
+        })
+    
+    except ValueError as ve:
+        logger.error(f"[FlowAnalyzer] Config error: {ve}")
+        return jsonify({'ok': False, 'error': str(ve)}), 503
+    except Exception as e:
+        logger.error(f"[FlowAnalyzer] Error: {e}", exc_info=True)
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 # استدعاء مباشر عند بدء التشغيل

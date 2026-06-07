@@ -474,6 +474,39 @@ body {
   </div>
 </div>
 
+<!-- Trade Images Section -->
+<div id="tradeImagesSection" style="margin-bottom:12px;">
+  <!-- صورة قبل الصفقة -->
+  <div style="margin-bottom:8px;">
+    <div style="font-size:11px;color:#94a3b8;margin-bottom:5px;text-align:right;">📸 صورة الشارت قبل الدخول</div>
+    <label for="imgBefore" style="display:flex;align-items:center;justify-content:center;gap:8px;background:#0d1117;border:1.5px dashed #1e3a5f;border-radius:10px;padding:10px;cursor:pointer;color:#4fc3f7;font-size:12px;" id="imgBeforeLabel">
+      <span>📷 رفع صورة قبل الصفقة</span>
+    </label>
+    <input type="file" id="imgBefore" accept="image/*" style="display:none;" onchange="previewTradeImg('before', this)">
+    <div id="imgBeforePreview" style="display:none;margin-top:6px;position:relative;">
+      <img id="imgBeforeThumb" style="width:100%;border-radius:8px;border:1px solid #1e3a5f;max-height:140px;object-fit:cover;" onclick="openImgLightbox('before')">
+      <button onclick="clearTradeImg('before')" style="position:absolute;top:4px;left:4px;background:#ef4444;border:none;border-radius:50%;width:22px;height:22px;color:#fff;font-size:12px;cursor:pointer;line-height:1;">✕</button>
+    </div>
+  </div>
+  <!-- صورة بعد الصفقة -->
+  <div id="imgAfterSection" style="display:none;">
+    <div style="font-size:11px;color:#94a3b8;margin-bottom:5px;text-align:right;">📸 صورة الشارت بعد الإغلاق</div>
+    <label for="imgAfter" style="display:flex;align-items:center;justify-content:center;gap:8px;background:#0d1117;border:1.5px dashed #22c55e;border-radius:10px;padding:10px;cursor:pointer;color:#22c55e;font-size:12px;" id="imgAfterLabel">
+      <span>📷 رفع صورة بعد الصفقة</span>
+    </label>
+    <input type="file" id="imgAfter" accept="image/*" style="display:none;" onchange="previewTradeImg('after', this)">
+    <div id="imgAfterPreview" style="display:none;margin-top:6px;position:relative;">
+      <img id="imgAfterThumb" style="width:100%;border-radius:8px;border:1px solid #22c55e;max-height:140px;object-fit:cover;" onclick="openImgLightbox('after')">
+      <button onclick="clearTradeImg('after')" style="position:absolute;top:4px;left:4px;background:#ef4444;border:none;border-radius:50%;width:22px;height:22px;color:#fff;font-size:12px;cursor:pointer;line-height:1;">✕</button>
+    </div>
+  </div>
+</div>
+
+<!-- Lightbox for trade images -->
+<div id="tradeImgLightbox" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.92);z-index:9999;justify-content:center;align-items:center;" onclick="closeImgLightbox()">
+  <img id="tradeImgLightboxImg" style="max-width:95%;max-height:90%;border-radius:10px;">
+</div>
+
 <!-- Buy Buttons -->
 <div class="buy-btns" id="buyDiv">
   <button class="btn-buy btn-put"  id="btnPut"  onclick="startPreTrade('put')">📉 PUT</button>
@@ -1087,6 +1120,56 @@ function fastTrack() {
 }
 
 // ══════════════════════════════════════════════════════
+// Trade Images
+// ══════════════════════════════════════════════════════
+let _currentJournalId = null;  // يُخزن ID السجل بعد فتح الصفقة
+
+function previewTradeImg(type, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const thumb = document.getElementById(type === 'before' ? 'imgBeforeThumb' : 'imgAfterThumb');
+    const preview = document.getElementById(type === 'before' ? 'imgBeforePreview' : 'imgAfterPreview');
+    const label = document.getElementById(type === 'before' ? 'imgBeforeLabel' : 'imgAfterLabel');
+    thumb.src = e.target.result;
+    preview.style.display = 'block';
+    label.style.display = 'none';
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearTradeImg(type) {
+  const input = document.getElementById(type === 'before' ? 'imgBefore' : 'imgAfter');
+  const preview = document.getElementById(type === 'before' ? 'imgBeforePreview' : 'imgAfterPreview');
+  const label = document.getElementById(type === 'before' ? 'imgBeforeLabel' : 'imgAfterLabel');
+  input.value = '';
+  preview.style.display = 'none';
+  label.style.display = 'flex';
+}
+
+function openImgLightbox(type) {
+  const thumb = document.getElementById(type === 'before' ? 'imgBeforeThumb' : 'imgAfterThumb');
+  const lb = document.getElementById('tradeImgLightbox');
+  document.getElementById('tradeImgLightboxImg').src = thumb.src;
+  lb.style.display = 'flex';
+}
+
+function closeImgLightbox() {
+  document.getElementById('tradeImgLightbox').style.display = 'none';
+}
+
+async function uploadTradeImage(journalId, type) {
+  const input = document.getElementById(type === 'before' ? 'imgBefore' : 'imgAfter');
+  if (!input.files[0] || !journalId) return;
+  const fd = new FormData();
+  fd.append('image', input.files[0]);
+  try {
+    await fetch('/journal/image/' + journalId, { method: 'POST', body: fd });
+  } catch(e) { console.warn('Image upload failed:', e); }
+}
+
+// ══════════════════════════════════════════════════════
 // Execute Trade
 // ══════════════════════════════════════════════════════
 async function executeTrade(type, preTradeData) {
@@ -1101,7 +1184,16 @@ async function executeTrade(type, preTradeData) {
       body: JSON.stringify({ type, pre_trade: preTradeData })
     });
     const d = await r.json();
-    if (d.success) { hasPos = true; vib([100,50,100]); await refresh(); }
+    if (d.success) {
+      hasPos = true;
+      vib([100,50,100]);
+      // حفظ journal_id ورفع صورة قبل الصفقة
+      _currentJournalId = d.journal_id || null;
+      if (_currentJournalId) {
+        await uploadTradeImage(_currentJournalId, 'before');
+      }
+      await refresh();
+    }
     else alert('❌ فشل الشراء:\n' + (d.error || 'خطأ'));
   } catch(e) { alert('❌ خطأ في الاتصال'); }
   finally {
@@ -1139,6 +1231,17 @@ async function closeTrade() {
       const reasonText2 = reasonMap2[d.reason] || d.reason || 'إغلاق يدوي 👆';
       document.getElementById('rcDetail').textContent = '📌 السبب: ' + reasonText2 + ' | دخول: ' + fmt(d.entry_price) + ' → خروج: ' + fmt(d.exit_price);
       hasPos = false;
+      // إظهار قسم صورة بعد الصفقة
+      const closedId = d.journal_id || _currentJournalId;
+      if (closedId) {
+        _currentJournalId = closedId;
+        document.getElementById('imgAfterSection').style.display = 'block';
+        // رفع صورة بعد إذا كانت محددة مسبقاً
+        setTimeout(async () => {
+          const afterInput = document.getElementById('imgAfter');
+          if (afterInput.files[0]) await uploadTradeImage(closedId, 'after');
+        }, 500);
+      }
       setTimeout(() => rc.classList.remove('show'), 12000);
       await refresh();
     } else { alert('❌ فشل البيع:\n' + (d.error || 'خطأ')); }

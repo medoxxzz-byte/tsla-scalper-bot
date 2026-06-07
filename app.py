@@ -288,6 +288,12 @@ TRADING_END_MINUTE   = 30
 
 # ── Position Sizing ───────────────────────────────────────────────────────────
 MAX_CONTRACTS_PER_TRADE = 10
+
+# ── Strategy Flags ────────────────────────────────────────────────────────────
+# V10 FIX: إيقاف استراتيجية شراء TSLA السهم (تسبب خسائر ضخمة)
+STOCK_STRATEGY_ENABLED = False
+# V10 FIX: إيقاف Pyramid Auto (WR=33%, P&L=-$831)
+PYRAMID_AUTO_ENABLED = False
 MAX_OPTION_PRICE        = 5.00
 MIN_OPTION_PRICE        = 0.10
 MIN_STARS_TO_EXECUTE    = 3      # V7.1: أقل عدد نجوم لتنفيذ الصفقة تلقائياً
@@ -685,6 +691,10 @@ def execute_trade(signal, price, stars, opt_data):
     Execute a trade on Alpaca Paper Trading.
     CALL → BUY TSLA shares | PUT → SELL SHORT TSLA shares
     """
+    # V10 FIX: استراتيجية السهم موقفة بسبب خسائر ضخمة (-$9,500)
+    if not STOCK_STRATEGY_ENABLED:
+        logger.info(f"[execute_trade] DISABLED — STOCK_STRATEGY_ENABLED=False ({signal})")
+        return False, None, "⛔ استراتيجية السهم موقفة"
     try:
         account = get_alpaca_account()
         if not account:
@@ -2345,7 +2355,11 @@ def manual_buy():
             _active_journal_id = journal_id
         except Exception as je:
             logger.warning(f"[V10] Journal pre_trade update failed: {je}")
-        return jsonify({"success": True, **result})
+        # إرجاع journal_id للواجهة لربط رفع الصورة
+        resp = {"success": True, **result}
+        if _active_journal_id:
+            resp["journal_id"] = _active_journal_id
+        return jsonify(resp)
     else:
         logger.warning(f"[V9 Manual] Buy failed: {result.get('error')}")
         return jsonify({"success": False, **result}), 400
@@ -2372,7 +2386,10 @@ def manual_sell():
             "exit_price": result.get("exit_price", 0)
         }
         logger.info(f"[V9 Manual] Sell executed: PnL=${result.get('pnl', 0):+.2f} | Reason={reason}")
-        return jsonify({"success": True, **result})
+        resp = {"success": True, **result}
+        if _active_journal_id:
+            resp["journal_id"] = _active_journal_id
+        return jsonify(resp)
     else:
         # إذا لم توجد صفقة مفتوحة — الصفقة أُغلقت تلقائياً بالفعل (TP/SL)
         error_msg = result.get("error", "")
@@ -2984,13 +3001,16 @@ def _start_background_threads():
         # V9.4: ITM Precision Entry Engine
         start_pe_engine()
         logger.info("V9.4 ITM Precision Entry Engine started ✅ 🎯")
-    # V12.0: Strategy A — True Pyramid (Pyramiding on Profit + MTF)
-    try:
-        from options_scalper import start_pyramid_auto
-        result = start_pyramid_auto()
-        logger.info(f"V12.0 Pyramid Auto (True Pyramiding+MTF) started ✅ 🦋 result={result}")
-    except Exception as _pyr_err:
-        logger.error(f"Pyramid Auto FAILED to start: {_pyr_err}", exc_info=True)
+    # V12.0: Strategy A — True Pyramid (DISABLED — WR=33%, P&L=-$831)
+    if PYRAMID_AUTO_ENABLED:
+        try:
+            from options_scalper import start_pyramid_auto
+            result = start_pyramid_auto()
+            logger.info(f"V12.0 Pyramid Auto started ✅ 🦋 result={result}")
+        except Exception as _pyr_err:
+            logger.error(f"Pyramid Auto FAILED to start: {_pyr_err}", exc_info=True)
+    else:
+        logger.info("[V12.0 Pyramid Auto] DISABLED — PYRAMID_AUTO_ENABLED=False ⛔")
     # V11.1: Strategy B — VWAP Bounce 15M
     try:
         from options_scalper import start_strategy_b
@@ -3021,13 +3041,14 @@ def _ensure_strategies_alive():
             _std_state, _std_lock
         )
         import threading as _th
-        # Pyramid
-        pyr_status = get_pyramid_status()
-        if not pyr_status.get("running"):
-            with _pyr_lock:
-                _pyr_state["running"] = False
-            start_pyramid_auto()
-            logger.info("[AutoRestart] Pyramid V12 restarted ✅")
+        # Pyramid (DISABLED)
+        if PYRAMID_AUTO_ENABLED:
+            pyr_status = get_pyramid_status()
+            if not pyr_status.get("running"):
+                with _pyr_lock:
+                    _pyr_state["running"] = False
+                start_pyramid_auto()
+                logger.info("[AutoRestart] Pyramid V12 restarted ✅")
         # Strategy B
         stb_status = get_strategy_b_status()
         if not stb_status.get("running"):

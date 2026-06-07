@@ -19,6 +19,7 @@ Date: May 2026
 
 import os
 import time
+import gc
 import json
 import math
 import logging
@@ -2408,11 +2409,11 @@ def _manual_monitor_loop():
                 )
                 send_telegram(msg)
             
-            time.sleep(5)
+            time.sleep(10)
             
         except Exception as e:
             logger.error(f"[V9 Manual Monitor] Error: {e}")
-            time.sleep(5)
+            time.sleep(10)
     
     logger.info("[V9 Manual] Monitor stopped")
 
@@ -3212,7 +3213,7 @@ def stop_pe_engine():
 
 PAIR_XOM_CONTRACTS = 2
 PAIR_XLE_CONTRACTS = 4
-PAIR_TP_PCT        = 0.30
+PAIR_TP_PCT        = 0.10   # تم تعديله من 30% إلى 10% بناءً على طلب المستخدم
 PAIR_DTE_MIN       = 14
 PAIR_DTE_MAX       = 21
 
@@ -5390,7 +5391,7 @@ STD_REINFORCE_AT    = 0.45      # +$0.45 → شراء عقد ثاني
 STD_SL_AFTER_REINFORCE = 0.0    # Breakeven بعد التعزيز (سعر الدخول الأول)
 STD_DELTA_MIN       = 0.45
 STD_DELTA_MAX       = 0.60
-STD_LOOP_SLEEP      = 15        # كل 15 ثانية (3M فريم — نحتاج سرعة)
+STD_LOOP_SLEEP      = 30        # رُفع من 15 إلى 30 ثانية لتخفيف RAM
 STD_RSI_CALL_MIN    = 45
 STD_RSI_CALL_MAX    = 70
 STD_RSI_PUT_MIN     = 30

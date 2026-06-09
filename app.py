@@ -3704,6 +3704,57 @@ def api_trade_detail(trade_id):
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# API: تنزيل نسخة احتياطية من قاعدة البيانات
+# ─────────────────────────────────────────────────────────────────────────────
+@app.route('/api/backup/db', methods=['GET'])
+def api_backup_db():
+    """
+    تنزيل قاعدة البيانات كاملة كملف .db للنسخ الاحتياطي.
+    مثال: GET /api/backup/db
+    """
+    try:
+        from flask import send_file
+        from options_scalper import _JOURNAL_DB
+        import os
+        if not os.path.exists(_JOURNAL_DB):
+            return jsonify({'ok': False, 'error': 'DB not found'}), 404
+        return send_file(
+            _JOURNAL_DB,
+            as_attachment=True,
+            download_name='journal_backup.db',
+            mimetype='application/octet-stream'
+        )
+    except Exception as e:
+        logger.error(f'[API/backup] Error: {e}', exc_info=True)
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/backup/json', methods=['GET'])
+def api_backup_json():
+    """
+    تصدير كل الصفقات والصور كـ JSON كامل للنسخ الاحتياطي.
+    مثال: GET /api/backup/json
+    """
+    try:
+        entries = get_journal_entries(limit=9999)
+        from flask import Response
+        import json as _json
+        data = _json.dumps({
+            'backup_time': datetime.now(timezone.utc).isoformat(),
+            'total_trades': len(entries),
+            'trades': entries
+        }, ensure_ascii=False, indent=2)
+        return Response(
+            data,
+            mimetype='application/json',
+            headers={'Content-Disposition': 'attachment; filename=trades_backup.json'}
+        )
+    except Exception as e:
+        logger.error(f'[API/backup/json] Error: {e}', exc_info=True)
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 # استدعاء مباشر عند بدء التشغيل
 _start_background_threads()
 

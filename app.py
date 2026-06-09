@@ -268,7 +268,7 @@ def _on_option_data_received(opt: dict):
 # Configuration
 # ──────────────────────────────────────────────────────────────────────────────
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8701854195:AAHVmtrdxwyPBjtXMC-bU1ZCOnUBNafmtzA")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8708530077:AAF16LsdHUNTW5G25UypCm8NiFTmCIranP8")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID",   "975644160")
 
 SERVER_HOST    = os.environ.get("SERVER_HOST", "0.0.0.0")
@@ -1529,7 +1529,16 @@ def format_rest_mode_v71():
 # Telegram
 # ──────────────────────────────────────────────────────────────────────────────
 
+# ── Rate Limiter للتلقرام (V10.3) — يمنع الحجب بسبب الـ flood ──
+_tg_last_sent = 0.0          # وقت آخر رسالة
+_tg_msg_count = 0            # عدد الرسائل في النافذة الحالية
+_tg_window_start = 0.0       # بداية النافذة الزمنية (60 ثانية)
+_TG_MAX_PER_MINUTE = 20      # حد أقصى 20 رسالة/دقيقة (Telegram يسمح 30)
+_TG_MIN_INTERVAL   = 1.5     # ثانية ونصف بين كل رسالة
+_tg_lock = threading.Lock()
+
 def send_telegram(message):
+    global _tg_last_sent, _tg_msg_count, _tg_window_start
     url     = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id":                  TELEGRAM_CHAT_ID,
@@ -1537,11 +1546,33 @@ def send_telegram(message):
         "parse_mode":               "HTML",
         "disable_web_page_preview": True
     }
+    with _tg_lock:
+        now = time.time()
+        # إعادة ضبط العداد كل دقيقة
+        if now - _tg_window_start >= 60:
+            _tg_window_start = now
+            _tg_msg_count = 0
+        # فحص حد الدقيقة
+        if _tg_msg_count >= _TG_MAX_PER_MINUTE:
+            logger.warning(f"[TG Rate Limit] تجاوز الحد ({_TG_MAX_PER_MINUTE}/دقيقة) — تم تجاهل الرسالة")
+            return False
+        # فحص الفاصل الزمني بين الرسائل
+        elapsed = now - _tg_last_sent
+        if elapsed < _TG_MIN_INTERVAL:
+            time.sleep(_TG_MIN_INTERVAL - elapsed)
+        _tg_last_sent = time.time()
+        _tg_msg_count += 1
     try:
         resp = http_requests.post(url, json=payload, timeout=10)
         if resp.status_code == 200:
-            logger.info("Telegram: message sent successfully")
+            logger.info(f"Telegram: message sent [{_tg_msg_count}/{_TG_MAX_PER_MINUTE}]")
             return True
+        elif resp.status_code == 429:
+            # Telegram طلب انتظار
+            retry_after = resp.json().get('parameters', {}).get('retry_after', 30)
+            logger.warning(f"[TG] 429 Too Many Requests — انتظار {retry_after}s")
+            time.sleep(retry_after)
+            return False
         else:
             logger.error(f"Telegram error: {resp.status_code} -- {resp.text}")
             return False

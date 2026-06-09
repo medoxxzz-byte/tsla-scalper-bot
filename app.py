@@ -1722,8 +1722,8 @@ def home():
     account = get_alpaca_account()
     return jsonify({
         "status":          "running",
-        "service":         "Mosquito ثاقب V7.1 — Smart Trading Alert Bot",
-        "version":         "7.1",
+        "service":         "Mosquito ثاقب V10.3 — Smart Trading Alert Bot",
+        "version":         "10.3",
         "trading_window":  window_msg,
         "in_window":       in_window,
         "alpaca_balance":  f"${float(account.get('cash', 0)):,.2f}" if account else "N/A",

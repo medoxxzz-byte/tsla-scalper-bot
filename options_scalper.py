@@ -6164,3 +6164,329 @@ def get_mosquito_status():
             "trades_today": len(_std_state["trades_today"]),
             "max_trades":   STD_MAX_TRADES_DAY,
         }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Market Briefing — رسالة التلقرام كل 15 دقيقة
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _calc_rsi_brief(closes, period=14):
+    if len(closes) < period + 1:
+        return 50.0
+    gains, losses = [], []
+    for i in range(1, len(closes)):
+        ch = closes[i] - closes[i-1]
+        gains.append(max(ch, 0))
+        losses.append(abs(min(ch, 0)))
+    p = min(period, len(gains))
+    ag = sum(gains[-p:]) / p
+    al = sum(losses[-p:]) / p
+    if al == 0:
+        return 100.0
+    return round(100 - (100 / (1 + ag / al)), 1)
+
+
+def _calc_atr_brief(bars, period=14):
+    if len(bars) < 2:
+        return 0.0
+    trs = []
+    for i in range(1, len(bars)):
+        h = float(bars[i]["h"])
+        l = float(bars[i]["l"])
+        pc = float(bars[i-1]["c"])
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+    p = min(period, len(trs))
+    return round(sum(trs[-p:]) / p, 3)
+
+
+def _calc_macd_brief(closes, fast=12, slow=26, signal=9):
+    if len(closes) < slow + signal:
+        return 0.0, 0.0, 0.0
+    macd_series = []
+    for i in range(slow - 1, len(closes)):
+        ef = _ema(closes[:i+1], fast)
+        es = _ema(closes[:i+1], slow)
+        macd_series.append(ef - es)
+    if len(macd_series) < signal:
+        return round(macd_series[-1] if macd_series else 0, 3), 0.0, 0.0
+    sig_line = _ema(macd_series, signal)
+    macd_line = macd_series[-1]
+    hist = macd_line - sig_line
+    return round(macd_line, 3), round(sig_line, 3), round(hist, 3)
+
+
+def _calc_bb_brief(closes, period=20, mult=2.0):
+    if len(closes) < period:
+        c = closes[-1]
+        return c, c, c
+    window = closes[-period:]
+    mid = sum(window) / period
+    std = (sum((x - mid) ** 2 for x in window) / period) ** 0.5
+    return round(mid + mult * std, 2), round(mid, 2), round(mid - mult * std, 2)
+
+
+def _reversal_zones_brief(bars_5m, price, vwap, pdh, pdl, orh, orl):
+    closes = [float(b["c"]) for b in bars_5m]
+    highs  = [float(b["h"]) for b in bars_5m]
+    lows   = [float(b["l"]) for b in bars_5m]
+
+    zones = []
+    bb_upper, bb_mid, bb_lower = _calc_bb_brief(closes, 20)
+    zones += [
+        {"price": bb_upper, "type": "resistance", "name": "BB Upper", "icon": "🔴"},
+        {"price": bb_mid,   "type": "pivot",      "name": "BB Mid",   "icon": "⚪"},
+        {"price": bb_lower, "type": "support",    "name": "BB Lower", "icon": "🟢"},
+    ]
+    if vwap > 0:
+        zones.append({"price": round(vwap, 2), "type": "pivot", "name": "VWAP", "icon": "🔵"})
+    if pdh > 0:
+        zones.append({"price": round(pdh, 2), "type": "resistance", "name": "PDH", "icon": "🔴"})
+    if pdl > 0:
+        zones.append({"price": round(pdl, 2), "type": "support",    "name": "PDL", "icon": "🟢"})
+    if orh > 0:
+        zones.append({"price": round(orh, 2), "type": "resistance", "name": "OR High", "icon": "🟠"})
+    if orl > 0:
+        zones.append({"price": round(orl, 2), "type": "support",    "name": "OR Low",  "icon": "🟠"})
+    if len(closes) >= 9:
+        zones.append({"price": round(_ema(closes, 9), 2),  "type": "dynamic", "name": "EMA9",  "icon": "🟡"})
+    if len(closes) >= 21:
+        zones.append({"price": round(_ema(closes, 21), 2), "type": "dynamic", "name": "EMA21", "icon": "🟡"})
+
+    # مستويات نفسية
+    base = round(price / 2.5) * 2.5
+    for off in [-5, -2.5, 2.5, 5]:
+        lvl = round(base + off, 2)
+        if 0 < abs(lvl - price) <= 7:
+            zones.append({"price": lvl, "type": "psych", "name": f"${lvl:.1f}", "icon": "⚫"})
+
+    zones = [z for z in zones if z["price"] > 0]
+    resistances = sorted([z for z in zones if z["type"] == "resistance" and z["price"] > price],
+                         key=lambda z: z["price"])[:3]
+    supports    = sorted([z for z in zones if z["type"] == "support"    and z["price"] < price],
+                         key=lambda z: -z["price"])[:3]
+    return resistances, supports
+
+
+def _wave_brief(bars_5m):
+    if len(bars_5m) < 6:
+        return {"wave": "غير محدد", "momentum": "محايد", "atr_now": 0, "atr_avg": 0,
+                "atr_signal": "⚪", "wave_pos": 50, "recent_high": 0, "recent_low": 0}
+    closes = [float(b["c"]) for b in bars_5m]
+    highs  = [float(b["h"]) for b in bars_5m]
+    lows   = [float(b["l"]) for b in bars_5m]
+
+    atr_now = _calc_atr_brief(bars_5m[-5:], 5)
+    atr_avg = _calc_atr_brief(bars_5m, 14)
+    ratio = atr_now / atr_avg if atr_avg > 0 else 1.0
+    atr_signal = "🔥 نشط جداً" if ratio > 1.3 else ("✅ طبيعي" if ratio > 0.8 else "😴 خامل")
+
+    recent_move = closes[-1] - closes[-4] if len(closes) >= 4 else 0
+    prev_move   = closes[-4] - closes[-7] if len(closes) >= 7 else 0
+    if recent_move > 0.5 and recent_move > prev_move:
+        momentum = "📈 صاعد متسارع"
+    elif recent_move > 0.2:
+        momentum = "📈 صاعد"
+    elif recent_move < -0.5 and recent_move < prev_move:
+        momentum = "📉 هابط متسارع"
+    elif recent_move < -0.2:
+        momentum = "📉 هابط"
+    else:
+        momentum = "↔️ تذبذب"
+
+    rh = max(highs[-6:])
+    rl = min(lows[-6:])
+    price = closes[-1]
+    wp = (price - rl) / (rh - rl) * 100 if (rh - rl) > 0 else 50
+    wave = (f"🔝 قرب القمة (${rh:.2f})" if wp > 80 else
+            f"⬇️ قرب القاع (${rl:.2f})"  if wp < 20 else
+            "🌊 منتصف الموجة")
+    return {"wave": wave, "momentum": momentum, "atr_now": round(atr_now, 2),
+            "atr_avg": round(atr_avg, 2), "atr_signal": atr_signal,
+            "wave_pos": round(wp), "recent_high": round(rh, 2), "recent_low": round(rl, 2)}
+
+
+def _decision_brief(rsi, macd_h, wave_pos, price, vwap, trend_5m, trend_15m):
+    cs, ps, rc, rp = 0, 0, [], []
+    if rsi < 35:   cs += 2; rc.append(f"RSI={rsi} تشبع بيع")
+    elif rsi < 45: cs += 1; rc.append(f"RSI={rsi} منطقة شراء")
+    elif rsi > 65: ps += 2; rp.append(f"RSI={rsi} تشبع شراء")
+    elif rsi > 55: ps += 1; rp.append(f"RSI={rsi} منطقة بيع")
+    if macd_h > 0.05:  cs += 1; rc.append("MACD+")
+    elif macd_h < -0.05: ps += 1; rp.append("MACD-")
+    if wave_pos < 25:  cs += 2; rc.append("قاع الموجة")
+    elif wave_pos > 75: ps += 2; rp.append("قمة الموجة")
+    if vwap > 0:
+        if price > vwap * 1.001:   cs += 1; rc.append("فوق VWAP")
+        elif price < vwap * 0.999: ps += 1; rp.append("تحت VWAP")
+    t5 = str(trend_5m or "")
+    t15 = str(trend_15m or "")
+    if t5 == "BULL":  cs += 1; rc.append("Trend5m↑")
+    elif t5 == "BEAR": ps += 1; rp.append("Trend5m↓")
+    if t15 == "BULL":  cs += 1; rc.append("Trend15m↑")
+    elif t15 == "BEAR": ps += 1; rp.append("Trend15m↓")
+
+    total = cs + ps
+    if total == 0:
+        return "⏸ انتظر", 0, []
+    cp = round(cs / total * 100)
+    pp = round(ps / total * 100)
+    if cs >= 4 and cs > ps + 1:
+        return f"✅ CALL ({cp}%)", cp, rc
+    elif ps >= 4 and ps > cs + 1:
+        return f"✅ PUT ({pp}%)", pp, rp
+    elif cs > ps:
+        return f"⚠️ CALL ضعيف ({cp}%)", cp, rc
+    elif ps > cs:
+        return f"⚠️ PUT ضعيف ({pp}%)", pp, rp
+    return "⏸ متعادل — انتظر", 50, []
+
+
+def generate_market_briefing():
+    """
+    رسالة تلقرام شاملة كل 15 دقيقة:
+    - السعر والمؤشرات (RSI, MACD, ATR, BB)
+    - تحليل الموجة والزخم
+    - أسعار الانعكاس (دعم/مقاومة)
+    - قرار CALL/PUT مع نسبة الثقة
+    - تنبيهات وتحذيرات
+    """
+    try:
+        now_et = _et_now()
+        time_str = now_et.strftime("%H:%M ET")
+
+        snap = get_tsla_snapshot()
+        price = snap.get("price", 0) if snap else _state.get("current_price", 0)
+        if price == 0:
+            return None
+
+        bars_5m  = get_tsla_bars("5Min",  limit=40)
+        bars_1m  = get_tsla_bars("1Min",  limit=20)
+        bars_15m = get_tsla_bars("15Min", limit=20)
+
+        if not bars_5m or len(bars_5m) < 5:
+            return None
+
+        closes_5m  = [float(b["c"]) for b in bars_5m]
+        closes_1m  = [float(b["c"]) for b in bars_1m]  if bars_1m  else closes_5m[-10:]
+        closes_15m = [float(b["c"]) for b in bars_15m] if bars_15m else closes_5m
+
+        # ── المؤشرات ──
+        rsi_5m  = _calc_rsi_brief(closes_5m, 14)
+        rsi_1m  = _calc_rsi_brief(closes_1m, 14)
+        macd_l, macd_s, macd_h = _calc_macd_brief(closes_5m)
+        atr_5m  = _calc_atr_brief(bars_5m, 14)
+        bb_upper, bb_mid, bb_lower = _calc_bb_brief(closes_5m, 20)
+
+        # ── State ──
+        vwap     = _state.get("vwap", 0)
+        pdh      = _state.get("pdh", 0)
+        pdl      = _state.get("pdl", 0)
+        orh      = _state.get("opening_range_high", 0)
+        orl      = _state.get("opening_range_low", 0)
+        trend_5m  = _state.get("trend_5m")  or _state.get("trend")
+        trend_15m = _state.get("trend_15m") or trend_5m
+        day_high  = _state.get("day_high", 0)
+        day_low   = _state.get("day_low", 0)
+
+        # ── SPY ──
+        spy_dir, spy_chg = get_spy_direction()
+        spy_emoji = {"BULL": "📈", "BEAR": "📉", "FLAT": "↔️"}.get(spy_dir, "❓")
+
+        # ── تحليل الموجة ──
+        wave = _wave_brief(bars_5m)
+
+        # ── مناطق الانعكاس ──
+        resistances, supports = _reversal_zones_brief(bars_5m, price, vwap, pdh, pdl, orh, orl)
+
+        # ── القرار ──
+        decision, confidence, reasons = _decision_brief(
+            rsi_5m, macd_h, wave["wave_pos"], price, vwap, trend_5m, trend_15m
+        )
+
+        # ── تغيير السعر خلال 15 دقيقة ──
+        price_15m_ago = closes_5m[-4] if len(closes_5m) >= 4 else closes_5m[0]
+        price_change  = price - price_15m_ago
+        change_emoji  = "🔺" if price_change > 0 else "🔻"
+
+        # ── تنبيهات ──
+        alerts = []
+        if rsi_5m > 75:
+            alerts.append("⚠️ RSI تشبع شراء — خطر انعكاس")
+        if rsi_5m < 25:
+            alerts.append("⚠️ RSI تشبع بيع — فرصة ارتداد")
+        if vwap > 0 and abs(price - vwap) / price < 0.002:
+            alerts.append(f"⚠️ قرب VWAP ${vwap:.2f} — منطقة خطر")
+        if pdh > 0 and abs(price - pdh) / price < 0.003:
+            alerts.append(f"⚠️ قرب PDH ${pdh:.2f} — مقاومة قوية")
+        if pdl > 0 and abs(price - pdl) / price < 0.003:
+            alerts.append(f"⚠️ قرب PDL ${pdl:.2f} — دعم قوي")
+        if price >= bb_upper * 0.998:
+            alerts.append(f"🔴 عند BB Upper ${bb_upper:.2f} — انعكاس محتمل")
+        if price <= bb_lower * 1.002:
+            alerts.append(f"🟢 عند BB Lower ${bb_lower:.2f} — ارتداد محتمل")
+        if macd_h > 0 and macd_h < 0.02:
+            alerts.append("⚡ MACD يقترب من الانعكاس السلبي")
+        if macd_h < 0 and macd_h > -0.02:
+            alerts.append("⚡ MACD يقترب من الانعكاس الإيجابي")
+        if now_et.hour == 10:
+            alerts.append("🚫 ساعة Chop (10 ET) — تجنب الدخول")
+        if now_et.hour >= 13 and now_et.minute >= 30:
+            alerts.append("⏳ بعد 1:30 PM ET — حجم منخفض")
+
+        # ── بناء الرسالة ──
+        trend_e = {"BULL": "📈", "BEAR": "📉"}.get(str(trend_5m), "↔️")
+        vwap_side = "فوق ✅" if price > vwap else "تحت ⚠️"
+
+        msg  = f"🦟 <b>ثاقب — Market Briefing</b>\n"
+        msg += f"🕐 {time_str}\n"
+        msg += f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+        msg += f"<b>💰 TSLA: ${price:.2f}</b>  {change_emoji}{abs(price_change):.2f}$ (15د)\n"
+        msg += f"📊 VWAP: ${vwap:.2f} — {vwap_side}\n"
+        msg += f"📅 High: ${day_high:.2f} | Low: ${day_low:.2f}\n"
+        msg += f"{spy_emoji} SPY: {spy_dir} ({spy_chg:+.2f}%)\n\n"
+
+        msg += f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+        msg += f"<b>📡 المؤشرات</b>\n"
+        msg += f"RSI 5m: <b>{rsi_5m}</b>  |  RSI 1m: {rsi_1m}\n"
+        msg += f"MACD: {macd_l:+.3f} | Sig: {macd_s:+.3f} | Hist: <b>{macd_h:+.3f}</b>\n"
+        msg += f"ATR 5m: ${atr_5m:.2f}  {wave['atr_signal']}\n"
+        msg += f"BB: 🔴{bb_upper:.2f} ⚪{bb_mid:.2f} 🟢{bb_lower:.2f}\n\n"
+
+        msg += f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+        msg += f"<b>🌊 الموجة والزخم</b>\n"
+        msg += f"{wave['wave']}\n"
+        msg += f"{wave['momentum']}\n"
+        msg += f"موقع الموجة: {wave['wave_pos']}%\n"
+        msg += f"Trend: {trend_e} 5m={trend_5m or '?'} | 15m={trend_15m or '?'}\n\n"
+
+        msg += f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+        msg += f"<b>🎯 أسعار الانعكاس</b>\n"
+        if resistances:
+            msg += "🔴 <b>مقاومة:</b>\n"
+            for r in resistances:
+                dist = r['price'] - price
+                msg += f"  {r['icon']} ${r['price']:.2f} ({r['name']}) +${dist:.2f}\n"
+        if supports:
+            msg += "🟢 <b>دعم:</b>\n"
+            for s in supports:
+                dist = price - s['price']
+                msg += f"  {s['icon']} ${s['price']:.2f} ({s['name']}) -${dist:.2f}\n"
+
+        msg += f"\n━━━━━━━━━━━━━━━━━━━━━━━\n"
+        msg += f"<b>🎲 القرار</b>\n"
+        msg += f"<b>{decision}</b>\n"
+        if reasons:
+            msg += "📌 " + " | ".join(reasons[:4]) + "\n"
+
+        if alerts:
+            msg += f"\n<b>⚡ تنبيهات</b>\n"
+            for a in alerts[:4]:
+                msg += f"{a}\n"
+
+        msg += f"\n━━━━━━━━━━━━━━━━━━━━━━━"
+        return msg
+
+    except Exception as e:
+        logger.error(f"[Briefing] Error: {e}")
+        return None

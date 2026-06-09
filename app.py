@@ -2965,6 +2965,45 @@ def mosquito_status():
 # ──────────────────────────────────────────────────────────────────────────────
 # Startup
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+def _market_briefing_worker():
+    """
+    Worker thread: يرسل Market Briefing كل 15 دقيقة
+    يبدأ بعد 30 دقيقة من افتتاح السوق (10:00 AM ET)
+    يتوقف عند 3:30 PM ET
+    """
+    from options_scalper import generate_market_briefing
+    logger.info("[Briefing] Market Briefing worker started")
+
+    # انتظر حتى الساعة 10:00 AM ET أول رسالة
+    while True:
+        try:
+            now_et = datetime.now(timezone.utc) - timedelta(hours=4)
+            h, m = now_et.hour, now_et.minute
+
+            # نافذة التشغيل: 10:00 AM — 3:30 PM ET
+            in_window = (h == 10 and m >= 0) or (10 < h < 15) or (h == 15 and m <= 30)
+
+            if in_window:
+                # توليد الرسالة
+                msg = generate_market_briefing()
+                if msg:
+                    send_telegram(msg)
+                    logger.info(f"[Briefing] Sent at {now_et.strftime('%H:%M ET')}")
+                else:
+                    logger.warning("[Briefing] generate_market_briefing returned None")
+
+                # انتظر 15 دقيقة
+                time.sleep(15 * 60)
+            else:
+                # خارج النافذة — انتظر دقيقة
+                time.sleep(60)
+        except Exception as e:
+            logger.error(f"[Briefing] Worker error: {e}")
+            time.sleep(60)
+
+
 import os as _os
 _threads_started = False
 _threads_lock = threading.Lock()
@@ -3049,6 +3088,9 @@ def _start_background_threads():
         logger.info(f"V11.2 Strategy C (ORB) started ✅ 📈 result={result}")
     except Exception as _stc_err:
         logger.error(f"Strategy C FAILED to start: {_stc_err}", exc_info=True)
+    # V10.3: Market Briefing — رسالة تلقرام كل 15 دقيقة
+    threading.Thread(target=_market_briefing_worker, daemon=True).start()
+    logger.info("Market Briefing worker started ✅ 📊")
 # # ── Auto-restart strategies on every request (handles Render sleep/wake) ──────
 @app.before_request
 def _ensure_strategies_alive():

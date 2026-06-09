@@ -6377,16 +6377,55 @@ def generate_market_briefing():
         atr_5m  = _calc_atr_brief(bars_5m, 14)
         bb_upper, bb_mid, bb_lower = _calc_bb_brief(closes_5m, 20)
 
-        # ── State ──
-        vwap     = _state.get("vwap", 0)
-        pdh      = _state.get("pdh", 0)
-        pdl      = _state.get("pdl", 0)
-        orh      = _state.get("opening_range_high", 0)
-        orl      = _state.get("opening_range_low", 0)
-        trend_5m  = _state.get("trend_5m")  or _state.get("trend")
+        # ── State + Fallback مباشر من Alpaca ──
+        # VWAP — من snapshot أو حساب مباشر
+        snap2 = get_tsla_snapshot()
+        vwap = _state.get("vwap", 0)
+        if vwap == 0 and snap2 and snap2.get("vwap", 0) > 0:
+            vwap = snap2["vwap"]
+        if vwap == 0 and bars_5m:
+            total_pv = sum((float(b['h'])+float(b['l'])+float(b['c']))/3 * float(b['v']) for b in bars_5m)
+            total_v  = sum(float(b['v']) for b in bars_5m)
+            vwap = round(total_pv / total_v, 2) if total_v > 0 else 0
+        # Day High/Low — من snapshot أو من bars
+        day_high = _state.get("day_high", 0)
+        day_low  = _state.get("day_low", 0)
+        if day_high == 0 and snap2 and snap2.get("high", 0) > 0:
+            day_high = snap2["high"]
+            day_low  = snap2.get("low", 0)
+        if day_high == 0 and bars_5m:
+            day_high = max(float(b['h']) for b in bars_5m)
+            day_low  = min(float(b['l']) for b in bars_5m)
+        # PDH/PDL
+        pdh = _state.get("pdh", 0)
+        pdl = _state.get("pdl", 0)
+        if pdh == 0:
+            try:
+                prev = get_previous_day_bars()
+                if prev:
+                    pdh = float(prev.get('h', 0))
+                    pdl = float(prev.get('l', 0))
+            except:
+                pass
+        orh = _state.get("opening_range_high", 0)
+        orl = _state.get("opening_range_low", 0)
+        # Trend — من _state أو EMA9/EMA21 مباشر
+        trend_5m  = _state.get("trend_5m") or _state.get("trend")
         trend_15m = _state.get("trend_15m") or trend_5m
-        day_high  = _state.get("day_high", 0)
-        day_low   = _state.get("day_low", 0)
+        def _ema_q(data, n):
+            k = 2/(n+1); e = data[0]
+            for x in data[1:]: e = e*(1-k) + x*k
+            return e
+        if not trend_5m and len(closes_5m) >= 21:
+            ema9  = _ema_q(closes_5m[-21:], 9)
+            ema21 = _ema_q(closes_5m[-21:], 21)
+            trend_5m = "BULL" if ema9 > ema21 else "BEAR"
+        if not trend_15m and len(closes_15m) >= 21:
+            ema9_15  = _ema_q(closes_15m[-21:], 9)
+            ema21_15 = _ema_q(closes_15m[-21:], 21)
+            trend_15m = "BULL" if ema9_15 > ema21_15 else "BEAR"
+        if not trend_15m:
+            trend_15m = trend_5m
 
         # ── SPY ──
         spy_dir, spy_chg = get_spy_direction()

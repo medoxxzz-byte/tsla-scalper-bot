@@ -3632,6 +3632,78 @@ def analyze_flow():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# API: صفقات مع الصور للتحليل الذكي
+# ─────────────────────────────────────────────────────────────────────────────
+@app.route('/api/trades', methods=['GET'])
+def api_trades():
+    """
+    يُرجع الصفقات مع الصور المرفقة.
+    Query params:
+      - date: تاريخ بصيغة YYYY-MM-DD (اختياري، افتراضي: اليوم ET)
+      - limit: عدد الصفقات (اختياري، افتراضي: 50)
+      - include_images: true/false (اختياري، افتراضي: true)
+    """
+    import pytz
+    try:
+        date_str   = request.args.get('date', '')
+        limit      = int(request.args.get('limit', 50))
+        inc_images = request.args.get('include_images', 'true').lower() == 'true'
+
+        entries = get_journal_entries(limit=500)
+
+        if date_str:
+            entries = [e for e in entries if e.get('timestamp', '').startswith(date_str)]
+        else:
+            et    = pytz.timezone('America/New_York')
+            today = datetime.now(et).strftime('%Y-%m-%d')
+            entries = [e for e in entries if e.get('timestamp', '').startswith(today)]
+            date_str = today
+
+        entries = entries[:limit]
+
+        if not inc_images:
+            for e in entries:
+                e.pop('images', None)
+
+        closed   = [e for e in entries if e.get('status') == 'closed']
+        wins     = [e for e in closed if (e.get('pnl') or 0) > 0]
+        losses   = [e for e in closed if (e.get('pnl') or 0) < 0]
+        total_pnl = sum(e.get('pnl', 0) or 0 for e in closed)
+
+        return jsonify({
+            'ok':   True,
+            'date': date_str,
+            'count': len(entries),
+            'stats': {
+                'total_pnl': round(total_pnl, 2),
+                'wins':      len(wins),
+                'losses':    len(losses),
+                'win_rate':  round(len(wins) / len(closed) * 100, 1) if closed else 0,
+                'avg_win':   round(sum(e.get('pnl', 0) or 0 for e in wins)   / len(wins),   2) if wins   else 0,
+                'avg_loss':  round(sum(e.get('pnl', 0) or 0 for e in losses) / len(losses), 2) if losses else 0,
+            },
+            'trades': entries
+        })
+    except Exception as e:
+        logger.error(f'[API/trades] Error: {e}', exc_info=True)
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/trades/<int:trade_id>', methods=['GET'])
+def api_trade_detail(trade_id):
+    """إرجاع تفاصيل صفقة واحدة مع صورها كاملة."""
+    try:
+        entries = get_journal_entries(limit=500)
+        trade   = next((e for e in entries if e.get('id') == trade_id), None)
+        if not trade:
+            return jsonify({'ok': False, 'error': 'trade not found'}), 404
+        return jsonify({'ok': True, 'trade': trade})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 # استدعاء مباشر عند بدء التشغيل
 _start_background_threads()
 

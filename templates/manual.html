@@ -1164,8 +1164,11 @@ async function uploadTradeImage(journalId, type) {
   if (!input.files[0] || !journalId) return;
   const fd = new FormData();
   fd.append('image', input.files[0]);
+  fd.append('label', type);  // V10.3: before / after
   try {
-    await fetch('/journal/image/' + journalId, { method: 'POST', body: fd });
+    const res = await fetch('/journal/image/' + journalId, { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.success) console.log('[V10.3] Image saved to DB:', type);
   } catch(e) { console.warn('Image upload failed:', e); }
 }
 

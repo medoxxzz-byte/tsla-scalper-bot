@@ -329,6 +329,17 @@
     border: 1px solid #1e3a5f;
     cursor: pointer;
   }
+  .trade-img-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .trade-img-lbl {
+    font-size: 9px;
+    color: #6b7280;
+    text-align: center;
+    font-weight: 600;
+  }
 
   /* open badge */
   .open-badge {
@@ -720,9 +731,15 @@ function entryHTML(e) {
     : `<span class="entry-pnl ${isWin ? 'green' : 'red'}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</span>`;
 
   const imagesHtml = (e.images && e.images.length)
-    ? `<div class="entry-images">${e.images.map(img =>
-        `<img src="/journal/img/${img}" onclick="openLightbox('/journal/img/${img}', event)">`
-      ).join('')}</div>`
+    ? `<div class="entry-images">${e.images.map((img, idx) => {
+        // V10.3: الصور مخزنة كـ {label, data} أو string قديمة
+        const src = (typeof img === 'object' && img.data) ? img.data : ('/journal/img/' + img);
+        const lbl = (typeof img === 'object' && img.label) ? img.label : ('img_' + (idx+1));
+        const lblMap = {before: '📸 قبل', after: '📊 بعد', chart: '📉 شارت'};
+        const lblText = lblMap[lbl] || lbl;
+        return '<div class="trade-img-wrap"><div class="trade-img-lbl">' + lblText + '</div>' +
+               '<img src="' + src + '" onclick="openLightbox(\'' + src + '\', event)"></div>';
+      }).join('')}</div>`
     : '';
 
   const notesHtml = e.notes

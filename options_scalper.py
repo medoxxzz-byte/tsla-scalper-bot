@@ -2545,9 +2545,17 @@ def _init_journal_db():
                 pre_trade    TEXT,
                 notes        TEXT,
                 image_file   TEXT,
+                images_json  TEXT,
                 extra_json   TEXT
             )
         """)
+        # ── Migration: إضافة عمود images_json إذا لم يكن موجوداً ──
+        try:
+            conn.execute("ALTER TABLE trades ADD COLUMN images_json TEXT")
+            conn.commit()
+            logger.info("[Journal] ✅ Migration: images_json column added")
+        except Exception:
+            pass  # العمود موجود مسبقاً
         conn.commit()
         conn.close()
     logger.info(f"[Journal] ✅ SQLite DB ready: {_JOURNAL_DB}")
@@ -2571,6 +2579,15 @@ def _row_to_dict(row) -> dict:
             d["pre_trade"] = json.loads(d["pre_trade"])
         except Exception:
             pass
+    # تحويل images_json إلى قائمة
+    if d.get("images_json") and isinstance(d["images_json"], str):
+        try:
+            d["images"] = json.loads(d["images_json"])
+        except Exception:
+            d["images"] = []
+    else:
+        d["images"] = []
+    d.pop("images_json", None)
     return d
 
 
@@ -2698,13 +2715,42 @@ def get_journal_entries(limit: int = 200) -> list:
         return []
 
 
-def save_journal_image(entry_id: int, image_data: bytes, ext: str = "jpg") -> str:
-    """حفظ صورة مرتبطة بصفقة وإرجاع اسم الملف."""
-    filename = f"trade_{entry_id}_{int(time.time())}.{ext}"
-    filepath = os.path.join(_IMAGES_DIR, filename)
-    with open(filepath, "wb") as f:
-        f.write(image_data)
-    return filename
+def save_journal_image(entry_id: int, image_data: bytes, ext: str = "jpg", label: str = "") -> str:
+    """
+    حفظ صورة مرتبطة بصفقة في SQLite كـ Base64 (دائمة حتى بعد Restart).
+    يُرجع data-URI للاستخدام المباشر في HTML.
+    """
+    import base64
+    mime = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
+    b64 = base64.b64encode(image_data).decode("utf-8")
+    data_uri = f"data:{mime};base64,{b64}"
+    # تحميل قائمة الصور الحالية من DB
+    try:
+        with _journal_db_lock:
+            conn = _get_db_conn()
+            row = conn.execute(
+                "SELECT images_json FROM trades WHERE id=?", (entry_id,)
+            ).fetchone()
+            conn.close()
+        images = json.loads(row["images_json"]) if row and row["images_json"] else []
+    except Exception:
+        images = []
+    # إضافة الصورة الجديدة
+    images.append({"label": label or f"img_{len(images)+1}", "data": data_uri})
+    # حفظ القائمة المحدّثة في DB
+    try:
+        with _journal_db_lock:
+            conn = _get_db_conn()
+            conn.execute(
+                "UPDATE trades SET images_json=? WHERE id=?",
+                (json.dumps(images, ensure_ascii=False), entry_id)
+            )
+            conn.commit()
+            conn.close()
+        logger.info(f"[Journal] ✅ Image saved to DB for trade #{entry_id} ({len(image_data)//1024}KB)")
+    except Exception as e:
+        logger.error(f"[Journal] save_journal_image error: {e}")
+    return data_uri
 
 
 def get_journal_stats() -> dict:

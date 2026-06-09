@@ -2493,19 +2493,12 @@ def journal_upload_image(entry_id):
     ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else 'jpg'
     if ext not in ('jpg', 'jpeg', 'png', 'webp', 'gif'):
         ext = 'jpg'
+    # label: before / after / chart (اختياري من الطلب)
+    label = request.form.get('label', '')
     image_data = file.read()
-    filename = save_journal_image(entry_id, image_data, ext)
-    # إضافة اسم الصورة لقائمة الصفقة
-    entries = get_journal_entries(200)
-    for e in entries:
-        if e.get('id') == entry_id:
-            if 'images' not in e:
-                e['images'] = []
-            e['images'].append(filename)
-            from options_scalper import _save_journal
-            _save_journal(entries)
-            break
-    return jsonify({"success": True, "filename": filename, "url": f"/journal/img/{filename}"})
+    # V10.3: حفظ الصورة في SQLite كـ Base64 — دائمة حتى بعد Restart
+    data_uri = save_journal_image(entry_id, image_data, ext, label=label)
+    return jsonify({"success": True, "data_uri": data_uri})
 
 
 @app.route('/journal/img/<filename>', methods=['GET'])

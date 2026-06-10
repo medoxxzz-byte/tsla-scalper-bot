@@ -3755,6 +3755,113 @@ def api_backup_json():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# API: تحليل AI للصفقة مع الصورة
+# ─────────────────────────────────────────────────────────────────────────────
+@app.route('/api/analyze-trade', methods=['POST'])
+def api_analyze_trade():
+    """
+    تحليل صفقة باستخدام GPT-4o Vision.
+    Body JSON:
+      - trade_id: رقم الصفقة (int)
+      أو
+      - direction: CALL/PUT
+      - entry: سعر الدخول
+      - exit_price: سعر الخروج
+      - pnl: الربح/الخسارة
+      - reason: سبب الدخول
+      - image_b64: صورة الشارت base64 (data:image/...;base64,...)
+    """
+    try:
+        import openai, os, base64, re
+
+        data       = request.get_json(force=True) or {}
+        trade_id   = data.get('trade_id')
+        direction  = data.get('direction', '')
+        entry      = data.get('entry', '')
+        exit_price = data.get('exit_price', '')
+        pnl        = data.get('pnl', '')
+        reason     = data.get('reason', '')
+        image_b64  = data.get('image_b64', '')
+
+        # إذا أرسل trade_id فقط — نجلب بياناته من DB
+        if trade_id and not image_b64:
+            entries = get_journal_entries(limit=500)
+            trade   = next((e for e in entries if e.get('id') == trade_id), None)
+            if trade:
+                direction  = direction  or trade.get('direction', '')
+                entry      = entry      or trade.get('entry', '')
+                exit_price = exit_price or trade.get('exit_price', '')
+                pnl        = pnl        or trade.get('pnl', '')
+                reason     = reason     or trade.get('reason', '')
+                imgs       = trade.get('images', [])
+                if imgs:
+                    first = imgs[0]
+                    if isinstance(first, dict):
+                        image_b64 = first.get('data', '') or first.get('image', '')
+                    else:
+                        image_b64 = first
+
+        # بناء الرسالة
+        pnl_str    = f"+${pnl}" if float(pnl or 0) > 0 else f"-${abs(float(pnl or 0))}"
+        trade_info = (
+            f"نوع الصفقة: {direction}\n"
+            f"دخول: ${entry} | خروج: ${exit_price}\n"
+            f"نتيجة: {pnl_str}\n"
+            f"سبب الدخول: {reason}"
+        )
+
+        system_prompt = (
+            "أنت محلل تداول خبير في خيارات TSLA. "
+            "مهمتك تحليل الصفقة والشارت وإعطاء تغذية راجعة سريعة ومفيدة بالعربية.\n"
+            "رد بهذا الترتيب دائماً:\n"
+            "✅ القرار: [\u0635حيح/\u062eاطئ] ولماذا\n"
+            "📊 الشارت: ماذا يظهر (RSI, MACD, OBV, الترند)\n"
+            "⚠️ الخطأ: ما الذي كان يجب تجنبه\n"
+            "🎯 الدرس: جملة واحدة واضحة\n"
+            "كن موجزاً ومباشراً."
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": [
+                {"type": "text", "text": f"بيانات الصفقة:\n{trade_info}"}
+            ]}
+        ]
+
+        # إضافة الصورة إذا وجدت
+        if image_b64:
+            # تأكد من صحة الصيغة
+            if not image_b64.startswith('data:'):
+                image_b64 = 'data:image/jpeg;base64,' + image_b64
+            messages[1]["content"].append({
+                "type": "image_url",
+                "image_url": {"url": image_b64, "detail": "high"}
+            })
+
+        api_key = os.environ.get('OPENAI_API_KEY', '')
+        client  = openai.OpenAI(api_key=api_key)
+
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            max_tokens=600,
+            temperature=0.3
+        )
+
+        analysis = resp.choices[0].message.content.strip()
+
+        return jsonify({
+            'ok':       True,
+            'trade_id': trade_id,
+            'analysis': analysis
+        })
+
+    except Exception as e:
+        logger.error(f'[API/analyze-trade] Error: {e}', exc_info=True)
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 # استدعاء مباشر عند بدء التشغيل
 _start_background_threads()
 

@@ -334,6 +334,38 @@
     flex-direction: column;
     gap: 3px;
   }
+  /* ── AI Analysis ── */
+  .ai-analysis-wrap {
+    margin-top: 10px;
+  }
+  .ai-analyze-btn {
+    width: 100%;
+    padding: 8px 12px;
+    background: linear-gradient(135deg, #1a3a6b, #0d47a1);
+    color: #64b5f6;
+    border: 1px solid #1e3a8a;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    transition: background 0.2s;
+  }
+  .ai-analyze-btn:hover { background: linear-gradient(135deg, #1e4080, #1565c0); }
+  .ai-analyze-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .ai-result {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: #0d1f3c;
+    border: 1px solid #1e3a5f;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  .ai-text { color: #e2e8f0; white-space: pre-wrap; }
+  .ai-loading { color: #64b5f6; text-align: center; }
+  .ai-error { color: #f87171; }
+
   .trade-img-lbl {
     font-size: 9px;
     color: #6b7280;
@@ -774,7 +806,62 @@ function entryHTML(e) {
     ${checklistHtml}
     ${notesHtml}
     ${imagesHtml}
+    <div class="ai-analysis-wrap" id="ai-wrap-${e.id || idx}">
+      <button class="ai-analyze-btn" onclick="analyzeTradeAI(${JSON.stringify(e).replace(/'/g, "&#39;")}, 'ai-wrap-${e.id || idx}')">
+        🤖 تحليل AI
+      </button>
+      <div class="ai-result" id="ai-result-${e.id || idx}" style="display:none"></div>
+    </div>
   </div>`;
+}
+
+// ── تحليل AI ──
+async function analyzeTradeAI(trade, wrapId) {
+  const btn = document.querySelector('#' + wrapId + ' .ai-analyze-btn');
+  const resultDiv = document.getElementById('ai-result-' + (trade.id || wrapId.replace('ai-wrap-','')));
+  btn.disabled = true;
+  btn.textContent = '⏳ جاري التحليل...';
+  resultDiv.style.display = 'block';
+  resultDiv.innerHTML = '<div class="ai-loading">⏳ يحلل GPT-4o الصفقة والشارت...</div>';
+
+  try {
+    // استخراج الصورة من بيانات الصفقة
+    let image_b64 = '';
+    if (trade.images && trade.images.length > 0) {
+      const img = trade.images[0];
+      image_b64 = (typeof img === 'object' && img.data) ? img.data : '';
+    }
+
+    const payload = {
+      trade_id:   trade.id,
+      direction:  trade.direction,
+      entry:      trade.entry_price,
+      exit_price: trade.exit_price,
+      pnl:        trade.pnl,
+      reason:     trade.entry_reason || trade.reason || '',
+      image_b64:  image_b64
+    };
+
+    const resp = await fetch('/api/analyze-trade', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await resp.json();
+
+    if (data.ok) {
+      resultDiv.innerHTML = '<div class="ai-text">' + data.analysis.replace(/\n/g, '<br>') + '</div>';
+      btn.textContent = '🤖 تحليل AI ✓';
+    } else {
+      resultDiv.innerHTML = '<div class="ai-error">❌ ' + (data.error || 'خطأ غير متوقع') + '</div>';
+      btn.textContent = '🤖 تحليل AI';
+      btn.disabled = false;
+    }
+  } catch(err) {
+    resultDiv.innerHTML = '<div class="ai-error">❌ خطأ في الاتصال: ' + err.message + '</div>';
+    btn.textContent = '🤖 تحليل AI';
+    btn.disabled = false;
+  }
 }
 
 function exitLabel(r) {

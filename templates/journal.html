@@ -837,7 +837,7 @@ async function analyzeTradeAI(trade, wrapId) {
       direction:  trade.direction,
       entry:      trade.entry_price,
       exit_price: trade.exit_price,
-      pnl:        trade.pnl,
+      pnl:        trade.pnl_dollar || trade.pnl || 0,
       reason:     trade.entry_reason || trade.reason || '',
       image_b64:  image_b64
     };

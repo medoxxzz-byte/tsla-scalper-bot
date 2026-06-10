@@ -3787,13 +3787,13 @@ def api_analyze_trade():
         # إذا أرسل trade_id فقط — نجلب بياناته من DB
         if trade_id and not image_b64:
             entries = get_journal_entries(limit=500)
-            trade   = next((e for e in entries if e.get('id') == trade_id), None)
+            trade   = next((e for e in entries if e.get('id') == int(trade_id)), None)
             if trade:
                 direction  = direction  or trade.get('direction', '')
-                entry      = entry      or trade.get('entry', '')
+                entry      = entry      or trade.get('entry_price', '') or trade.get('entry', '')
                 exit_price = exit_price or trade.get('exit_price', '')
-                pnl        = pnl        or trade.get('pnl', '')
-                reason     = reason     or trade.get('reason', '')
+                pnl        = pnl        or trade.get('pnl_dollar', '') or trade.get('pnl', '')
+                reason     = reason     or trade.get('entry_reason', '') or trade.get('reason', '')
                 imgs       = trade.get('images', [])
                 if imgs:
                     first = imgs[0]
@@ -3803,7 +3803,11 @@ def api_analyze_trade():
                         image_b64 = first
 
         # بناء الرسالة
-        pnl_str    = f"+${pnl}" if float(pnl or 0) > 0 else f"-${abs(float(pnl or 0))}"
+        try:
+            pnl_val = float(pnl or 0)
+        except (ValueError, TypeError):
+            pnl_val = 0
+        pnl_str = f"+${pnl_val:.0f}" if pnl_val > 0 else f"-${abs(pnl_val):.0f}"
         trade_info = (
             f"نوع الصفقة: {direction}\n"
             f"دخول: ${entry} | خروج: ${exit_price}\n"

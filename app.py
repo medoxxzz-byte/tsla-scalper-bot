@@ -2963,6 +2963,49 @@ def mosquito_status():
         return jsonify({"ok": False, "error": str(e)})
 
 # ──────────────────────────────────────────────────────────────────────────────
+# V11.0: ORB Smart Assistant — مساعد ORB الذكي (تنبيه فقط — لا تنفيذ تلقائي)
+# ──────────────────────────────────────────────────────────────────────────────
+try:
+    from orb_assistant import start_orb_assistant, stop_orb_assistant, get_orb_status
+    _ORB_AVAILABLE = True
+    logger.info("ORB Smart Assistant module loaded ✅")
+except ImportError as e:
+    _ORB_AVAILABLE = False
+    logger.warning(f"ORB Smart Assistant not available: {e}")
+
+@app.route('/orb/status', methods=['GET'])
+def orb_status():
+    """حالة مساعد ORB الذكي."""
+    try:
+        if not _ORB_AVAILABLE:
+            return jsonify({"ok": False, "error": "ORB module not available"}), 503
+        return jsonify(get_orb_status())
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+@app.route('/orb/start', methods=['POST'])
+def orb_start():
+    """تشغيل مساعد ORB."""
+    try:
+        if not _ORB_AVAILABLE:
+            return jsonify({"ok": False, "error": "ORB module not available"}), 503
+        result = start_orb_assistant()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+@app.route('/orb/stop', methods=['POST'])
+def orb_stop():
+    """إيقاف مساعد ORB."""
+    try:
+        if not _ORB_AVAILABLE:
+            return jsonify({"ok": False, "error": "ORB module not available"}), 503
+        result = stop_orb_assistant()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Startup
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -3091,6 +3134,13 @@ def _start_background_threads():
     # V10.3: Market Briefing — رسالة تلقرام كل 15 دقيقة
     threading.Thread(target=_market_briefing_worker, daemon=True).start()
     logger.info("Market Briefing worker started ✅ 📊")
+    # V11.0: ORB Smart Assistant — مساعد ORB الذكي (تنبيه فقط)
+    if _ORB_AVAILABLE:
+        try:
+            result = start_orb_assistant()
+            logger.info(f"V11.0 ORB Smart Assistant started ✅ 🧠 result={result}")
+        except Exception as _orb_err:
+            logger.error(f"ORB Smart Assistant FAILED to start: {_orb_err}", exc_info=True)
 # # ── Auto-restart strategies on every request (handles Render sleep/wake) ──────
 @app.before_request
 def _ensure_strategies_alive():
@@ -3138,6 +3188,15 @@ def _ensure_strategies_alive():
             logger.info("[AutoRestart] Strategy D (Mosquito) restarted ✅")
     except Exception as _e:
         logger.error(f"[AutoRestart] error: {_e}", exc_info=True)
+    # ORB Smart Assistant auto-restart
+    try:
+        if _ORB_AVAILABLE:
+            orb_st = get_orb_status()
+            if not orb_st.get("running"):
+                start_orb_assistant()
+                logger.info("[AutoRestart] ORB Smart Assistant restarted ✅ 🧠")
+    except Exception as _orb_e:
+        logger.error(f"[AutoRestart] ORB error: {_orb_e}")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # V15.0: Dashboard APIs — Volume Levels, Reversal Gauges, Reversal Zones

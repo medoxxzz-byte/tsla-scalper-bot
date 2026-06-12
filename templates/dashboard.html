@@ -808,6 +808,50 @@
     </div>
   </div>
 
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- 6. 🧠 مساعد ORB الذكي                                          -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div class="section-title">🧠 مساعد ORB الذكي (تنبيه فقط)</div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <div class="card-icon" style="background:#ce93d820; color:var(--purple)">🧠</div>
+        ORB Smart Assistant
+      </div>
+      <div id="orbBadge" class="badge badge-gray">جاري التحميل...</div>
+    </div>
+    <div class="card-body">
+      <div class="data-row">
+        <span class="data-key">🟢 الحالة</span>
+        <span class="data-val" id="orbStatus">—</span>
+      </div>
+      <div class="data-row">
+        <span class="data-key">📈 Opening Range</span>
+        <span class="data-val blue" id="orbRange">—</span>
+      </div>
+      <div class="data-row">
+        <span class="data-key">💰 سعر TSLA</span>
+        <span class="data-val" id="orbPrice">—</span>
+      </div>
+      <div class="data-row">
+        <span class="data-key">📊 VWAP</span>
+        <span class="data-val" id="orbVwap">—</span>
+      </div>
+      <div class="data-row">
+        <span class="data-key">🚨 تنبيهات اليوم</span>
+        <span class="data-val" id="orbAlerts">0</span>
+      </div>
+      <div class="data-row">
+        <span class="data-key">🔍 آخر فحص</span>
+        <span class="data-val" id="orbLastCheck">—</span>
+      </div>
+      <div style="margin-top:12px; display:flex; gap:8px;">
+        <button onclick="orbControl('start')" style="flex:1; padding:8px; border:1px solid var(--green); background:var(--green-dim); color:var(--green); border-radius:8px; font-weight:700; cursor:pointer; font-size:12px;">▶️ تشغيل</button>
+        <button onclick="orbControl('stop')" style="flex:1; padding:8px; border:1px solid var(--red); background:var(--red-dim); color:var(--red); border-radius:8px; font-weight:700; cursor:pointer; font-size:12px;">⏹️ إيقاف</button>
+      </div>
+    </div>
+  </div>
+
   <div class="last-updated">آخر تحديث شامل: <span id="globalLastUpdate">—</span></div>
 
 </div><!-- /container -->
@@ -1134,13 +1178,53 @@
     setText(prefix + 'Check', data.last_check || '—');
   }
 
-  // ── Main Fetch ───────────────────────────────────────────────────
+  // ── ORB Smart Assistant ─────────────────────────────────────────────
+  function renderORB(data) {
+    if (!data) return;
+    const badge = el('orbBadge');
+    if (badge) {
+      if (data.running) {
+        badge.textContent = '🚀 يعمل';
+        badge.className = 'badge badge-green';
+      } else {
+        badge.textContent = '⏸️ متوقف';
+        badge.className = 'badge badge-gray';
+      }
+    }
+    setText('orbStatus', data.status_msg || '—');
+    if (data.or_high && data.or_low) {
+      setText('orbRange', '$' + data.or_low.toFixed(2) + ' — $' + data.or_high.toFixed(2));
+    } else {
+      setText('orbRange', 'لم يُبنَ بعد');
+    }
+    setText('orbPrice', data.price ? fmtPrice(data.price) : '—');
+    setText('orbVwap', data.vwap ? fmtPrice(data.vwap) : '—');
+    const alertCount = (data.call_alerts || 0) + (data.put_alerts || 0);
+    setText('orbAlerts', alertCount + ' (CALL: ' + (data.call_alerts||0) + ' | PUT: ' + (data.put_alerts||0) + ')');
+    setText('orbLastCheck', data.last_check || '—');
+  }
+
+  async function orbControl(action) {
+    try {
+      const r = await fetch('/orb/' + action, { method: 'POST' });
+      const d = await r.json();
+      if (d.ok) {
+        fetchAll();
+      } else {
+        alert('خطأ: ' + (d.error || d.msg || 'unknown'));
+      }
+    } catch(e) {
+      alert('خطأ اتصال: ' + e.message);
+    }
+  }
+
+  // ── Main Fetch ───────────────────────────────────────────────────────
   async function fetchAll() {
     const now = new Date().toLocaleTimeString('ar-SA');
     setText('globalLastUpdate', now);
 
     // جلب كل البيانات بالتوازي
-    const [volData, gaugeData, zonesData, manualData, pyrData, stbData, stcData, stdData] = await Promise.all([
+    const [volData, gaugeData, zonesData, manualData, pyrData, stbData, stcData, stdData, orbData] = await Promise.all([
       fetchJSON('/api/volume-levels'),
       fetchJSON('/api/reversal-gauges'),
       fetchJSON('/api/reversal-zones'),
@@ -1149,6 +1233,7 @@
       fetchJSON('/strategy-b/status'),
       fetchJSON('/strategy-c/status'),
       fetchJSON('/mosquito/status'),
+      fetchJSON('/orb/status'),
     ]);
 
     renderVolTable(volData);
@@ -1159,6 +1244,7 @@
     renderStrategy('stb', stbData);
     renderStrategy('stc', stcData);
     renderStrategy('std', stdData);
+    renderORB(orbData);
 
     // تحديث المحفظة من V8 status
     try {

@@ -4149,6 +4149,141 @@ def tm_reset_session(sid):
     _tm_sessions[sid] = session
     return jsonify({"ok": True, "session": session})
 
+# ═══════════════════════════════════════════════════════════════════
+# TM Simulator V12.1 — Options Chain + Boost
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route('/tm/options', methods=['GET'])
+def tm_options():
+    """جلب عقود ATM و ITM لـ TSLA بناءً على السعر الحالي."""
+    try:
+        from options_scalper import get_options_chain, get_option_quote
+        import datetime as _dtmod
+
+        price = get_tsla_price_alpaca_snapshot() or get_tsla_price_alpaca()
+        if not price or price <= 0:
+            return jsonify({"ok": False, "error": "لا يمكن جلب سعر TSLA"})
+
+        price = float(price)
+        option_type = request.args.get("type", "call").lower()
+
+        today = _dtmod.date.today()
+        expiry = today.strftime("%Y-%m-%d")
+
+        strike_min_atm = round(price - 3, 0)
+        strike_max_atm = round(price + 3, 0)
+        atm_contracts = get_options_chain(expiry, option_type, strike_min_atm, strike_max_atm)
+
+        if not atm_contracts:
+            for i in range(1, 8):
+                expiry = (today + _dtmod.timedelta(days=i)).strftime("%Y-%m-%d")
+                atm_contracts = get_options_chain(expiry, option_type, strike_min_atm, strike_max_atm)
+                if atm_contracts:
+                    break
+
+        if option_type == "call":
+            strike_min_itm = round(price - 8, 0)
+            strike_max_itm = round(price - 3, 0)
+        else:
+            strike_min_itm = round(price + 3, 0)
+            strike_max_itm = round(price + 8, 0)
+        itm_contracts = get_options_chain(expiry, option_type, strike_min_itm, strike_max_itm)
+
+        atm_result = None
+        if atm_contracts:
+            best = min(atm_contracts, key=lambda c: abs(float(c.get("strike_price", 0)) - price))
+            symbol = best.get("symbol", "")
+            quote = get_option_quote(symbol)
+            atm_result = {
+                "symbol": symbol,
+                "strike": float(best.get("strike_price", 0)),
+                "expiry": expiry,
+                "bid": quote["bid"] if quote else 0,
+                "ask": quote["ask"] if quote else 0,
+                "mid": quote["mid"] if quote else 0,
+                "delta": 0.50,
+                "type": "ATM"
+            }
+
+        itm_result = None
+        if itm_contracts:
+            scored = []
+            for c in itm_contracts:
+                strike = float(c.get("strike_price", 0))
+                if option_type == "call":
+                    itm_amount = price - strike
+                else:
+                    itm_amount = strike - price
+                if itm_amount >= 3:
+                    approx_delta = min(0.90, 0.50 + itm_amount * 0.05)
+                    scored.append((c, itm_amount, approx_delta))
+
+            if scored:
+                scored.sort(key=lambda x: abs(x[2] - 0.70))
+                best_itm = scored[0]
+                symbol = best_itm[0].get("symbol", "")
+                quote = get_option_quote(symbol)
+                itm_result = {
+                    "symbol": symbol,
+                    "strike": float(best_itm[0].get("strike_price", 0)),
+                    "expiry": expiry,
+                    "bid": quote["bid"] if quote else 0,
+                    "ask": quote["ask"] if quote else 0,
+                    "mid": quote["mid"] if quote else 0,
+                    "delta": round(best_itm[2], 2),
+                    "type": "ITM",
+                    "itm_amount": round(best_itm[1], 2)
+                }
+
+        return jsonify({
+            "ok": True,
+            "price": round(price, 2),
+            "expiry": expiry,
+            "option_type": option_type,
+            "atm": atm_result,
+            "itm": itm_result
+        })
+    except Exception as e:
+        logger.error(f"[TM Options] Error: {e}", exc_info=True)
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route('/tm/trade/boost', methods=['POST'])
+def tm_boost_trade():
+    """تعزيز الصفقة المفتوحة — مرة واحدة فقط + فقط إذا رابح +$50."""
+    data = request.get_json(force=True, silent=True) or {}
+    sid = data.get("session_id")
+    session = _tm_sessions.get(sid)
+    if not session:
+        return jsonify({"ok": False, "error": "session not found"}), 404
+
+    trade = session.get("open_trade")
+    if not trade:
+        return jsonify({"ok": False, "error": "لا توجد صفقة مفتوحة"})
+
+    if trade.get("boosted"):
+        return jsonify({"ok": False, "error": "⚠️ التعزيز مرة واحدة فقط في الصفقة"})
+
+    current_pnl = float(data.get("current_pnl", 0))
+    if current_pnl < 50:
+        return jsonify({"ok": False, "error": f"⚠️ التعزيز فقط عند ربح +$50 أو أكثر (الحالي: ${current_pnl:.0f})"})
+
+    trade["contracts"] += 1
+    trade["boosted"] = True
+    trade["boost_price"] = float(data.get("boost_price", trade["entry_price"]))
+    trade["boost_at"] = _dt.utcnow().isoformat()
+
+    old_qty = trade["contracts"] - 1
+    new_avg = ((trade["entry_price"] * old_qty) + trade["boost_price"]) / trade["contracts"]
+    trade["avg_entry"] = round(new_avg, 2)
+
+    return jsonify({
+        "ok": True,
+        "message": f"✅ تعزيز ناجح! العقود: {trade['contracts']} | متوسط: ${new_avg:.2f}",
+        "trade": trade
+    })
+
+
 # استدعاء مباشر عند بدء التشغيل
 _start_background_threads()
 

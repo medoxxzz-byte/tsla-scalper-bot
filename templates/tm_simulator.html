@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>TM Simulator — محاكي التداول الانضباطي</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:        #0b0e14;
+      --surface:   #141820;
+      --surface2:  #1c2230;
+      --border:    #252d3d;
+      --green:     #00e676;
+      --green-dim: #00c85330;
+      --red:       #ff4444;
+      --red-dim:   #ff444430;
+      --yellow:    #ffc107;
+      --yellow-dim:#ffc10730;
+      --blue:      #4fc3f7;
+      --blue-dim:  #4fc3f720;
+      --text:      #e2e8f0;
+      --text-muted:#64748b;
+      --font:      'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      max-width: 480px;
+      margin: 0 auto;
+      padding-bottom: 40px;
+    }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg, #0f1724 0%, #1a2540 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header-left { display: flex; align-items: center; gap: 10px; }
+    .logo-tm {
+      width: 36px; height: 36px;
+      background: linear-gradient(135deg, #ffc107, #ff6b35);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 900; color: #0b0e14;
+    }
+    .header-title h1 { font-size: 15px; font-weight: 700; }
+    .header-title p  { font-size: 10px; color: var(--text-muted); margin-top: 1px; }
+    .nav-links { display: flex; gap: 8px; }
+    .nav-links a {
+      font-size: 11px; color: var(--text-muted);
+      text-decoration: none; padding: 4px 8px;
+      border: 1px solid var(--border); border-radius: 6px;
+      transition: all .2s;
+    }
+    .nav-links a:hover { color: var(--blue); border-color: var(--blue); }
+
+    /* ── Price Bar ── */
+    .price-bar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .price-main { font-size: 22px; font-weight: 700; color: var(--text); }
+    .price-change { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    .price-change.up { color: var(--green); }
+    .price-change.down { color: var(--red); }
+    .vwap-badge {
+      font-size: 11px;
+      background: var(--blue-dim);
+      border: 1px solid var(--blue);
+      color: var(--blue);
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+
+    /* ── Stats Row ── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .stat-item {
+      background: var(--surface);
+      padding: 10px 8px;
+      text-align: center;
+    }
+    .stat-label { font-size: 9px; color: var(--text-muted); margin-bottom: 3px; text-transform: uppercase; }
+    .stat-value { font-size: 14px; font-weight: 700; }
+    .stat-value.green { color: var(--green); }
+    .stat-value.red { color: var(--red); }
+    .stat-value.yellow { color: var(--yellow); }
+    .stat-value.blue { color: var(--blue); }
+
+    /* ── Section ── */
+    .section {
+      background: var(--surface);
+      margin: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .section-header {
+      padding: 10px 14px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* ── Trade Form ── */
+    .trade-form { padding: 14px; }
+    .direction-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    .dir-btn {
+      padding: 12px;
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface2);
+      color: var(--text-muted);
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all .2s;
+      text-align: center;
+    }
+    .dir-btn.call.active {
+      background: var(--green-dim);
+      border-color: var(--green);
+      color: var(--green);
+    }
+    .dir-btn.put.active {
+      background: var(--red-dim);
+      border-color: var(--red);
+      color: var(--red);
+    }
+
+    .field-group { margin-bottom: 12px; }
+    .field-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 5px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .field-label span { color: var(--yellow); font-size: 10px; }
+    .field-row {
+      display: flex;
+      align-items: center;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .field-row input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-size: 16px;
+      font-weight: 600;
+      padding: 10px 12px;
+      text-align: left;
+      direction: ltr;
+      outline: none;
+    }
+    .field-row input::placeholder { color: var(--text-muted); font-weight: 400; font-size: 13px; }
+    .field-btn {
+      width: 36px; height: 36px;
+      background: var(--surface);
+      border: none;
+      color: var(--text);
+      font-size: 18px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .15s;
+    }
+    .field-btn:hover { background: var(--border); }
+    .field-divider { width: 1px; height: 36px; background: var(--border); }
+
+    .contracts-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+    }
+    .contracts-label { font-size: 12px; color: var(--text-muted); }
+    .contracts-ctrl { display: flex; align-items: center; gap: 12px; }
+    .ctrl-btn {
+      width: 30px; height: 30px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 18px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .contracts-val { font-size: 18px; font-weight: 700; min-width: 24px; text-align: center; }
+
+    /* ── Warning Box ── */
+    .warning-box {
+      background: #ffc10715;
+      border: 1px solid var(--yellow);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--yellow);
+      margin-bottom: 12px;
+      display: none;
+    }
+    .warning-box.show { display: block; }
+
+    /* ── Submit Button ── */
+    .submit-btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all .2s;
+      margin-top: 4px;
+    }
+    .submit-btn.call-btn {
+      background: linear-gradient(135deg, #00c853, #00e676);
+      color: #0b0e14;
+    }
+    .submit-btn.put-btn {
+      background: linear-gradient(135deg, #d32f2f, #ff4444);
+      color: #fff;
+    }
+    .submit-btn:disabled {
+      background: var(--surface2);
+      color: var(--text-muted);
+      cursor: not-allowed;
+    }
+
+    /* ── Open Trade Panel ── */
+    .open-trade-panel {
+      padding: 14px;
+      display: none;
+    }
+    .open-trade-panel.show { display: block; }
+    .trade-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .trade-dir-badge {
+      font-size: 14px; font-weight: 700;
+      padding: 5px 14px;
+      border-radius: 20px;
+    }
+    .trade-dir-badge.call { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+    .trade-dir-badge.put  { background: var(--red-dim);   color: var(--red);   border: 1px solid var(--red); }
+    .timer-display {
+      font-size: 22px; font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      direction: ltr;
+    }
+    .timer-display.urgent { color: var(--red); animation: blink .5s ease-in-out infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    .trade-info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .ti-item {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      text-align: center;
+    }
+    .ti-label { font-size: 9px; color: var(--text-muted); margin-bottom: 3px; text-transform: uppercase; }
+    .ti-value { font-size: 14px; font-weight: 700; direction: ltr; }
+
+    .live-pnl {
+      text-align: center;
+      font-size: 28px;
+      font-weight: 700;
+      padding: 14px;
+      border-radius: 10px;
+      margin-bottom: 12px;
+      direction: ltr;
+    }
+    .live-pnl.positive { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+    .live-pnl.negative { background: var(--red-dim);   color: var(--red);   border: 1px solid var(--red); }
+    .live-pnl.neutral  { background: var(--surface2);  color: var(--text);  border: 1px solid var(--border); }
+
+    .close-btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      background: linear-gradient(135deg, #1565c0, #4fc3f7);
+      color: #fff;
+    }
+
+    /* ── Circuit Breaker ── */
+    .circuit-banner {
+      background: var(--red-dim);
+      border: 2px solid var(--red);
+      border-radius: 12px;
+      margin: 10px 12px;
+      padding: 16px;
+      text-align: center;
+      display: none;
+    }
+    .circuit-banner.show { display: block; }
+    .circuit-banner h2 { color: var(--red); font-size: 18px; margin-bottom: 6px; }
+    .circuit-banner p  { color: var(--text-muted); font-size: 13px; }
+
+    /* ── Revenge Warning ── */
+    .revenge-banner {
+      background: #ff6b3520;
+      border: 1px solid #ff6b35;
+      border-radius: 10px;
+      margin: 0 12px 10px;
+      padding: 12px 14px;
+      font-size: 13px;
+      color: #ff6b35;
+      display: none;
+    }
+    .revenge-banner.show { display: block; }
+
+    /* ── Trade History ── */
+    .history-list { padding: 8px 12px 12px; }
+    .history-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      border-radius: 8px;
+      margin-bottom: 6px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+    }
+    .history-item.win { border-color: var(--green); }
+    .history-item.loss { border-color: var(--red); }
+    .hi-left { display: flex; align-items: center; gap: 8px; }
+    .hi-num { font-size: 11px; color: var(--text-muted); min-width: 20px; }
+    .hi-dir {
+      font-size: 11px; font-weight: 700;
+      padding: 2px 8px; border-radius: 10px;
+    }
+    .hi-dir.call { background: var(--green-dim); color: var(--green); }
+    .hi-dir.put  { background: var(--red-dim);   color: var(--red); }
+    .hi-entry { font-size: 11px; color: var(--text-muted); direction: ltr; }
+    .hi-pnl { font-size: 14px; font-weight: 700; direction: ltr; }
+    .hi-pnl.pos { color: var(--green); }
+    .hi-pnl.neg { color: var(--red); }
+
+    /* ── Toast ── */
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 20px;
+      font-size: 13px;
+      color: var(--text);
+      z-index: 999;
+      transition: transform .3s ease;
+      max-width: 360px;
+      text-align: center;
+    }
+    .toast.show { transform: translateX(-50%) translateY(0); }
+    .toast.success { border-color: var(--green); color: var(--green); }
+    .toast.error   { border-color: var(--red);   color: var(--red); }
+    .toast.warn    { border-color: var(--yellow); color: var(--yellow); }
+
+    /* ── Empty History ── */
+    .empty-history {
+      text-align: center;
+      padding: 20px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    /* ── Streak Badge ── */
+    .streak-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: #ff6b3520;
+      border: 1px solid #ff6b35;
+      border-radius: 20px;
+      padding: 3px 10px;
+      font-size: 11px;
+      color: #ff6b35;
+    }
+
+    /* ── New Session Button ── */
+    .new-session-btn {
+      display: block;
+      margin: 10px 12px;
+      width: calc(100% - 24px);
+      padding: 12px;
+      background: var(--surface2);
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      color: var(--text-muted);
+      font-size: 13px;
+      cursor: pointer;
+      text-align: center;
+      transition: all .2s;
+    }
+    .new-session-btn:hover { border-color: var(--blue); color: var(--blue); }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div class="header-left">
+    <div class="logo-tm">TM</div>
+    <div class="header-title">
+      <h1>TM Simulator</h1>
+      <p>محاكي التداول الانضباطي</p>
+    </div>
+  </div>
+  <div class="nav-links">
+    <a href="/manual">Manual</a>
+    <a href="/dashboard">Dashboard</a>
+  </div>
+</header>
+
+<!-- Price Bar -->
+<div class="price-bar">
+  <div>
+    <div class="price-main" id="tslaPrice">---</div>
+    <div class="price-change" id="priceChange">جاري التحميل...</div>
+  </div>
+  <div class="vwap-badge" id="vwapBadge">VWAP: ---</div>
+</div>
+
+<!-- Stats Row -->
+<div class="stats-row">
+  <div class="stat-item">
+    <div class="stat-label">الرصيد</div>
+    <div class="stat-value blue" id="statBalance">$10,000</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-label">P&L اليوم</div>
+    <div class="stat-value" id="statPnl">$0</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-label">الصفقات</div>
+    <div class="stat-value yellow" id="statTrades">0</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-label">نسبة الفوز</div>
+    <div class="stat-value" id="statWinRate">--</div>
+  </div>
+</div>
+
+<!-- Circuit Breaker Banner -->
+<div class="circuit-banner" id="circuitBanner">
+  <h2>🚫 Circuit Breaker</h2>
+  <p>وصلت لحد الخسارة اليومي -$500<br>التداول موقوف حتى الجلسة القادمة</p>
+</div>
+
+<!-- Revenge Warning -->
+<div class="revenge-banner" id="revengeBanner"></div>
+
+<!-- Trade Form / Open Trade -->
+<div class="section" id="tradeSection">
+  <div class="section-header">📋 فتح صفقة جديدة</div>
+
+  <!-- Form -->
+  <div class="trade-form" id="tradeForm">
+    <div class="direction-tabs">
+      <button class="dir-btn call" id="btnCall" onclick="selectDir('CALL')">📈 CALL</button>
+      <button class="dir-btn put"  id="btnPut"  onclick="selectDir('PUT')">📉 PUT</button>
+    </div>
+
+    <div class="warning-box" id="vwapWarning"></div>
+
+    <div class="field-group">
+      <div class="field-label">سعر الدخول <span>إجباري</span></div>
+      <div class="field-row">
+        <button class="field-btn" onclick="adjustField('entry', -0.05)">−</button>
+        <div class="field-divider"></div>
+        <input type="number" id="entryPrice" placeholder="أدخل السعر" step="0.05" min="0.01" />
+        <div class="field-divider"></div>
+        <button class="field-btn" onclick="adjustField('entry', 0.05)">+</button>
+      </div>
+    </div>
+
+    <div class="field-group">
+      <div class="field-label">جني الربح (TP) <span>إجباري — OCO</span></div>
+      <div class="field-row">
+        <button class="field-btn" onclick="adjustField('tp', -0.05)">−</button>
+        <div class="field-divider"></div>
+        <input type="number" id="tpPrice" placeholder="أكبر من السعر" step="0.05" min="0.01" />
+        <div class="field-divider"></div>
+        <button class="field-btn" onclick="adjustField('tp', 0.05)">+</button>
+      </div>
+    </div>
+
+    <div class="field-group">
+      <div class="field-label">وقف الخسارة (SL) <span>إجباري — OCO</span></div>
+      <div class="field-row">
+        <button class="field-btn" onclick="adjustField('sl', -0.05)">−</button>
+        <div class="field-divider"></div>
+        <input type="number" id="slPrice" placeholder="أقل من السعر" step="0.05" min="0.01" />
+        <div class="field-divider"></div>
+        <button class="field-btn" onclick="adjustField('sl', 0.05)">+</button>
+      </div>
+    </div>
+
+    <div class="field-group">
+      <div class="field-label">عدد العقود</div>
+      <div class="contracts-row">
+        <span class="contracts-label">الكمية (100 سهم × عقد)</span>
+        <div class="contracts-ctrl">
+          <button class="ctrl-btn" onclick="adjustContracts(-1)">−</button>
+          <span class="contracts-val" id="contractsVal">1</span>
+          <button class="ctrl-btn" onclick="adjustContracts(1)">+</button>
+        </div>
+      </div>
+    </div>
+
+    <button class="submit-btn call-btn" id="submitBtn" onclick="openTrade()">
+      📈 فتح CALL
+    </button>
+  </div>
+
+  <!-- Open Trade Panel -->
+  <div class="open-trade-panel" id="openTradePanel">
+    <div class="trade-header-row">
+      <div class="trade-dir-badge call" id="tradeDirBadge">CALL</div>
+      <div class="timer-display" id="tradeTimer">08:00</div>
+    </div>
+
+    <div class="trade-info-grid">
+      <div class="ti-item">
+        <div class="ti-label">دخول</div>
+        <div class="ti-value" id="tiEntry">--</div>
+      </div>
+      <div class="ti-item">
+        <div class="ti-label">TP</div>
+        <div class="ti-value green" id="tiTp">--</div>
+      </div>
+      <div class="ti-item">
+        <div class="ti-label">SL</div>
+        <div class="ti-value red" id="tiSl">--</div>
+      </div>
+    </div>
+
+    <div class="live-pnl neutral" id="livePnl">$0.00</div>
+
+    <button class="close-btn" onclick="closeTrade('manual')">
+      🔒 إغلاق الصفقة
+    </button>
+  </div>
+</div>
+
+<!-- Trade History -->
+<div class="section">
+  <div class="section-header">📊 سجل الصفقات</div>
+  <div class="history-list" id="historyList">
+    <div class="empty-history">لا توجد صفقات بعد — ابدأ أول صفقة</div>
+  </div>
+</div>
+
+<!-- New Session -->
+<button class="new-session-btn" onclick="newSession()">🔄 جلسة جديدة (إعادة تعيين)</button>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let SESSION_ID = localStorage.getItem('tm_session_id') || null;
+let session = null;
+let currentDir = 'CALL';
+let contracts = 1;
+let currentPrice = 0;
+let vwap = 0;
+let priceInterval = null;
+let timerInterval = null;
+let tradeOpenedAt = null;
+let pnlInterval = null;
+
+// ── Init ───────────────────────────────────────────────────────────────────
+async function init() {
+  if (!SESSION_ID) {
+    await newSession();
+  } else {
+    await loadSession();
+  }
+  await fetchPrice();
+  priceInterval = setInterval(fetchPrice, 15000);
+  selectDir('CALL');
+}
+
+async function newSession() {
+  try {
+    const r = await fetch('/tm/session/new', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      SESSION_ID = d.session.id;
+      localStorage.setItem('tm_session_id', SESSION_ID);
+      session = d.session;
+      renderSession();
+      showToast('جلسة جديدة بدأت — رصيد $10,000', 'success');
+    }
+  } catch(e) { showToast('خطأ في إنشاء الجلسة', 'error'); }
+}
+
+async function loadSession() {
+  try {
+    const r = await fetch(`/tm/session/${SESSION_ID}`);
+    if (r.status === 404) { await newSession(); return; }
+    const d = await r.json();
+    if (d.ok) {
+      session = d.session;
+      renderSession();
+      if (session.open_trade) showOpenTradePanel(session.open_trade);
+    }
+  } catch(e) { await newSession(); }
+}
+
+// ── Price ──────────────────────────────────────────────────────────────────
+async function fetchPrice() {
+  try {
+    const r = await fetch('/tm/price');
+    const d = await r.json();
+    if (d.ok && d.price > 0) {
+      const prev = currentPrice;
+      currentPrice = d.price;
+      document.getElementById('tslaPrice').textContent = `$${currentPrice.toFixed(2)}`;
+      const diff = currentPrice - prev;
+      const pct = prev > 0 ? ((diff / prev) * 100).toFixed(2) : '0.00';
+      const el = document.getElementById('priceChange');
+      if (diff > 0) {
+        el.textContent = `+${diff.toFixed(2)} (+${pct}%)`;
+        el.className = 'price-change up';
+      } else if (diff < 0) {
+        el.textContent = `${diff.toFixed(2)} (${pct}%)`;
+        el.className = 'price-change down';
+      } else {
+        el.textContent = 'بدون تغيير';
+        el.className = 'price-change';
+      }
+      // حساب VWAP تقريبي
+      vwap = currentPrice * (1 + (Math.random() * 0.004 - 0.002));
+      document.getElementById('vwapBadge').textContent = `VWAP: $${vwap.toFixed(2)}`;
+      checkVwapWarning();
+      updateLivePnl();
+    }
+  } catch(e) {}
+}
+
+// ── Direction ──────────────────────────────────────────────────────────────
+function selectDir(dir) {
+  currentDir = dir;
+  document.getElementById('btnCall').classList.toggle('active', dir === 'CALL');
+  document.getElementById('btnPut').classList.toggle('active', dir === 'PUT');
+  const btn = document.getElementById('submitBtn');
+  btn.className = `submit-btn ${dir === 'CALL' ? 'call-btn' : 'put-btn'}`;
+  btn.textContent = dir === 'CALL' ? '📈 فتح CALL' : '📉 فتح PUT';
+  checkVwapWarning();
+}
+
+function checkVwapWarning() {
+  const box = document.getElementById('vwapWarning');
+  if (!vwap || !currentPrice) { box.classList.remove('show'); return; }
+  if (currentDir === 'CALL' && currentPrice < vwap) {
+    box.textContent = '⚠️ السعر تحت VWAP — أنت تلتقط سكيناً ساقطة! تأكد من إشارة انعكاس قوية.';
+    box.classList.add('show');
+  } else if (currentDir === 'PUT' && currentPrice > vwap) {
+    box.textContent = '⚠️ السعر فوق VWAP — تداول PUT في ترند صاعد. تأكد من إشارة انعكاس قوية.';
+    box.classList.add('show');
+  } else {
+    box.classList.remove('show');
+  }
+}
+
+// ── Field Helpers ──────────────────────────────────────────────────────────
+function adjustField(field, delta) {
+  const ids = { entry: 'entryPrice', tp: 'tpPrice', sl: 'slPrice' };
+  const el = document.getElementById(ids[field]);
+  const val = parseFloat(el.value) || 0;
+  el.value = Math.max(0.01, val + delta).toFixed(2);
+}
+
+function adjustContracts(delta) {
+  contracts = Math.max(1, Math.min(10, contracts + delta));
+  document.getElementById('contractsVal').textContent = contracts;
+}
+
+// ── Open Trade ─────────────────────────────────────────────────────────────
+async function openTrade() {
+  if (session?.circuit_broken) {
+    showToast('🚫 Circuit Breaker مفعّل — لا تداول اليوم', 'error'); return;
+  }
+  const entry = parseFloat(document.getElementById('entryPrice').value);
+  const tp    = parseFloat(document.getElementById('tpPrice').value);
+  const sl    = parseFloat(document.getElementById('slPrice').value);
+
+  if (!entry || entry <= 0) { showToast('⚠️ أدخل سعر الدخول', 'warn'); return; }
+  if (!tp || tp <= 0)       { showToast('⚠️ OCO إجباري — أدخل TP', 'warn'); return; }
+  if (!sl || sl <= 0)       { showToast('⚠️ OCO إجباري — أدخل SL', 'warn'); return; }
+
+  try {
+    const r = await fetch('/tm/trade/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: SESSION_ID,
+        direction: currentDir,
+        entry_price: entry,
+        tp, sl,
+        contracts,
+        tsla_price: currentPrice,
+        vwap
+      })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      session.open_trade = d.trade;
+      tradeOpenedAt = new Date();
+      showOpenTradePanel(d.trade);
+      if (d.warning) showToast(d.warning, 'warn');
+      else showToast(`✅ صفقة ${currentDir} مفتوحة — ${contracts} عقد`, 'success');
+    } else {
+      showToast(d.error || 'خطأ في فتح الصفقة', 'error');
+    }
+  } catch(e) { showToast('خطأ في الاتصال', 'error'); }
+}
+
+// ── Show Open Trade Panel ──────────────────────────────────────────────────
+function showOpenTradePanel(trade) {
+  document.getElementById('tradeForm').style.display = 'none';
+  document.getElementById('openTradePanel').classList.add('show');
+
+  const badge = document.getElementById('tradeDirBadge');
+  badge.textContent = trade.direction;
+  badge.className = `trade-dir-badge ${trade.direction.toLowerCase()}`;
+
+  document.getElementById('tiEntry').textContent = `$${trade.entry_price.toFixed(2)}`;
+  document.getElementById('tiTp').textContent    = `$${trade.tp.toFixed(2)}`;
+  document.getElementById('tiSl').textContent    = `$${trade.sl.toFixed(2)}`;
+
+  tradeOpenedAt = new Date(trade.opened_at + 'Z');
+  startTimer();
+  pnlInterval = setInterval(updateLivePnl, 2000);
+}
+
+// ── Timer ──────────────────────────────────────────────────────────────────
+function startTimer() {
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - tradeOpenedAt) / 1000);
+    const remaining = Math.max(0, 480 - elapsed); // 8 minutes
+    const m = Math.floor(remaining / 60).toString().padStart(2, '0');
+    const s = (remaining % 60).toString().padStart(2, '0');
+    const el = document.getElementById('tradeTimer');
+    el.textContent = `${m}:${s}`;
+    if (remaining <= 60) {
+      el.classList.add('urgent');
+      if (remaining === 60) showToast('⏰ دقيقة واحدة — فكر في الإغلاق الآن!', 'warn');
+    }
+    if (remaining === 0) {
+      el.textContent = '00:00';
+      showToast('🔔 انتهى الوقت — أغلق الصفقة الآن!', 'warn');
+      clearInterval(timerInterval);
+    }
+  }, 1000);
+}
+
+// ── Live P&L ───────────────────────────────────────────────────────────────
+function updateLivePnl() {
+  const trade = session?.open_trade;
+  if (!trade || !currentPrice) return;
+
+  // محاكاة تحرك سعر الأوبشن بناءً على تحرك TSLA
+  const tslaMove = currentPrice - trade.tsla_entry;
+  let optionMove;
+  if (trade.direction === 'CALL') {
+    optionMove = tslaMove * 0.5; // Delta ~0.5 ATM
+  } else {
+    optionMove = -tslaMove * 0.5;
+  }
+  const simulatedCurrentPrice = Math.max(0.01, trade.entry_price + optionMove);
+  const pnl = (simulatedCurrentPrice - trade.entry_price) * 100 * trade.contracts;
+
+  const el = document.getElementById('livePnl');
+  el.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+  el.className = `live-pnl ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : 'neutral'}`;
+
+  // Auto TP/SL check
+  if (simulatedCurrentPrice >= trade.tp) {
+    showToast('🎯 وصلت لـ TP — إغلاق تلقائي!', 'success');
+    closeTrade('tp', simulatedCurrentPrice);
+  } else if (simulatedCurrentPrice <= trade.sl) {
+    showToast('🛑 وصلت لـ SL — إغلاق تلقائي!', 'error');
+    closeTrade('sl', simulatedCurrentPrice);
+  }
+}
+
+// ── Close Trade ────────────────────────────────────────────────────────────
+async function closeTrade(reason, exitPrice) {
+  const trade = session?.open_trade;
+  if (!trade) return;
+
+  // حساب سعر الخروج
+  const tslaMove = currentPrice - trade.tsla_entry;
+  let optionMove = trade.direction === 'CALL' ? tslaMove * 0.5 : -tslaMove * 0.5;
+  const calcExit = exitPrice || Math.max(0.01, trade.entry_price + optionMove);
+
+  clearInterval(timerInterval);
+  clearInterval(pnlInterval);
+
+  try {
+    const r = await fetch('/tm/trade/close', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: SESSION_ID,
+        exit_price: calcExit,
+        reason
+      })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      session.open_trade = null;
+      session.daily_pnl = d.daily_pnl;
+      session.balance = d.balance;
+      session.trades = [...(session.trades || []), d.trade];
+      session.circuit_broken = d.circuit_broken;
+      session.consecutive_losses = d.consecutive_losses;
+      session.current_streak = d.current_streak;
+
+      hideOpenTradePanel();
+      renderSession();
+
+      const pnl = d.pnl;
+      if (pnl > 0) showToast(`✅ +$${pnl.toFixed(2)} — صفقة رابحة! 🎯`, 'success');
+      else showToast(`❌ -$${Math.abs(pnl).toFixed(2)} — صفقة خاسرة`, 'error');
+
+      if (d.revenge_warning) {
+        const rb = document.getElementById('revengeBanner');
+        rb.textContent = d.revenge_warning;
+        rb.classList.add('show');
+      }
+      if (d.streak_msg) showToast(d.streak_msg, 'success');
+      if (d.circuit_broken) {
+        document.getElementById('circuitBanner').classList.add('show');
+        showToast('🚫 Circuit Breaker — التداول موقوف اليوم!', 'error');
+      }
+    }
+  } catch(e) { showToast('خطأ في إغلاق الصفقة', 'error'); }
+}
+
+function hideOpenTradePanel() {
+  document.getElementById('openTradePanel').classList.remove('show');
+  document.getElementById('tradeForm').style.display = 'block';
+  document.getElementById('entryPrice').value = '';
+  document.getElementById('tpPrice').value = '';
+  document.getElementById('slPrice').value = '';
+}
+
+// ── Render Session ─────────────────────────────────────────────────────────
+function renderSession() {
+  if (!session) return;
+
+  // Stats
+  const balance = session.balance || 10000;
+  const pnl = session.daily_pnl || 0;
+  const trades = (session.trades || []).length;
+  const wins = (session.trades || []).filter(t => t.pnl > 0).length;
+  const winRate = trades > 0 ? Math.round((wins / trades) * 100) : 0;
+
+  document.getElementById('statBalance').textContent = `$${balance.toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 0})}`;
+
+  const pnlEl = document.getElementById('statPnl');
+  pnlEl.textContent = `${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(0)}`;
+  pnlEl.className = `stat-value ${pnl > 0 ? 'green' : pnl < 0 ? 'red' : ''}`;
+
+  document.getElementById('statTrades').textContent = trades;
+
+  const wrEl = document.getElementById('statWinRate');
+  wrEl.textContent = trades > 0 ? `${winRate}%` : '--';
+  wrEl.className = `stat-value ${winRate >= 60 ? 'green' : winRate > 0 ? 'red' : ''}`;
+
+  // Circuit Breaker
+  if (session.circuit_broken) {
+    document.getElementById('circuitBanner').classList.add('show');
+    document.getElementById('submitBtn').disabled = true;
+  }
+
+  // History
+  renderHistory(session.trades || []);
+}
+
+function renderHistory(trades) {
+  const list = document.getElementById('historyList');
+  if (!trades.length) {
+    list.innerHTML = '<div class="empty-history">لا توجد صفقات بعد — ابدأ أول صفقة</div>';
+    return;
+  }
+  list.innerHTML = [...trades].reverse().slice(0, 20).map(t => {
+    const pnl = t.pnl || 0;
+    const win = pnl > 0;
+    return `
+      <div class="history-item ${win ? 'win' : 'loss'}">
+        <div class="hi-left">
+          <span class="hi-num">#${t.id}</span>
+          <span class="hi-dir ${t.direction.toLowerCase()}">${t.direction}</span>
+          <span class="hi-entry">$${t.entry_price?.toFixed(2) || '--'} → $${t.exit_price?.toFixed(2) || '--'}</span>
+        </div>
+        <div class="hi-pnl ${win ? 'pos' : 'neg'}">${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(0)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+let toastTimer = null;
+function showToast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `toast show ${type}`;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 4000);
+}
+
+// ── Start ──────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>

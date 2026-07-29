@@ -3925,6 +3925,230 @@ def api_analyze_trade():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# TM Simulator — محاكي التداول الانضباطي
+# ──────────────────────────────────────────────────────────────────────────────
+import uuid as _uuid
+from datetime import datetime as _dt
+
+_tm_sessions = {}  # session_id -> session_data
+
+def _tm_new_session():
+    """إنشاء جلسة محاكاة جديدة."""
+    return {
+        "id": str(_uuid.uuid4())[:8],
+        "balance": 10000.0,
+        "daily_pnl": 0.0,
+        "trades": [],
+        "open_trade": None,
+        "circuit_broken": False,
+        "consecutive_losses": 0,
+        "max_streak": 0,
+        "current_streak": 0,
+        "created_at": _dt.utcnow().isoformat(),
+        "trade_count": 0,
+    }
+
+@app.route('/tm-simulator', methods=['GET'])
+def tm_simulator_page():
+    """صفحة محاكي TM الانضباطي."""
+    return render_template('tm_simulator.html')
+
+@app.route('/tm/price', methods=['GET'])
+def tm_price():
+    """سعر TSLA الحقيقي للمحاكي."""
+    try:
+        price = get_tsla_price_alpaca_snapshot()
+        if not price or price <= 0:
+            price = get_tsla_price_alpaca()
+        return jsonify({"ok": True, "price": round(float(price), 2)})
+    except Exception as e:
+        return jsonify({"ok": False, "price": 0, "error": str(e)})
+
+@app.route('/tm/bars', methods=['GET'])
+def tm_bars():
+    """شموع TSLA للمحاكي — 1Min و 5Min."""
+    try:
+        timeframe = request.args.get('tf', '5Min')
+        limit = int(request.args.get('limit', 78))
+        end_dt = _dt.utcnow()
+        start_dt = end_dt - timedelta(hours=14)
+        params = {
+            "timeframe": timeframe,
+            "start": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "limit": limit,
+            "feed": "iex"
+        }
+        r = http_requests.get(
+            "https://data.alpaca.markets/v2/stocks/TSLA/bars",
+            headers=alpaca_headers(),
+            params=params,
+            timeout=10
+        )
+        if r.status_code == 200:
+            bars = r.json().get("bars", [])
+            return jsonify({"ok": True, "bars": bars})
+        return jsonify({"ok": False, "bars": [], "status": r.status_code})
+    except Exception as e:
+        return jsonify({"ok": False, "bars": [], "error": str(e)})
+
+@app.route('/tm/session/new', methods=['POST'])
+def tm_new_session():
+    """إنشاء جلسة محاكاة جديدة."""
+    session = _tm_new_session()
+    _tm_sessions[session["id"]] = session
+    return jsonify({"ok": True, "session": session})
+
+@app.route('/tm/session/<sid>', methods=['GET'])
+def tm_get_session(sid):
+    """جلب حالة الجلسة."""
+    session = _tm_sessions.get(sid)
+    if not session:
+        return jsonify({"ok": False, "error": "session not found"}), 404
+    return jsonify({"ok": True, "session": session})
+
+@app.route('/tm/trade/open', methods=['POST'])
+def tm_open_trade():
+    """فتح صفقة في المحاكي مع التحقق من قوانين TM."""
+    data = request.get_json(force=True, silent=True) or {}
+    sid = data.get("session_id")
+    session = _tm_sessions.get(sid)
+    if not session:
+        return jsonify({"ok": False, "error": "session not found"}), 404
+
+    # قانون Circuit Breaker
+    if session["circuit_broken"]:
+        return jsonify({"ok": False, "error": "🚫 Circuit Breaker مفعّل — خسارة -$500 اليوم. أوقف التداول.", "circuit": True})
+
+    # قانون لا صفقة مفتوحة
+    if session["open_trade"]:
+        return jsonify({"ok": False, "error": "⚠️ عندك صفقة مفتوحة — أغلقها أولاً."})
+
+    direction = data.get("direction", "").upper()
+    entry_price = float(data.get("entry_price", 0))
+    tp = float(data.get("tp", 0))
+    sl = float(data.get("sl", 0))
+    contracts = int(data.get("contracts", 1))
+    current_tsla = float(data.get("tsla_price", 0))
+    vwap = float(data.get("vwap", 0))
+
+    # التحقق من الحقول الإجبارية
+    if direction not in ("CALL", "PUT"):
+        return jsonify({"ok": False, "error": "يجب تحديد CALL أو PUT"})
+    if entry_price <= 0:
+        return jsonify({"ok": False, "error": "سعر الدخول مطلوب"})
+    if tp <= 0 or sl <= 0:
+        return jsonify({"ok": False, "error": "⚠️ OCO إجباري — يجب تحديد TP و SL قبل الدخول"})
+
+    # تحذير ذكي: CALL تحت VWAP أو PUT فوق VWAP
+    warning = None
+    if direction == "CALL" and vwap > 0 and current_tsla < vwap:
+        warning = "⚠️ تنبيه: السعر تحت VWAP — أنت تلتقط سكيناً ساقطة! تأكد من إشارة انعكاس قوية."
+    elif direction == "PUT" and vwap > 0 and current_tsla > vwap:
+        warning = "⚠️ تنبيه: السعر فوق VWAP — تداول PUT في ترند صاعد. تأكد من إشارة انعكاس قوية."
+
+    # فتح الصفقة
+    trade = {
+        "id": session["trade_count"] + 1,
+        "direction": direction,
+        "entry_price": entry_price,
+        "tp": tp,
+        "sl": sl,
+        "contracts": contracts,
+        "tsla_entry": current_tsla,
+        "opened_at": _dt.utcnow().isoformat(),
+        "status": "open",
+        "pnl": 0.0,
+    }
+    session["open_trade"] = trade
+    session["trade_count"] += 1
+    return jsonify({"ok": True, "trade": trade, "warning": warning})
+
+@app.route('/tm/trade/close', methods=['POST'])
+def tm_close_trade():
+    """إغلاق الصفقة المفتوحة في المحاكي."""
+    data = request.get_json(force=True, silent=True) or {}
+    sid = data.get("session_id")
+    session = _tm_sessions.get(sid)
+    if not session:
+        return jsonify({"ok": False, "error": "session not found"}), 404
+
+    trade = session.get("open_trade")
+    if not trade:
+        return jsonify({"ok": False, "error": "لا توجد صفقة مفتوحة"})
+
+    exit_price = float(data.get("exit_price", trade["entry_price"]))
+    reason = data.get("reason", "manual")
+    contracts = trade["contracts"]
+
+    # حساب P&L
+    if trade["direction"] == "CALL":
+        pnl = (exit_price - trade["entry_price"]) * 100 * contracts
+    else:
+        pnl = (trade["entry_price"] - exit_price) * 100 * contracts
+    pnl = round(pnl, 2)
+
+    trade["exit_price"] = exit_price
+    trade["pnl"] = pnl
+    trade["reason"] = reason
+    trade["closed_at"] = _dt.utcnow().isoformat()
+    trade["status"] = "closed"
+
+    # تحديث الجلسة
+    session["daily_pnl"] = round(session["daily_pnl"] + pnl, 2)
+    session["balance"] = round(session["balance"] + pnl, 2)
+    session["trades"].append(dict(trade))
+    session["open_trade"] = None
+
+    # Streak
+    if pnl > 0:
+        session["consecutive_losses"] = 0
+        session["current_streak"] += 1
+        if session["current_streak"] > session["max_streak"]:
+            session["max_streak"] = session["current_streak"]
+    else:
+        session["current_streak"] = 0
+        session["consecutive_losses"] += 1
+
+    # Circuit Breaker
+    if session["daily_pnl"] <= -500:
+        session["circuit_broken"] = True
+
+    # تحذير 3 خسائر متتالية
+    revenge_warning = None
+    if session["consecutive_losses"] >= 3:
+        revenge_warning = "🛑 3 خسائر متتالية — توقف 30 دقيقة. لا تتداول الآن. ابدأ من جديد، التاجر الحقيقي يتعافى."
+
+    # رسالة Streak
+    streak_msg = None
+    if session["current_streak"] == 3:
+        streak_msg = "🎯 أنت في المنطقة! 3 صفقات رابحة متتالية."
+    elif session["current_streak"] > 3:
+        streak_msg = f"🔥 سلسلة {session['current_streak']} رابحة! استمر بانضباط."
+
+    return jsonify({
+        "ok": True,
+        "pnl": pnl,
+        "daily_pnl": session["daily_pnl"],
+        "balance": session["balance"],
+        "circuit_broken": session["circuit_broken"],
+        "consecutive_losses": session["consecutive_losses"],
+        "current_streak": session["current_streak"],
+        "max_streak": session["max_streak"],
+        "revenge_warning": revenge_warning,
+        "streak_msg": streak_msg,
+        "trade": trade,
+    })
+
+@app.route('/tm/session/<sid>/reset', methods=['POST'])
+def tm_reset_session(sid):
+    """إعادة تعيين الجلسة."""
+    session = _tm_new_session()
+    session["id"] = sid
+    _tm_sessions[sid] = session
+    return jsonify({"ok": True, "session": session})
+
 # استدعاء مباشر عند بدء التشغيل
 _start_background_threads()
 

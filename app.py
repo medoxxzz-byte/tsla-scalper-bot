@@ -4375,6 +4375,25 @@ def tm_sniper_webhook():
     })
 
 
+@app.route('/tm/test-telegram', methods=['GET', 'POST'])
+def tm_test_telegram():
+    """Test endpoint: sends a direct Telegram message using hardcoded token."""
+    _token  = "8708530077:AAF16LsdHUNTW5G25UypCm8NiFTmCIranP8"
+    _chatid = "975644160"
+    url = f"https://api.telegram.org/bot{_token}/sendMessage"
+    payload = {
+        "chat_id": _chatid,
+        "text": "\u2705 TM Sniper v2.0 \u2014 Render Webhook Test\n\n\ud83e\udd16 @tsla_thaqib_bot \u064a\u0639\u0645\u0644!\n\ud83d\udce1 Webhook \u062c\u0627\u0647\u0632 \u0644\u0627\u0633\u062a\u0642\u0628\u0627\u0644 \u0625\u0634\u0627\u0631\u0627\u062a TradingView",
+        "parse_mode": "HTML"
+    }
+    try:
+        resp = http_requests.post(url, json=payload, timeout=10)
+        data = resp.json()
+        return jsonify({"ok": data.get("ok"), "message_id": data.get("result", {}).get("message_id"), "token_used": _token[:20] + "..."})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 # استدعاء مباشر عند بدء التشغيل
 _start_background_threads()
 

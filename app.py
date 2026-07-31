@@ -4361,8 +4361,20 @@ def tm_sniper_webhook():
     if not message:
         message = f"TM Sniper Alert: {action} @ ${price}"
 
-    # إرسال لتلغرام
-    success = send_telegram(message)
+    # إرسال لتلغرام مباشرة بالتوكن الصحيح (تجاوز env var)
+    _tg_token = "8708530077:AAF16LsdHUNTW5G25UypCm8NiFTmCIranP8"
+    _tg_chat  = "975644160"
+    try:
+        tg_url = f"https://api.telegram.org/bot{_tg_token}/sendMessage"
+        tg_resp = http_requests.post(tg_url, json={
+            "chat_id": _tg_chat,
+            "text": message,
+            "disable_web_page_preview": True
+        }, timeout=10)
+        success = tg_resp.status_code == 200
+    except Exception as e:
+        logger.error(f"[TM Webhook] Telegram send failed: {e}")
+        success = False
 
     logger.info(f"[TM Webhook] {action} | ${price} | env={env} | sent={success}")
 

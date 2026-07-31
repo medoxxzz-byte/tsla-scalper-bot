@@ -4354,13 +4354,62 @@ def tm_sniper_webhook():
         else:
             return jsonify({"ok": False, "error": "no data"}), 400
 
-    action  = data.get("action", "UNKNOWN")
-    message = data.get("message", "")
-    price   = data.get("price", "")
-    env     = data.get("env", "")
+    action = data.get("action", "UNKNOWN")
+    symbol = data.get("symbol", "TSLA")
+    tf     = data.get("tf", "5m")
 
-    if not message:
-        message = f"TM Sniper Alert: {action} @ ${price}"
+    # جلب السعر الحالي من البوت
+    try:
+        price_resp = http_requests.get("https://tsla-scalper-bot.onrender.com/tm/price", timeout=5)
+        price_data = price_resp.json()
+        live_price = price_data.get("price", 0.0)
+    except Exception:
+        live_price = 0.0
+
+    price_str = f"{live_price:.2f}" if live_price else "--"
+
+    # بناء الرسالة حسب نوع الإشارة
+    if action == "CALL":
+        message = (
+            f"🟢 قنص CALL | {symbol} @ ${price_str}\n"
+            f"⚡ فريم: {tf} | زخم إيجابي\n"
+            f"🎯 التوجيه: ادخل Call \u2014 فعّل OCO فورا\n"
+            f"🛡️ وقف: تحت VWAP مباشرة\n"
+            f"⚠️ إذا كسر VWAP → اخرج فورا\n"
+            f"⏱ TM Sniper v2.0"
+        )
+    elif action == "PUT":
+        message = (
+            f"🔴 قنص PUT | {symbol} @ ${price_str}\n"
+            f"⚡ فريم: {tf} | زخم سلبي\n"
+            f"🎯 التوجيه: ادخل Put \u2014 فعّل OCO فورا\n"
+            f"🛡️ وقف: فوق VWAP مباشرة\n"
+            f"⚠️ إذا كسر VWAP صعودا → اخرج فورا\n"
+            f"⏱ TM Sniper v2.0"
+        )
+    elif action == "REVERSAL":
+        message = (
+            f"⚠️ ارتداد محتمل! | {symbol} @ ${price_str}\n"
+            f"📊 تشبع بيعي حاد + MACD إيجابي\n"
+            f"🎯 التوجيه: اخطف واهرب \u2014 EMA20 هدفك فقط!\n"
+            f"🐈 احتمال Dead Cat Bounce \u2014 لا تطمع\n"
+            f"🛡️ وقف: تحت القاع الديناميكي\n"
+            f"❌ إذا كسر القاع → اهرب فورا\n"
+            f"⏱ TM Sniper v2.0"
+        )
+    elif action == "EXIT":
+        message = (
+            f"🚨 إخلاء فوري! | {symbol} @ ${price_str}\n"
+            f"⚡ الزخم انعكس على فريم 5د\n"
+            f"💰 اقفل بسعر السوق الآن!\n"
+            f"✅ الكاش أهم من الأمل \u2014 انتظر الفرصة القادمة\n"
+            f"⏱ TM Sniper v2.0"
+        )
+    else:
+        message = f"TM Sniper: {action} | {symbol} @ ${price_str}"
+
+    price = price_str
+    env   = ""
 
     # إرسال لتلغرام مباشرة بالتوكن الصحيح (تجاوز env var)
     _tg_token = "8708530077:AAF16LsdHUNTW5G25UypCm8NiFTmCIranP8"

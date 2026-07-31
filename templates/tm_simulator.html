@@ -225,12 +225,22 @@ header{background:linear-gradient(135deg,#0f1629,#1a2540);padding:12px 16px;disp
       <div class="fr"><button onclick="adj('entry',-0.05)">−</button><input id="fEntry" type="number" step="0.01" placeholder="أدخل السعر"><button onclick="adj('entry',0.05)">+</button></div>
     </div>
     <div class="fg">
-      <div class="fl"><span>جني الربح (TP)</span><span class="tag">إجباري — OCO</span></div>
+      <div class="fl"><span>جني الربح (TP)</span><span class="tag" id="tpPctTag">+40%</span></div>
       <div class="fr"><button onclick="adj('tp',-0.05)">−</button><input id="fTP" type="number" step="0.01" placeholder="أكبر من السعر"><button onclick="adj('tp',0.05)">+</button></div>
+      <div style="display:flex;gap:4px;margin-top:4px">
+        <button class="nav-links a" style="flex:1;font-size:9px" onclick="setPct('tp',0.2)">+20%</button>
+        <button class="nav-links a" style="flex:1;font-size:9px" onclick="setPct('tp',0.4)">+40%</button>
+        <button class="nav-links a" style="flex:1;font-size:9px" onclick="setPct('tp',0.6)">+60%</button>
+      </div>
     </div>
     <div class="fg">
-      <div class="fl"><span>وقف الخسارة (SL)</span><span class="tag">إجباري — OCO</span></div>
+      <div class="fl"><span>وقف الخسارة (SL)</span><span class="tag" id="slPctTag">-16%</span></div>
       <div class="fr"><button onclick="adj('sl',-0.05)">−</button><input id="fSL" type="number" step="0.01" placeholder="أقل من السعر"><button onclick="adj('sl',0.05)">+</button></div>
+      <div style="display:flex;gap:4px;margin-top:4px">
+        <button class="nav-links a" style="flex:1;font-size:9px;color:var(--red)" onclick="setPct('sl',0.1)">-10%</button>
+        <button class="nav-links a" style="flex:1;font-size:9px;color:var(--red)" onclick="setPct('sl',0.16)">-16%</button>
+        <button class="nav-links a" style="flex:1;font-size:9px;color:var(--red)" onclick="setPct('sl',0.25)">-25%</button>
+      </div>
     </div>
 
     <div class="qty-row">
@@ -356,7 +366,22 @@ function setDir(d){
 }
 
 // ═══ FIELDS ═══
-function adj(fld,d){const m={entry:'fEntry',tp:'fTP',sl:'fSL'};const el=document.getElementById(m[fld]);let v=parseFloat(el.value)||0;el.value=Math.max(0,v+d).toFixed(2);}
+function adj(fld,d){const m={entry:'fEntry',tp:'fTP',sl:'fSL'};const el=document.getElementById(m[fld]);let v=parseFloat(el.value)||0;el.value=Math.max(0,v+d).toFixed(2);calcPcts();}
+function setPct(type,pct){
+  const entry=parseFloat(document.getElementById('fEntry').value)||0;
+  if(entry<=0)return;
+  if(type==='tp'){document.getElementById('fTP').value=(entry*(1+pct)).toFixed(2);document.getElementById('tpPctTag').textContent=`+${Math.round(pct*100)}%`;}
+  else{document.getElementById('fSL').value=(entry*(1-pct)).toFixed(2);document.getElementById('slPctTag').textContent=`-${Math.round(pct*100)}%`;}
+}
+function calcPcts(){
+  const entry=parseFloat(document.getElementById('fEntry').value)||0;
+  const tp=parseFloat(document.getElementById('fTP').value)||0;
+  const sl=parseFloat(document.getElementById('fSL').value)||0;
+  if(entry>0){
+    if(tp>entry)document.getElementById('tpPctTag').textContent=`+${Math.round((tp/entry-1)*100)}%`;
+    if(sl>0&&sl<entry)document.getElementById('slPctTag').textContent=`-${Math.round((1-sl/entry)*100)}%`;
+  }
+}
 function adjQ(d){S.qty=Math.max(1,Math.min(5,S.qty+d));document.getElementById('qtyVal').textContent=S.qty;}
 
 // ═══ CONTRACT TYPE ═══
@@ -377,6 +402,9 @@ async function pickCT(type){
         document.getElementById('ccDelta').textContent=`Δ${c.delta}`;
         document.getElementById('ccMid').textContent=`$${c.mid.toFixed(2)}`;
         document.getElementById('fEntry').value=c.mid.toFixed(2);
+        // التوازن التلقائي: 40% ربح / 16% خسارة
+        setPct('tp', 0.4);
+        setPct('sl', 0.16);
       }else{document.getElementById('ccCard').classList.remove('show');toast('لا يوجد عقد — السوق مغلق؟','err');}
     }
   }catch(e){toast('خطأ في جلب العقود','err');}
@@ -460,9 +488,12 @@ function updatePnL(){
   
   updBoost(pnl);
   
-  // Auto SL/TP
-  if(currPrice>=t.tp){closeTrade('tp');toast('🎯 وصل الهدف! — TP','ok');}
-  else if(currPrice<=t.sl){closeTrade('sl');toast('🛑 وقف الخسارة! — SL','err');}
+  // Auto SL/TP - إضافة فترة سماح 3 ثوانٍ لمنع الإغلاق الفوري
+  const age = (Date.now() - new Date(t.opened_at).getTime()) / 1000;
+  if (age > 3) {
+    if(currPrice>=t.tp){closeTrade('tp');toast('🎯 وصل الهدف! — TP','ok');}
+    else if(currPrice<=t.sl){closeTrade('sl');toast('🛑 وقف الخسارة! — SL','err');}
+  }
 }
 
 function updBoost(pnl){

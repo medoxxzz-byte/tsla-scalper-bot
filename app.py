@@ -268,8 +268,9 @@ def _on_option_data_received(opt: dict):
 # Configuration
 # ──────────────────────────────────────────────────────────────────────────────
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8708530077:AAF16LsdHUNTW5G25UypCm8NiFTmCIranP8")
-TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID",   "975644160")
+# التوكن الصحيح لبوت ثاقب @tsla_thaqib_bot (يتجاوز env var القديم)
+TELEGRAM_BOT_TOKEN = "8708530077:AAF16LsdHUNTW5G25UypCm8NiFTmCIranP8"
+TELEGRAM_CHAT_ID   = "975644160"
 
 SERVER_HOST    = os.environ.get("SERVER_HOST", "0.0.0.0")
 SERVER_PORT    = int(os.environ.get("PORT", os.environ.get("SERVER_PORT", "8080")))

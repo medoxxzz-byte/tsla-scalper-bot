@@ -4379,12 +4379,19 @@ def tm_sniper_webhook():
 
     logger.info(f"[TM Webhook] {action} | ${price} | env={env} | sent={success}")
 
+    # debug: return full tg response
+    try:
+        tg_debug = tg_resp.json() if 'tg_resp' in dir() else {}
+    except Exception:
+        tg_debug = {}
+
     return jsonify({
         "ok": True,
         "action": action,
         "price": price,
         "env": env,
-        "telegram_sent": success
+        "telegram_sent": success,
+        "tg_response": tg_debug
     })
 
 

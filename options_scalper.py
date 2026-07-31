@@ -6171,8 +6171,14 @@ def get_mosquito_status():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _calc_rsi_brief(closes, period=14):
+    # تعديل الـ period تلقائياً إذا البيانات غير كافية
+    if period < 2:
+        period = 2
     if len(closes) < period + 1:
-        return 50.0
+        if len(closes) >= 5:
+            period = len(closes) - 2  # استخدام كل البيانات المتاحة
+        else:
+            return 50.0
     gains, losses = [], []
     for i in range(1, len(closes)):
         ch = closes[i] - closes[i-1]
@@ -6200,8 +6206,12 @@ def _calc_atr_brief(bars, period=14):
 
 
 def _calc_macd_brief(closes, fast=12, slow=26, signal=9):
+    # Fallback: إذا البيانات غير كافية للـ standard MACD، نستخدم periods أصغر
     if len(closes) < slow + signal:
-        return 0.0, 0.0, 0.0
+        if len(closes) >= 20:  # نستخدم MACD(6,13,5) كـ fallback
+            fast, slow, signal = 6, 13, 5
+        else:
+            return 0.0, 0.0, 0.0
     macd_series = []
     for i in range(slow - 1, len(closes)):
         ef = _ema(closes[:i+1], fast)
@@ -6216,12 +6226,16 @@ def _calc_macd_brief(closes, fast=12, slow=26, signal=9):
 
 
 def _calc_bb_brief(closes, period=20, mult=2.0):
-    if len(closes) < period:
+    # استخدام كل البيانات المتاحة إذا أقل من period
+    actual_period = min(period, len(closes))
+    if actual_period < 3:
         c = closes[-1]
         return c, c, c
-    window = closes[-period:]
-    mid = sum(window) / period
-    std = (sum((x - mid) ** 2 for x in window) / period) ** 0.5
+    window = closes[-actual_period:]
+    mid = sum(window) / actual_period
+    std = (sum((x - mid) ** 2 for x in window) / actual_period) ** 0.5
+    if std < 0.01:  # تجنب BB متطابقة
+        std = abs(max(window) - min(window)) / 4 if max(window) != min(window) else 0.5
     return round(mid + mult * std, 2), round(mid, 2), round(mid - mult * std, 2)
 
 
@@ -6359,23 +6373,31 @@ def generate_market_briefing():
         if price == 0:
             return None
 
-        bars_5m  = get_tsla_bars("5Min",  limit=40)
-        bars_1m  = get_tsla_bars("1Min",  limit=20)
-        bars_15m = get_tsla_bars("15Min", limit=20)
+        bars_5m  = get_tsla_bars("5Min",  limit=80)
+        bars_1m  = get_tsla_bars("1Min",  limit=120)
+        bars_15m = get_tsla_bars("15Min", limit=40)
 
         if not bars_5m or len(bars_5m) < 5:
             return None
 
         closes_5m  = [float(b["c"]) for b in bars_5m]
-        closes_1m  = [float(b["c"]) for b in bars_1m]  if bars_1m  else closes_5m[-10:]
+        closes_1m  = [float(b["c"]) for b in bars_1m]  if bars_1m  else closes_5m
         closes_15m = [float(b["c"]) for b in bars_15m] if bars_15m else closes_5m
 
         # ── المؤشرات ──
-        rsi_5m  = _calc_rsi_brief(closes_5m, 14)
-        rsi_1m  = _calc_rsi_brief(closes_1m, 14)
-        macd_l, macd_s, macd_h = _calc_macd_brief(closes_5m)
-        atr_5m  = _calc_atr_brief(bars_5m, 14)
-        bb_upper, bb_mid, bb_lower = _calc_bb_brief(closes_5m, 20)
+        # RSI: استخدام period أقصر إذا البيانات غير كافية
+        rsi_5m  = _calc_rsi_brief(closes_5m, min(14, len(closes_5m) - 2))
+        rsi_1m  = _calc_rsi_brief(closes_1m, min(14, len(closes_1m) - 2))
+        # MACD: استخدام 1Min (120 بار) لضمان بيانات كافية دائماً
+        # إذا 5Min كافية (>35) نستخدمها، وإلا نستخدم 1Min
+        if len(closes_5m) >= 35:
+            macd_l, macd_s, macd_h = _calc_macd_brief(closes_5m)
+        else:
+            macd_l, macd_s, macd_h = _calc_macd_brief(closes_1m)
+        atr_5m  = _calc_atr_brief(bars_5m, min(14, len(bars_5m) - 1))
+        # BB: استخدام period ديناميكي (min 10) لتجنب القيم المتطابقة
+        bb_period = min(20, max(10, len(closes_5m) - 1))
+        bb_upper, bb_mid, bb_lower = _calc_bb_brief(closes_5m, bb_period)
 
         # ── State + Fallback مباشر من Alpaca ──
         # VWAP — من snapshot أو حساب مباشر

@@ -4333,6 +4333,48 @@ def tm_boost_trade():
     })
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# TM Sniper Webhook — يستقبل إشارات TradingView ويرسلها لتلغرام
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route('/tm/webhook', methods=['POST'])
+def tm_sniper_webhook():
+    """Receive TM Sniper alerts from TradingView and forward to Telegram."""
+    data = request.get_json(force=True, silent=True)
+    if not data:
+        # TradingView sometimes sends plain text in message body
+        raw = request.get_data(as_text=True)
+        if raw:
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                # Plain text message — wrap it
+                data = {"message": raw}
+        else:
+            return jsonify({"ok": False, "error": "no data"}), 400
+
+    action  = data.get("action", "UNKNOWN")
+    message = data.get("message", "")
+    price   = data.get("price", "")
+    env     = data.get("env", "")
+
+    if not message:
+        message = f"TM Sniper Alert: {action} @ ${price}"
+
+    # إرسال لتلغرام
+    success = send_telegram(message)
+
+    logger.info(f"[TM Webhook] {action} | ${price} | env={env} | sent={success}")
+
+    return jsonify({
+        "ok": True,
+        "action": action,
+        "price": price,
+        "env": env,
+        "telegram_sent": success
+    })
+
+
 # استدعاء مباشر عند بدء التشغيل
 _start_background_threads()
 

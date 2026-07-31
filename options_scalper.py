@@ -6373,9 +6373,9 @@ def generate_market_briefing():
         if price == 0:
             return None
 
-        bars_5m  = get_tsla_bars("5Min",  limit=80)
-        bars_1m  = get_tsla_bars("1Min",  limit=120)
-        bars_15m = get_tsla_bars("15Min", limit=40)
+        bars_5m  = get_tsla_bars("5Min",  limit=60)
+        bars_1m  = get_tsla_bars("1Min",  limit=80)
+        bars_15m = get_tsla_bars("15Min", limit=30)
 
         if not bars_5m or len(bars_5m) < 5:
             return None

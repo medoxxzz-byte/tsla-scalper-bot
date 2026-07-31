@@ -1,663 +1,570 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-  <title>TM Simulator — محاكي التداول الانضباطي</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    :root {
-      --bg: #0b0e14; --surface: #141820; --surface2: #1c2230; --border: #252d3d;
-      --green: #00e676; --green-dim: #00c85330; --red: #ff4444; --red-dim: #ff444430;
-      --yellow: #ffc107; --yellow-dim: #ffc10730; --blue: #4fc3f7; --blue-dim: #4fc3f720;
-      --orange: #ff6b35; --text: #e2e8f0; --text-muted: #64748b;
-      --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
-    }
-    body { background: var(--bg); color: var(--text); font-family: var(--font); min-height: 100vh; max-width: 480px; margin: 0 auto; padding-bottom: 40px; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>TM Simulator — محاكي التداول الانضباطي</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0e1a;--surface:#111827;--surface2:#1a2040;--border:#1e2a4a;--green:#10b981;--red:#ef4444;--yellow:#f59e0b;--blue:#3b82f6;--orange:#f97316;--text:#e2e8f0;--muted:#6b7b8d}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;max-width:480px;margin:0 auto;padding-bottom:40px}
 
-    /* Header */
-    header { background: linear-gradient(135deg, #0f1724 0%, #1a2540 100%); border-bottom: 1px solid var(--border); padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
-    .header-left { display: flex; align-items: center; gap: 10px; }
-    .logo-tm { width: 36px; height: 36px; background: linear-gradient(135deg, #ffc107, #ff6b35); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 900; color: #0b0e14; }
-    .header-title h1 { font-size: 15px; font-weight: 700; }
-    .header-title p { font-size: 10px; color: var(--text-muted); margin-top: 1px; }
-    .nav-links { display: flex; gap: 8px; }
-    .nav-links a { font-size: 11px; color: var(--text-muted); text-decoration: none; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; }
-    .nav-links a:hover { color: var(--blue); border-color: var(--blue); }
+/* Header */
+header{background:linear-gradient(135deg,#0f1629,#1a2540);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
+.logo{width:36px;height:36px;background:linear-gradient(135deg,#ffc107,#ff6b35);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#000}
+.h-title h1{font-size:15px;font-weight:700}
+.h-title p{font-size:10px;color:var(--muted)}
+.nav-links{display:flex;gap:6px}
+.nav-links a{font-size:11px;color:var(--muted);text-decoration:none;padding:4px 8px;border:1px solid var(--border);border-radius:6px}
 
-    /* Price Bar */
-    .price-bar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; }
-    .price-main { font-size: 22px; font-weight: 700; }
-    .price-change { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-    .price-change.up { color: var(--green); }
-    .price-change.down { color: var(--red); }
-    .vwap-badge { font-size: 11px; background: var(--blue-dim); border: 1px solid var(--blue); color: var(--blue); padding: 3px 8px; border-radius: 6px; }
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border)}
+.stat{background:var(--surface);padding:10px 6px;text-align:center}
+.stat .lbl{font-size:9px;color:var(--muted)}
+.stat .val{font-size:14px;font-weight:700}
+.val.g{color:var(--green)}.val.r{color:var(--red)}.val.y{color:var(--yellow)}.val.b{color:var(--blue)}
 
-    /* Stats Row */
-    .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border); border-bottom: 1px solid var(--border); }
-    .stat-item { background: var(--surface); padding: 10px 8px; text-align: center; }
-    .stat-label { font-size: 9px; color: var(--text-muted); margin-bottom: 3px; }
-    .stat-value { font-size: 14px; font-weight: 700; }
-    .stat-value.green { color: var(--green); }
-    .stat-value.red { color: var(--red); }
-    .stat-value.yellow { color: var(--yellow); }
-    .stat-value.blue { color: var(--blue); }
+/* Streak */
+.streak{margin:6px 12px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;justify-content:space-between;font-size:12px}
+.streak .s-val{color:var(--orange);font-weight:700}
 
-    /* Section */
-    .section { background: var(--surface); margin: 10px 12px; border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
-    .section-header { padding: 10px 14px; background: var(--surface2); border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 600; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+/* Price */
+.price-bar{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;justify-content:space-between}
+.price-bar .pm{font-size:24px;font-weight:700}
+.vwap-badge{font-size:11px;padding:3px 8px;border-radius:6px}
+.vwap-badge.above{background:#10b98120;border:1px solid var(--green);color:var(--green)}
+.vwap-badge.below{background:#ef444420;border:1px solid var(--red);color:var(--red)}
 
-    /* Direction Tabs */
-    .direction-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 14px; }
-    .dir-btn { padding: 12px; border: 2px solid var(--border); border-radius: 10px; background: var(--surface2); color: var(--text-muted); font-size: 15px; font-weight: 700; cursor: pointer; text-align: center; }
-    .dir-btn.call.active { background: var(--green-dim); border-color: var(--green); color: var(--green); }
-    .dir-btn.put.active { background: var(--red-dim); border-color: var(--red); color: var(--red); }
+/* Section */
+.sec{background:var(--surface);margin:8px 12px;border-radius:12px;border:1px solid var(--border);overflow:hidden}
+.sec-h{padding:10px 14px;background:var(--surface2);border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--muted)}
 
-    /* Contract Type */
-    .contract-type-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 14px; }
-    .ct-btn { padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text-muted); font-size: 13px; font-weight: 600; cursor: pointer; text-align: center; transition: all .2s; }
-    .ct-btn.active { background: var(--yellow-dim); border-color: var(--yellow); color: var(--yellow); }
-    .ct-btn .ct-delta { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
-    .ct-btn.active .ct-delta { color: var(--yellow); opacity: .8; }
+/* Direction */
+.dir-tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px}
+.dir-btn{padding:12px;border:2px solid var(--border);border-radius:10px;background:var(--surface2);color:var(--muted);font-size:15px;font-weight:700;cursor:pointer;text-align:center}
+.dir-btn.call.active{background:#10b98120;border-color:var(--green);color:var(--green)}
+.dir-btn.put.active{background:#ef444420;border-color:var(--red);color:var(--red)}
 
-    /* Contract Card */
-    .contract-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 14px; display: none; }
-    .contract-card.show { display: block; }
-    .cc-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-    .cc-label { font-size: 11px; color: var(--text-muted); }
-    .cc-value { font-size: 13px; font-weight: 600; direction: ltr; }
-    .cc-strike { color: var(--yellow); }
-    .cc-expiry { color: var(--blue); }
-    .cc-loading { text-align: center; padding: 10px; color: var(--text-muted); font-size: 12px; }
+/* Contract Type */
+.ct-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px}
+.ct-btn{padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;text-align:center}
+.ct-btn.active{background:#f59e0b20;border-color:var(--yellow);color:var(--yellow)}
+.ct-btn .delta{font-size:10px;opacity:.7}
 
-    /* Fields */
-    .trade-form { padding: 14px; }
-    .field-group { margin-bottom: 12px; }
-    .field-label { font-size: 11px; color: var(--text-muted); margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
-    .field-label span { color: var(--yellow); font-size: 10px; }
-    .field-row { display: flex; align-items: center; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-    .field-row input { flex: 1; background: transparent; border: none; color: var(--text); font-size: 16px; font-weight: 600; padding: 10px 12px; text-align: left; direction: ltr; outline: none; }
-    .field-row input::placeholder { color: var(--text-muted); font-weight: 400; font-size: 13px; }
-    .field-btn { width: 36px; height: 36px; background: var(--surface); border: none; color: var(--text); font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
-    .field-btn:hover { background: var(--border); }
-    .field-divider { width: 1px; height: 36px; background: var(--border); }
+/* Contract Card */
+.cc{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:12px;display:none}
+.cc.show{display:block}
+.cc-r{display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px}
+.cc-l{color:var(--muted)}.cc-v{font-weight:600;direction:ltr}
 
-    /* Contracts */
-    .contracts-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
-    .contracts-label { font-size: 12px; color: var(--text-muted); }
-    .contracts-ctrl { display: flex; align-items: center; gap: 12px; }
-    .ctrl-btn { width: 30px; height: 30px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
-    .contracts-val { font-size: 18px; font-weight: 700; min-width: 24px; text-align: center; }
+/* Fields */
+.form{padding:14px}
+.fg{margin-bottom:10px}
+.fl{font-size:11px;color:var(--muted);margin-bottom:4px;display:flex;justify-content:space-between}
+.fl .tag{color:var(--red);font-size:10px;font-weight:700}
+.fr{display:flex;align-items:center;background:var(--surface2);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.fr input{flex:1;background:transparent;border:none;color:var(--text);font-size:15px;font-weight:600;padding:10px;text-align:left;direction:ltr;outline:none}
+.fr input::placeholder{color:var(--muted);font-weight:400;font-size:12px}
+.fr button{width:36px;height:36px;background:var(--bg);border:none;color:var(--text);font-size:16px;cursor:pointer}
 
-    /* Warning */
-    .warning-box { background: #ffc10715; border: 1px solid var(--yellow); border-radius: 8px; padding: 10px 12px; font-size: 12px; color: var(--yellow); margin-bottom: 12px; display: none; }
-    .warning-box.show { display: block; }
+/* Qty */
+.qty-row{display:flex;align-items:center;justify-content:space-between;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:12px}
+.qty-row .ql{font-size:12px;color:var(--muted)}
+.qty-ctrl{display:flex;align-items:center;gap:12px}
+.qty-ctrl button{width:30px;height:30px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer}
+.qty-ctrl .qv{font-size:18px;font-weight:700;min-width:24px;text-align:center}
 
-    /* Submit */
-    .submit-btn { width: 100%; padding: 14px; border: none; border-radius: 10px; font-size: 16px; font-weight: 700; cursor: pointer; margin-top: 4px; }
-    .submit-btn.call-btn { background: linear-gradient(135deg, #00c853, #00e676); color: #0b0e14; }
-    .submit-btn.put-btn { background: linear-gradient(135deg, #d32f2f, #ff4444); color: #fff; }
-    .submit-btn:disabled { background: var(--surface2); color: var(--text-muted); cursor: not-allowed; }
+/* Submit */
+.sub-btn{width:100%;padding:14px;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer}
+.sub-btn.call{background:linear-gradient(135deg,#059669,#10b981);color:#fff}
+.sub-btn.put{background:linear-gradient(135deg,#dc2626,#ef4444);color:#fff}
+.sub-btn:disabled{background:var(--surface2);color:var(--muted);cursor:not-allowed}
 
-    /* Open Trade */
-    .open-trade-panel { padding: 14px; display: none; }
-    .open-trade-panel.show { display: block; }
-    .trade-header-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-    .trade-dir-badge { font-size: 14px; font-weight: 700; padding: 5px 14px; border-radius: 20px; }
-    .trade-dir-badge.call { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
-    .trade-dir-badge.put { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
-    .timer-display { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; direction: ltr; }
-    .timer-display.urgent { color: var(--red); animation: blink .5s ease-in-out infinite; }
-    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+/* Warning */
+.warn-box{background:#f59e0b15;border:1px solid var(--yellow);border-radius:8px;padding:10px;font-size:12px;color:var(--yellow);margin-bottom:12px;display:none;text-align:center}
+.warn-box.show{display:block}
 
-    .trade-info-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
-    .ti-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; text-align: center; }
-    .ti-label { font-size: 9px; color: var(--text-muted); margin-bottom: 3px; }
-    .ti-value { font-size: 14px; font-weight: 700; direction: ltr; }
-    .ti-value.green { color: var(--green); }
-    .ti-value.red { color: var(--red); }
+/* ═══ OPEN TRADE PANEL ═══ */
+.otp{padding:14px;display:none}
+.otp.show{display:block}
+.ot-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.ot-dir{font-size:14px;font-weight:700;padding:5px 14px;border-radius:20px}
+.ot-dir.call{background:#10b98130;color:var(--green);border:1px solid var(--green)}
+.ot-dir.put{background:#ef444430;color:var(--red);border:1px solid var(--red)}
+.timer{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;direction:ltr}
+.timer.warn{color:var(--yellow)}.timer.danger{color:var(--red);animation:blink .5s infinite}
+.timer.ext{color:var(--orange);animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 
-    /* LIVE TICKER */
-    .live-pnl-ticker { text-align: center; padding: 16px; border-radius: 12px; margin-bottom: 12px; transition: all .3s ease; position: relative; overflow: hidden; }
-    .live-pnl-ticker.positive { background: var(--green-dim); border: 2px solid var(--green); }
-    .live-pnl-ticker.negative { background: var(--red-dim); border: 2px solid var(--red); }
-    .live-pnl-ticker.neutral { background: var(--surface2); border: 2px solid var(--border); }
-    .ticker-value { font-size: 36px; font-weight: 900; direction: ltr; font-variant-numeric: tabular-nums; transition: transform .15s ease, color .3s ease; }
-    .ticker-value.up { color: var(--green); transform: translateY(-3px); }
-    .ticker-value.down { color: var(--red); transform: translateY(3px); }
-    .ticker-value.flat { color: var(--text); }
-    .ticker-label { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
-    .ticker-contracts { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+/* Trade Info Grid */
+.ti-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px}
+.ti{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px;text-align:center}
+.ti .tl{font-size:9px;color:var(--muted)}
+.ti .tv{font-size:13px;font-weight:700;direction:ltr}
+.tv.g{color:var(--green)}.tv.r{color:var(--red)}
 
-    /* Boost */
-    .boost-btn { width: 100%; padding: 12px; border: 2px dashed var(--border); border-radius: 10px; font-size: 14px; font-weight: 700; cursor: not-allowed; margin-bottom: 10px; background: var(--surface2); color: var(--text-muted); transition: all .3s ease; }
-    .boost-btn.ready { border: 2px solid var(--orange); background: #ff6b3520; color: var(--orange); cursor: pointer; animation: pulse 2s infinite; }
-    .boost-btn.used { border: 1px solid var(--green); background: var(--green-dim); color: var(--green); cursor: not-allowed; }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.7} }
+/* BIG P&L Ticker */
+.pnl-box{text-align:center;padding:16px;border-radius:12px;margin:10px 0;border:2px solid var(--border);transition:all .3s}
+.pnl-box.profit{border-color:var(--green);background:#10b98110}
+.pnl-box.loss{border-color:var(--red);background:#ef444410}
+.pnl-val{font-size:38px;font-weight:900;font-variant-numeric:tabular-nums;direction:ltr;transition:transform .15s}
+.pnl-val.g{color:var(--green)}.pnl-val.r{color:var(--red)}
+.pnl-sub{font-size:11px;color:var(--muted);margin-top:4px}
 
-    .close-btn { width: 100%; padding: 14px; border: none; border-radius: 10px; font-size: 16px; font-weight: 700; cursor: pointer; background: linear-gradient(135deg, #1565c0, #4fc3f7); color: #fff; }
+/* TP-SL Bar */
+.tpsl-bar{height:24px;background:var(--surface2);border-radius:12px;overflow:hidden;margin:8px 0;position:relative}
+.tpsl-fill{height:100%;border-radius:12px;transition:width .5s}
+.tpsl-fill.profit{background:linear-gradient(90deg,#064e3b,#10b981)}
+.tpsl-fill.loss{background:linear-gradient(90deg,#7f1d1d,#ef4444)}
+.tpsl-labels{display:flex;justify-content:space-between;font-size:10px;margin-top:2px}
+.tpsl-labels .sl{color:var(--red)}.tpsl-labels .tp{color:var(--green)}.tpsl-labels .en{color:var(--muted)}
 
-    /* Circuit / Revenge */
-    .circuit-banner { background: var(--red-dim); border: 2px solid var(--red); border-radius: 12px; margin: 10px 12px; padding: 16px; text-align: center; display: none; }
-    .circuit-banner.show { display: block; }
-    .circuit-banner h2 { color: var(--red); font-size: 18px; margin-bottom: 6px; }
-    .circuit-banner p { color: var(--text-muted); font-size: 13px; }
-    .revenge-banner { background: #ff6b3520; border: 1px solid #ff6b35; border-radius: 10px; margin: 0 12px 10px; padding: 12px 14px; font-size: 13px; color: #ff6b35; display: none; }
-    .revenge-banner.show { display: block; }
+/* Boost */
+.boost{width:100%;padding:12px;border:2px dashed var(--border);border-radius:10px;font-size:13px;font-weight:700;cursor:not-allowed;margin-bottom:10px;background:var(--surface2);color:var(--muted);transition:all .3s}
+.boost.ready{border:2px solid var(--orange);background:#f9731620;color:var(--orange);cursor:pointer;animation:pulse 2s infinite}
+.boost.done{border:1px solid var(--green);background:#10b98120;color:var(--green);cursor:not-allowed}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
 
-    /* History */
-    .history-list { padding: 8px 12px 12px; }
-    .history-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-radius: 8px; margin-bottom: 6px; background: var(--surface2); border: 1px solid var(--border); }
-    .history-item.win { border-color: var(--green); }
-    .history-item.loss { border-color: var(--red); }
-    .hi-left { display: flex; align-items: center; gap: 8px; }
-    .hi-num { font-size: 11px; color: var(--text-muted); min-width: 20px; }
-    .hi-dir { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
-    .hi-dir.call { background: var(--green-dim); color: var(--green); }
-    .hi-dir.put { background: var(--red-dim); color: var(--red); }
-    .hi-entry { font-size: 11px; color: var(--text-muted); direction: ltr; }
-    .hi-pnl { font-size: 14px; font-weight: 700; direction: ltr; }
-    .hi-pnl.pos { color: var(--green); }
-    .hi-pnl.neg { color: var(--red); }
-    .empty-history { text-align: center; padding: 20px; color: var(--text-muted); font-size: 12px; }
+/* Close */
+.close-btn{width:100%;padding:14px;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;background:linear-gradient(135deg,#1d4ed8,#3b82f6);color:#fff}
 
-    /* Toast */
-    .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(80px); background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 20px; font-size: 13px; color: var(--text); z-index: 999; transition: transform .3s ease; max-width: 360px; text-align: center; }
-    .toast.show { transform: translateX(-50%) translateY(0); }
-    .toast.success { border-color: var(--green); color: var(--green); }
-    .toast.error { border-color: var(--red); color: var(--red); }
-    .toast.warn { border-color: var(--yellow); color: var(--yellow); }
+/* Circuit */
+.circuit{background:#ef444420;border:2px solid var(--red);border-radius:12px;margin:10px 12px;padding:16px;text-align:center;display:none}
+.circuit.show{display:block}
+.circuit h2{color:var(--red);font-size:18px;margin-bottom:6px}
+.circuit p{color:var(--muted);font-size:13px}
 
-    .new-session-btn { display: block; margin: 10px 12px; width: calc(100% - 24px); padding: 12px; background: var(--surface2); border: 1px dashed var(--border); border-radius: 10px; color: var(--text-muted); font-size: 13px; cursor: pointer; text-align: center; }
-    .new-session-btn:hover { border-color: var(--blue); color: var(--blue); }
-  </style>
+/* History */
+.h-list{padding:8px 12px}
+.h-item{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:8px;margin-bottom:6px;background:var(--surface2);border:1px solid var(--border)}
+.h-item.win{border-color:var(--green)}
+.h-item.loss{border-color:var(--red)}
+.hi-l{display:flex;align-items:center;gap:8px}
+.hi-n{font-size:11px;color:var(--muted)}
+.hi-d{font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px}
+.hi-d.call{background:#10b98130;color:var(--green)}
+.hi-d.put{background:#ef444430;color:var(--red)}
+.hi-p{font-size:11px;color:var(--muted);direction:ltr}
+.hi-pnl{font-size:14px;font-weight:700;direction:ltr}
+.hi-pnl.g{color:var(--green)}.hi-pnl.r{color:var(--red)}
+
+/* Loan Modal */
+.modal-bg{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);z-index:200;align-items:center;justify-content:center}
+.modal-bg.show{display:flex}
+.modal{background:var(--surface);border-radius:16px;padding:24px;width:90%;max-width:360px;border:1px solid var(--border)}
+.modal h3{text-align:center;margin-bottom:12px}
+.modal p{text-align:center;font-size:12px;color:var(--muted);margin-bottom:16px}
+.m-btns{display:grid;gap:10px}
+.m-btn{padding:14px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;cursor:pointer;text-align:center}
+.m-btn:hover{border-color:var(--blue)}
+.m-btn .sub{font-size:11px;color:var(--muted);margin-top:4px}
+.m-btn.cancel{border-color:var(--red);color:var(--red)}
+
+/* Toast */
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 20px;font-size:13px;z-index:300;transition:transform .3s;max-width:340px;text-align:center}
+.toast.show{transform:translateX(-50%) translateY(0)}
+.toast.ok{border-color:var(--green);color:var(--green)}
+.toast.err{border-color:var(--red);color:var(--red)}
+.toast.inf{border-color:var(--blue);color:var(--blue)}
+
+.reset-btn{display:block;margin:10px 12px;width:calc(100% - 24px);padding:12px;background:var(--surface2);border:1px dashed var(--border);border-radius:10px;color:var(--muted);font-size:12px;cursor:pointer;text-align:center}
+</style>
 </head>
 <body>
 
 <header>
-  <div class="header-left">
-    <div class="logo-tm">TM</div>
-    <div class="header-title"><h1>TM Simulator</h1><p>محاكي التداول الانضباطي</p></div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <div class="logo">TM</div>
+    <div class="h-title"><h1>TM Simulator</h1><p>محاكي التداول الانضباطي</p></div>
   </div>
-  <div class="nav-links"><a href="/manual">Manual</a><a href="/dashboard">Dashboard</a></div>
+  <div class="nav-links"><a href="/dashboard">Dashboard</a><a href="/manual">Manual</a></div>
 </header>
 
 <div class="price-bar">
-  <div><div class="price-main" id="tslaPrice">---</div><div class="price-change" id="priceChange">جاري التحميل...</div></div>
-  <div class="vwap-badge" id="vwapBadge">VWAP: ---</div>
+  <div><div class="pm" id="tslaPrice">$--</div></div>
+  <div class="vwap-badge" id="vwapBadge" style="display:none"></div>
 </div>
 
-<div class="stats-row">
-  <div class="stat-item"><div class="stat-label">الرصيد</div><div class="stat-value blue" id="statBalance">$10,000</div></div>
-  <div class="stat-item"><div class="stat-label">P&L اليوم</div><div class="stat-value" id="statPnl">$0</div></div>
-  <div class="stat-item"><div class="stat-label">الصفقات</div><div class="stat-value yellow" id="statTrades">0</div></div>
-  <div class="stat-item"><div class="stat-label">نسبة الفوز</div><div class="stat-value" id="statWinRate">--</div></div>
+<div class="stats">
+  <div class="stat"><div class="lbl">الرصيد</div><div class="val b" id="sBalance">$3,000</div></div>
+  <div class="stat"><div class="lbl">P&L اليوم</div><div class="val" id="sPnl">$0</div></div>
+  <div class="stat"><div class="lbl">الصفقات</div><div class="val y" id="sTrades">0</div></div>
+  <div class="stat"><div class="lbl">نسبة الفوز</div><div class="val" id="sWin">--</div></div>
 </div>
 
-<div class="circuit-banner" id="circuitBanner"><h2>🚫 Circuit Breaker</h2><p>وصلت لحد الخسارة اليومي -$500<br>التداول موقوف</p></div>
-<div class="revenge-banner" id="revengeBanner"></div>
+<div class="streak">
+  <div>🔥 المتتالية: <span class="s-val" id="streakVal">0</span></div>
+  <div>أطول: <span class="s-val" id="maxStreak">0</span></div>
+</div>
 
-<div class="section" id="tradeSection">
-  <div class="section-header">📋 فتح صفقة جديدة</div>
-  <div class="trade-form" id="tradeForm">
-    <div class="direction-tabs">
-      <button class="dir-btn call active" id="btnCall" onclick="selectDir('CALL')">📈 CALL</button>
-      <button class="dir-btn put" id="btnPut" onclick="selectDir('PUT')">📉 PUT</button>
+<div class="circuit" id="circuitBanner"><h2>🚫 Circuit Breaker</h2><p>وصلت لحد الخسارة اليومي -$500<br>التداول موقوف</p></div>
+
+<!-- ═══ TRADE FORM ═══ -->
+<div class="sec" id="formSection">
+  <div class="sec-h">📋 فتح صفقة جديدة</div>
+  <div class="form" id="tradeForm">
+    <div class="dir-tabs">
+      <button class="dir-btn put" id="btnPut" onclick="setDir('PUT')">📉 PUT</button>
+      <button class="dir-btn call active" id="btnCall" onclick="setDir('CALL')">📈 CALL</button>
     </div>
 
-    <!-- Contract Type -->
-    <div class="contract-type-row">
-      <button class="ct-btn active" id="btnATM" onclick="selectContractType('ATM')">ATM<div class="ct-delta">Delta ~0.50</div></button>
-      <button class="ct-btn" id="btnITM" onclick="selectContractType('ITM')">ITM<div class="ct-delta">Delta ~0.70</div></button>
+    <div class="ct-row">
+      <button class="ct-btn" id="btnATM" onclick="pickCT('atm')">ATM<div class="delta">Δ ~0.50</div></button>
+      <button class="ct-btn" id="btnITM" onclick="pickCT('itm')">ITM<div class="delta">Δ ~0.70</div></button>
     </div>
 
-    <!-- Contract Card -->
-    <div class="contract-card" id="contractCard">
-      <div class="cc-loading" id="ccLoading">جاري البحث عن العقد...</div>
-      <div id="ccContent" style="display:none">
-        <div class="cc-row"><span class="cc-label">Strike</span><span class="cc-value cc-strike" id="ccStrike">--</span></div>
-        <div class="cc-row"><span class="cc-label">انتهاء</span><span class="cc-value cc-expiry" id="ccExpiry">--</span></div>
-        <div class="cc-row"><span class="cc-label">Bid / Ask</span><span class="cc-value" id="ccBidAsk">--</span></div>
-        <div class="cc-row"><span class="cc-label">السعر (Mid)</span><span class="cc-value" id="ccMid" style="color:var(--green);font-size:16px">--</span></div>
-      </div>
+    <div class="cc" id="ccCard">
+      <div class="cc-r"><span class="cc-l">Strike:</span><span class="cc-v" id="ccStrike">--</span></div>
+      <div class="cc-r"><span class="cc-l">انتهاء:</span><span class="cc-v" id="ccExpiry">--</span></div>
+      <div class="cc-r"><span class="cc-l">Delta:</span><span class="cc-v" id="ccDelta">--</span></div>
+      <div class="cc-r"><span class="cc-l">السعر (Mid):</span><span class="cc-v" id="ccMid">--</span></div>
     </div>
 
-    <div class="warning-box" id="vwapWarning"></div>
-
-    <div class="field-group">
-      <div class="field-label">سعر الدخول <span>إجباري</span></div>
-      <div class="field-row">
-        <button class="field-btn" onclick="adjustField('entry', -0.05)">−</button><div class="field-divider"></div>
-        <input type="number" id="entryPrice" placeholder="أدخل السعر" step="0.05" min="0.01" />
-        <div class="field-divider"></div><button class="field-btn" onclick="adjustField('entry', 0.05)">+</button>
-      </div>
+    <div class="fg">
+      <div class="fl"><span>سعر الدخول</span><span class="tag">إجباري</span></div>
+      <div class="fr"><button onclick="adj('entry',-0.05)">−</button><input id="fEntry" type="number" step="0.01" placeholder="أدخل السعر"><button onclick="adj('entry',0.05)">+</button></div>
+    </div>
+    <div class="fg">
+      <div class="fl"><span>جني الربح (TP)</span><span class="tag">إجباري — OCO</span></div>
+      <div class="fr"><button onclick="adj('tp',-0.05)">−</button><input id="fTP" type="number" step="0.01" placeholder="أكبر من السعر"><button onclick="adj('tp',0.05)">+</button></div>
+    </div>
+    <div class="fg">
+      <div class="fl"><span>وقف الخسارة (SL)</span><span class="tag">إجباري — OCO</span></div>
+      <div class="fr"><button onclick="adj('sl',-0.05)">−</button><input id="fSL" type="number" step="0.01" placeholder="أقل من السعر"><button onclick="adj('sl',0.05)">+</button></div>
     </div>
 
-    <div class="field-group">
-      <div class="field-label">جني الربح (TP) <span>إجباري — OCO</span></div>
-      <div class="field-row">
-        <button class="field-btn" onclick="adjustField('tp', -0.05)">−</button><div class="field-divider"></div>
-        <input type="number" id="tpPrice" placeholder="أكبر من السعر" step="0.05" min="0.01" />
-        <div class="field-divider"></div><button class="field-btn" onclick="adjustField('tp', 0.05)">+</button>
-      </div>
+    <div class="qty-row">
+      <span class="ql">عدد العقود (100 سهم × عقد)</span>
+      <div class="qty-ctrl"><button onclick="adjQ(-1)">−</button><span class="qv" id="qtyVal">1</span><button onclick="adjQ(1)">+</button></div>
     </div>
 
-    <div class="field-group">
-      <div class="field-label">وقف الخسارة (SL) <span>إجباري — OCO</span></div>
-      <div class="field-row">
-        <button class="field-btn" onclick="adjustField('sl', -0.05)">−</button><div class="field-divider"></div>
-        <input type="number" id="slPrice" placeholder="أقل من السعر" step="0.05" min="0.01" />
-        <div class="field-divider"></div><button class="field-btn" onclick="adjustField('sl', 0.05)">+</button>
-      </div>
-    </div>
-
-    <div class="field-group">
-      <div class="field-label">عدد العقود</div>
-      <div class="contracts-row">
-        <span class="contracts-label">الكمية (100 سهم x عقد)</span>
-        <div class="contracts-ctrl">
-          <button class="ctrl-btn" onclick="adjustContracts(-1)">−</button>
-          <span class="contracts-val" id="contractsVal">1</span>
-          <button class="ctrl-btn" onclick="adjustContracts(1)">+</button>
-        </div>
-      </div>
-    </div>
-
-    <button class="submit-btn call-btn" id="submitBtn" onclick="openTrade()">📈 فتح CALL</button>
+    <div class="warn-box" id="warnBox"></div>
+    <button class="sub-btn call" id="subBtn" onclick="openTrade()">📈 فتح CALL</button>
   </div>
+</div>
 
-  <!-- Open Trade Panel -->
-  <div class="open-trade-panel" id="openTradePanel">
-    <div class="trade-header-row">
-      <div class="trade-dir-badge call" id="tradeDirBadge">CALL</div>
-      <div class="timer-display" id="tradeTimer">08:00</div>
-    </div>
-    <div class="trade-info-grid">
-      <div class="ti-item"><div class="ti-label">دخول</div><div class="ti-value" id="tiEntry">--</div></div>
-      <div class="ti-item"><div class="ti-label">TP</div><div class="ti-value green" id="tiTp">--</div></div>
-      <div class="ti-item"><div class="ti-label">SL</div><div class="ti-value red" id="tiSl">--</div></div>
+<!-- ═══ OPEN TRADE PANEL ═══ -->
+<div class="sec" id="otpSection" style="display:none">
+  <div class="otp show" id="otPanel">
+    <div class="ot-head">
+      <span class="timer" id="timer">08:00</span>
+      <span class="ot-dir call" id="otDir">CALL</span>
     </div>
 
-    <!-- LIVE TICKER -->
-    <div class="live-pnl-ticker neutral" id="livePnlTicker">
-      <div class="ticker-value flat" id="tickerValue">$0.00</div>
-      <div class="ticker-label">P&L الصفقة</div>
-      <div class="ticker-contracts" id="tickerContracts">1 عقد</div>
+    <div class="ti-grid">
+      <div class="ti"><div class="tl">دخول</div><div class="tv" id="otEntry">$0</div></div>
+      <div class="ti"><div class="tl">الحالي</div><div class="tv" id="otCurr">$0</div></div>
+      <div class="ti"><div class="tl">Delta</div><div class="tv" id="otDelta">Δ0.5</div></div>
+    </div>
+    <div class="ti-grid">
+      <div class="ti"><div class="tl">TSLA دخول</div><div class="tv" id="otTsla">$0</div></div>
+      <div class="ti"><div class="tl">SL</div><div class="tv r" id="otSL">$0</div></div>
+      <div class="ti"><div class="tl">TP</div><div class="tv g" id="otTP">$0</div></div>
     </div>
 
-    <!-- Boost Button -->
-    <button class="boost-btn" id="boostBtn" onclick="boostTrade()">🚀 تعزيز +1 عقد (متاح عند +$50)</button>
+    <div class="pnl-box" id="pnlBox">
+      <div class="pnl-val" id="pnlVal">$0</div>
+      <div class="pnl-sub"><span id="pnlInfo">1 عقد | Delta 0.5 | Θ $0</span></div>
+    </div>
 
+    <div class="tpsl-bar"><div class="tpsl-fill" id="tpslFill" style="width:50%"></div></div>
+    <div class="tpsl-labels"><span class="sl" id="slLbl">SL</span><span class="en">دخول</span><span class="tp" id="tpLbl">TP</span></div>
+
+    <button class="boost" id="boostBtn" onclick="doBoost()">🚀 تعزيز +1 عقد (متاح عند +$50)</button>
     <button class="close-btn" onclick="closeTrade('manual')">🔒 إغلاق الصفقة</button>
   </div>
 </div>
 
-<!-- History -->
-<div class="section">
-  <div class="section-header">📊 سجل الصفقات</div>
-  <div class="history-list" id="historyList"><div class="empty-history">لا توجد صفقات بعد — ابدأ أول صفقة</div></div>
+<!-- ═══ HISTORY ═══ -->
+<div class="sec" id="histSec">
+  <div class="sec-h">📊 سجل الصفقات</div>
+  <div class="h-list" id="hList"><div style="text-align:center;padding:20px;color:var(--muted);font-size:12px">لا توجد صفقات بعد</div></div>
 </div>
 
-<button class="new-session-btn" onclick="newSession()">🔄 جلسة جديدة (إعادة تعيين)</button>
+<button class="reset-btn" onclick="resetSession()">🔄 إعادة تعيين الجلسة</button>
+
+<!-- Loan Modal -->
+<div class="modal-bg" id="loanModal">
+  <div class="modal">
+    <h3>💰 تمويل المحفظة</h3>
+    <p>رصيدك منخفض — اختر مصدر التمويل:</p>
+    <div class="m-btns">
+      <div class="m-btn" onclick="takeLoan('bank',500)">🏦 قرض بنكي — $500<div class="sub">فائدة 5% — ترجع $525</div></div>
+      <div class="m-btn" onclick="takeLoan('bank',1000)">🏦 قرض بنكي — $1,000<div class="sub">فائدة 5% — ترجع $1,050</div></div>
+      <div class="m-btn" onclick="takeLoan('friend',500)">🤝 دعم صديق — $500<div class="sub">بدون فائدة — ترجع $500</div></div>
+      <div class="m-btn cancel" onclick="closeLoan()">❌ لا شكراً — أكمل بالموجود</div>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
-// ── State ──
-let SESSION_ID = localStorage.getItem('tm_session_id') || null;
-let session = null;
-let currentDir = 'CALL';
-let contractType = 'ATM';
-let contracts = 1;
-let currentPrice = 0;
-let vwap = 0;
-let selectedContract = null;
-let priceInterval = null;
-let timerInterval = null;
-let pnlInterval = null;
-let tradeOpenedAt = null;
-let lastPnl = 0;
-let prevTickerPnl = 0;
+// ═══ STATE ═══
+const S={
+  sid:localStorage.getItem('tm_sid')||null,
+  dir:'CALL',qty:1,ct:null,contract:null,
+  trade:null,tsla:0,vwap:0,
+  timerIv:null,pnlIv:null,priceIv:null,
+  secs:480,extended:false,theta:0,delta:0.5
+};
 
-// ── Init ──
-async function init() {
-  if (!SESSION_ID) await newSession();
-  else await loadSession();
-  await fetchPrice();
-  priceInterval = setInterval(fetchPrice, 5000);
-  selectDir('CALL');
-  fetchOptions();
+// ═══ INIT ═══
+document.addEventListener('DOMContentLoaded',async()=>{
+  if(!S.sid)await newSession();else await loadSession();
+  await getPrice();
+  S.priceIv=setInterval(getPrice,5000);
+});
+
+async function newSession(){
+  const r=await f('/tm/session/new','POST');
+  if(r.ok){S.sid=r.session.id;localStorage.setItem('tm_sid',S.sid);updUI(r.session);}
+}
+async function loadSession(){
+  const r=await f(`/tm/session/${S.sid}`);
+  if(r.ok){updUI(r.session);if(r.session.open_trade){S.trade=r.session.open_trade;S.delta=S.trade.delta||0.5;showOTP();}}
+  else await newSession();
 }
 
-async function newSession() {
-  try {
-    const r = await fetch('/tm/session/new', { method: 'POST' });
-    const d = await r.json();
-    if (d.ok) {
-      SESSION_ID = d.session.id;
-      localStorage.setItem('tm_session_id', SESSION_ID);
-      session = d.session;
-      renderSession();
-      showToast('جلسة جديدة — رصيد $10,000', 'success');
+// ═══ PRICE ═══
+async function getPrice(){
+  try{
+    const r=await f('/tm/price');
+    if(r.ok&&r.price>0){
+      S.tsla=r.price;
+      document.getElementById('tslaPrice').textContent=`$${r.price.toFixed(2)}`;
+      if(r.vwap){S.vwap=r.vwap;showVWAP();}
+      if(S.trade)updatePnL();
     }
-  } catch(e) { showToast('خطأ في إنشاء الجلسة', 'error'); }
+  }catch(e){}
+}
+function showVWAP(){
+  const b=document.getElementById('vwapBadge');b.style.display='inline-block';
+  if(S.tsla>S.vwap){b.className='vwap-badge above';b.textContent=`VWAP: $${S.vwap.toFixed(2)} ↑`;}
+  else{b.className='vwap-badge below';b.textContent=`VWAP: $${S.vwap.toFixed(2)} ↓`;}
 }
 
-async function loadSession() {
-  try {
-    const r = await fetch(`/tm/session/${SESSION_ID}`);
-    if (r.status === 404) { await newSession(); return; }
-    const d = await r.json();
-    if (d.ok) { session = d.session; renderSession(); if (session.open_trade) showOpenTradePanel(session.open_trade); }
-  } catch(e) { await newSession(); }
+// ═══ DIRECTION ═══
+function setDir(d){
+  S.dir=d;
+  document.getElementById('btnCall').className=`dir-btn call${d==='CALL'?' active':''}`;
+  document.getElementById('btnPut').className=`dir-btn put${d==='PUT'?' active':''}`;
+  const btn=document.getElementById('subBtn');
+  btn.className=d==='CALL'?'sub-btn call':'sub-btn put';
+  btn.textContent=d==='CALL'?'📈 فتح CALL':'📉 فتح PUT';
+  if(S.ct)pickCT(S.ct);
 }
 
-// ── Price ──
-async function fetchPrice() {
-  try {
-    const r = await fetch('/tm/price');
-    const d = await r.json();
-    if (d.ok && d.price > 0) {
-      const prev = currentPrice;
-      currentPrice = d.price;
-      document.getElementById('tslaPrice').textContent = '$' + currentPrice.toFixed(2);
-      const diff = currentPrice - prev;
-      const pct = prev > 0 ? ((diff / prev) * 100).toFixed(2) : '0.00';
-      const el = document.getElementById('priceChange');
-      if (prev > 0 && diff !== 0) {
-        el.textContent = (diff > 0 ? '+' : '') + diff.toFixed(2) + ' (' + (diff > 0 ? '+' : '') + pct + '%)';
-        el.className = 'price-change ' + (diff > 0 ? 'up' : 'down');
-      }
-      // VWAP simulation
-      if (!vwap || Math.random() < 0.1) vwap = currentPrice * (1 + (Math.random() * 0.004 - 0.002));
-      document.getElementById('vwapBadge').textContent = 'VWAP: $' + vwap.toFixed(2);
-      checkVwapWarning();
-      updateLivePnl();
+// ═══ FIELDS ═══
+function adj(fld,d){const m={entry:'fEntry',tp:'fTP',sl:'fSL'};const el=document.getElementById(m[fld]);let v=parseFloat(el.value)||0;el.value=Math.max(0,v+d).toFixed(2);}
+function adjQ(d){S.qty=Math.max(1,Math.min(5,S.qty+d));document.getElementById('qtyVal').textContent=S.qty;}
+
+// ═══ CONTRACT TYPE ═══
+async function pickCT(type){
+  S.ct=type;
+  document.getElementById('btnATM').className=`ct-btn${type==='atm'?' active':''}`;
+  document.getElementById('btnITM').className=`ct-btn${type==='itm'?' active':''}`;
+  try{
+    const optType=S.dir==='CALL'?'call':'put';
+    const r=await f(`/tm/options?type=${optType}`);
+    if(r.ok){
+      const c=type==='atm'?r.atm:r.itm;
+      if(c){
+        S.contract=c;S.delta=c.delta||0.5;
+        document.getElementById('ccCard').classList.add('show');
+        document.getElementById('ccStrike').textContent=`$${c.strike}`;
+        document.getElementById('ccExpiry').textContent=c.expiry||'--';
+        document.getElementById('ccDelta').textContent=`Δ${c.delta}`;
+        document.getElementById('ccMid').textContent=`$${c.mid.toFixed(2)}`;
+        document.getElementById('fEntry').value=c.mid.toFixed(2);
+      }else{document.getElementById('ccCard').classList.remove('show');toast('لا يوجد عقد — السوق مغلق؟','err');}
     }
-  } catch(e) {}
+  }catch(e){toast('خطأ في جلب العقود','err');}
 }
 
-// ── Options Chain ──
-async function fetchOptions() {
-  const card = document.getElementById('contractCard');
-  card.classList.add('show');
-  document.getElementById('ccLoading').style.display = 'block';
-  document.getElementById('ccContent').style.display = 'none';
-  const type = currentDir === 'CALL' ? 'call' : 'put';
-  try {
-    const r = await fetch('/tm/options?type=' + type);
-    const d = await r.json();
-    if (d.ok) {
-      const contract = contractType === 'ATM' ? d.atm : d.itm;
-      if (contract) {
-        selectedContract = contract;
-        document.getElementById('ccStrike').textContent = '$' + contract.strike.toFixed(0);
-        document.getElementById('ccExpiry').textContent = contract.expiry;
-        document.getElementById('ccBidAsk').textContent = '$' + contract.bid.toFixed(2) + ' / $' + contract.ask.toFixed(2);
-        document.getElementById('ccMid').textContent = '$' + contract.mid.toFixed(2);
-        document.getElementById('entryPrice').value = contract.mid.toFixed(2);
-        document.getElementById('ccLoading').style.display = 'none';
-        document.getElementById('ccContent').style.display = 'block';
-      } else {
-        document.getElementById('ccLoading').textContent = 'لا يوجد عقد — السوق مغلق؟';
-        selectedContract = null;
-      }
-    } else {
-      document.getElementById('ccLoading').textContent = d.error || 'خطأ';
-    }
-  } catch(e) { document.getElementById('ccLoading').textContent = 'خطأ في الاتصال'; }
+// ═══ OPEN TRADE ═══
+async function openTrade(){
+  const entry=parseFloat(document.getElementById('fEntry').value);
+  const tp=parseFloat(document.getElementById('fTP').value);
+  const sl=parseFloat(document.getElementById('fSL').value);
+  if(!entry||entry<=0)return toast('أدخل سعر الدخول','err');
+  if(!tp||tp<=0)return toast('أدخل TP — OCO إجباري','err');
+  if(!sl||sl<=0)return toast('أدخل SL — OCO إجباري','err');
+
+  const body={session_id:S.sid,direction:S.dir,entry_price:entry,tp,sl,contracts:S.qty,tsla_price:S.tsla,vwap:S.vwap,delta:S.delta,contract_symbol:S.contract?S.contract.symbol:''};
+  const r=await f('/tm/trade/open','POST',body);
+  if(r.ok){S.trade=r.trade;S.trade.delta=S.delta;S.theta=0;S.extended=false;S.secs=480;showOTP();toast('✅ تم فتح الصفقة','ok');}
+  else toast(r.error||'خطأ','err');
 }
 
-// ── Direction / Contract Type ──
-function selectDir(dir) {
-  currentDir = dir;
-  document.getElementById('btnCall').classList.toggle('active', dir === 'CALL');
-  document.getElementById('btnPut').classList.toggle('active', dir === 'PUT');
-  const btn = document.getElementById('submitBtn');
-  btn.className = 'submit-btn ' + (dir === 'CALL' ? 'call-btn' : 'put-btn');
-  btn.textContent = dir === 'CALL' ? '📈 فتح CALL' : '📉 فتح PUT';
-  checkVwapWarning();
-  fetchOptions();
-}
-
-function selectContractType(type) {
-  contractType = type;
-  document.getElementById('btnATM').classList.toggle('active', type === 'ATM');
-  document.getElementById('btnITM').classList.toggle('active', type === 'ITM');
-  fetchOptions();
-}
-
-function checkVwapWarning() {
-  const box = document.getElementById('vwapWarning');
-  if (!vwap || !currentPrice) { box.classList.remove('show'); return; }
-  if (currentDir === 'CALL' && currentPrice < vwap) { box.textContent = '⚠️ السعر تحت VWAP — تأكد من إشارة انعكاس!'; box.classList.add('show'); }
-  else if (currentDir === 'PUT' && currentPrice > vwap) { box.textContent = '⚠️ السعر فوق VWAP — تأكد من إشارة انعكاس!'; box.classList.add('show'); }
-  else { box.classList.remove('show'); }
-}
-
-// ── Field Helpers ──
-function adjustField(field, delta) {
-  const ids = { entry: 'entryPrice', tp: 'tpPrice', sl: 'slPrice' };
-  const el = document.getElementById(ids[field]);
-  const val = parseFloat(el.value) || 0;
-  el.value = Math.max(0.01, val + delta).toFixed(2);
-}
-function adjustContracts(delta) {
-  contracts = Math.max(1, Math.min(10, contracts + delta));
-  document.getElementById('contractsVal').textContent = contracts;
-}
-
-// ── Open Trade ──
-async function openTrade() {
-  if (session && session.circuit_broken) { showToast('🚫 Circuit Breaker مفعّل', 'error'); return; }
-  const entry = parseFloat(document.getElementById('entryPrice').value);
-  const tp = parseFloat(document.getElementById('tpPrice').value);
-  const sl = parseFloat(document.getElementById('slPrice').value);
-  if (!entry || entry <= 0) { showToast('⚠️ أدخل سعر الدخول', 'warn'); return; }
-  if (!tp || tp <= 0) { showToast('⚠️ OCO إجباري — أدخل TP', 'warn'); return; }
-  if (!sl || sl <= 0) { showToast('⚠️ OCO إجباري — أدخل SL', 'warn'); return; }
-  try {
-    const r = await fetch('/tm/trade/open', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: SESSION_ID, direction: currentDir, entry_price: entry, tp: tp, sl: sl, contracts: contracts, tsla_price: currentPrice, vwap: vwap })
-    });
-    const d = await r.json();
-    if (d.ok) {
-      session.open_trade = d.trade;
-      tradeOpenedAt = new Date();
-      showOpenTradePanel(d.trade);
-      if (d.warning) showToast(d.warning, 'warn');
-      else showToast('✅ ' + currentDir + ' مفتوحة — ' + contracts + ' عقد', 'success');
-    } else { showToast(d.error || 'خطأ', 'error'); }
-  } catch(e) { showToast('خطأ في الاتصال', 'error'); }
-}
-
-// ── Show Open Trade ──
-function showOpenTradePanel(trade) {
-  document.getElementById('tradeForm').style.display = 'none';
-  document.getElementById('openTradePanel').classList.add('show');
-  const badge = document.getElementById('tradeDirBadge');
-  badge.textContent = trade.direction;
-  badge.className = 'trade-dir-badge ' + trade.direction.toLowerCase();
-  document.getElementById('tiEntry').textContent = '$' + trade.entry_price.toFixed(2);
-  document.getElementById('tiTp').textContent = '$' + trade.tp.toFixed(2);
-  document.getElementById('tiSl').textContent = '$' + trade.sl.toFixed(2);
-  document.getElementById('tickerContracts').textContent = trade.contracts + ' عقد';
-  const boostBtn = document.getElementById('boostBtn');
-  if (trade.boosted) { boostBtn.className = 'boost-btn used'; boostBtn.textContent = '✅ تم التعزيز (+1 عقد)'; }
-  else { boostBtn.className = 'boost-btn'; boostBtn.textContent = '🚀 تعزيز +1 عقد (متاح عند +$50)'; }
-  tradeOpenedAt = new Date(trade.opened_at + 'Z');
-  lastPnl = 0; prevTickerPnl = 0;
+function showOTP(){
+  document.getElementById('formSection').style.display='none';
+  document.getElementById('otpSection').style.display='block';
+  const t=S.trade;
+  const dirEl=document.getElementById('otDir');
+  dirEl.textContent=t.direction;dirEl.className=`ot-dir ${t.direction.toLowerCase()}`;
+  document.getElementById('otEntry').textContent=`$${t.entry_price.toFixed(2)}`;
+  document.getElementById('otCurr').textContent=`$${t.entry_price.toFixed(2)}`;
+  document.getElementById('otDelta').textContent=`Δ${(t.delta||S.delta).toFixed(2)}`;
+  document.getElementById('otTsla').textContent=`$${(t.tsla_entry||S.tsla).toFixed(2)}`;
+  document.getElementById('otSL').textContent=`$${t.sl.toFixed(2)}`;
+  document.getElementById('otTP').textContent=`$${t.tp.toFixed(2)}`;
+  document.getElementById('slLbl').textContent=`SL $${t.sl.toFixed(2)}`;
+  document.getElementById('tpLbl').textContent=`TP $${t.tp.toFixed(2)}`;
+  document.getElementById('pnlInfo').textContent=`${t.contracts} عقد | Delta ${(t.delta||S.delta).toFixed(2)} | Θ $0`;
+  updBoost(0);
   startTimer();
-  pnlInterval = setInterval(updateLivePnl, 1000);
+  S.pnlIv=setInterval(updatePnL,2000);
 }
 
-// ── Timer ──
-function startTimer() {
-  if (timerInterval) clearInterval(timerInterval);
-  timerInterval = setInterval(function() {
-    const elapsed = Math.floor((Date.now() - tradeOpenedAt) / 1000);
-    const remaining = Math.max(0, 480 - elapsed);
-    const m = Math.floor(remaining / 60).toString().padStart(2, '0');
-    const s = (remaining % 60).toString().padStart(2, '0');
-    const el = document.getElementById('tradeTimer');
-    el.textContent = m + ':' + s;
-    if (remaining <= 60) { el.classList.add('urgent'); if (remaining === 60) showToast('⏰ دقيقة واحدة!', 'warn'); }
-    if (remaining === 0) { showToast('🔔 انتهى الوقت — أغلق!', 'warn'); clearInterval(timerInterval); }
-  }, 1000);
+// ═══ TIMER ═══
+function startTimer(){
+  if(S.timerIv)clearInterval(S.timerIv);
+  S.timerIv=setInterval(()=>{
+    S.secs--;
+    const m=Math.floor(Math.abs(S.secs)/60),s=Math.abs(S.secs)%60;
+    const el=document.getElementById('timer');
+    el.textContent=`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    if(S.secs<=0&&!S.extended){S.extended=true;S.secs=180;el.className='timer ext';toast('⏰ تمديد 3 دقائق — بيع إجباري بعدها!','inf');}
+    else if(S.secs<=0&&S.extended){clearInterval(S.timerIv);closeTrade('timeout');toast('🔔 بيع إجباري — انتهى الوقت!','err');}
+    else if(!S.extended&&S.secs<=60)el.className='timer danger';
+    else if(!S.extended&&S.secs<=180)el.className='timer warn';
+    else if(S.extended)el.className='timer ext';
+    else el.className='timer';
+  },1000);
 }
 
-// ── LIVE P&L TICKER ──
-function updateLivePnl() {
-  const trade = session ? session.open_trade : null;
-  if (!trade || !currentPrice) return;
-  const delta = contractType === 'ITM' ? 0.70 : 0.50;
-  const tslaMove = currentPrice - trade.tsla_entry;
-  const optionMove = trade.direction === 'CALL' ? tslaMove * delta : -tslaMove * delta;
-  // Add small random noise for realism
-  const noise = (Math.random() - 0.5) * 0.02;
-  const simPrice = Math.max(0.01, trade.entry_price + optionMove + noise);
-  const pnl = (simPrice - trade.entry_price) * 100 * trade.contracts;
+// ═══ LIVE P&L ═══
+function updatePnL(){
+  if(!S.trade)return;
+  const t=S.trade,delta=t.delta||S.delta;
+  const tslaMove=S.tsla-(t.tsla_entry||S.tsla);
+  const optMove=t.direction==='CALL'?tslaMove*delta:-tslaMove*delta;
+  const elapsed=(Date.now()-new Date(t.opened_at).getTime())/60000;
+  S.theta=elapsed*0.01;
+  const currPrice=Math.max(0.01,t.entry_price+optMove-S.theta);
+  const pnl=(optMove-S.theta)*100*t.contracts;
 
-  const ticker = document.getElementById('livePnlTicker');
-  const valueEl = document.getElementById('tickerValue');
+  // Update display
+  const pnlEl=document.getElementById('pnlVal');
+  const box=document.getElementById('pnlBox');
+  if(pnl>=0){pnlEl.textContent=`+$${Math.abs(pnl).toFixed(0)}`;pnlEl.className='pnl-val g';box.className='pnl-box profit';}
+  else{pnlEl.textContent=`-$${Math.abs(pnl).toFixed(0)}`;pnlEl.className='pnl-val r';box.className='pnl-box loss';}
+  
+  document.getElementById('otCurr').textContent=`$${currPrice.toFixed(2)}`;
+  document.getElementById('pnlInfo').textContent=`${t.contracts} عقد | Delta ${delta.toFixed(2)} | Θ -$${S.theta.toFixed(2)}`;
+  
+  // TP-SL bar
+  const range=t.tp-t.sl;
+  if(range>0){const pos=(currPrice-t.sl)/range;const pct=Math.max(0,Math.min(100,pos*100));const fill=document.getElementById('tpslFill');fill.style.width=pct+'%';fill.className=pct>=50?'tpsl-fill profit':'tpsl-fill loss';}
+  
+  updBoost(pnl);
+  
+  // Auto SL/TP
+  if(currPrice>=t.tp){closeTrade('tp');toast('🎯 وصل الهدف! — TP','ok');}
+  else if(currPrice<=t.sl){closeTrade('sl');toast('🛑 وقف الخسارة! — SL','err');}
+}
 
-  // Direction animation
-  const dir = pnl > prevTickerPnl + 1 ? 'up' : pnl < prevTickerPnl - 1 ? 'down' : 'flat';
-  valueEl.className = 'ticker-value ' + dir;
-  valueEl.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
-  ticker.className = 'live-pnl-ticker ' + (pnl > 5 ? 'positive' : pnl < -5 ? 'negative' : 'neutral');
-  document.getElementById('tickerContracts').textContent = trade.contracts + ' عقد | Delta ' + delta;
-  prevTickerPnl = pnl;
+function updBoost(pnl){
+  const btn=document.getElementById('boostBtn');
+  if(!S.trade)return;
+  if(S.trade.boosted){btn.className='boost done';btn.textContent='✅ تم التعزيز';}
+  else if(pnl>=50){btn.className='boost ready';btn.textContent=`🚀 تعزيز +1 عقد (P&L: +$${pnl.toFixed(0)})`;}
+  else{btn.className='boost';btn.textContent='🚀 تعزيز +1 عقد (متاح عند +$50)';}
+}
 
-  // Vibration on big move
-  if (Math.abs(pnl - lastPnl) > 30 && navigator.vibrate) navigator.vibrate(50);
+// ═══ CLOSE TRADE ═══
+async function closeTrade(reason){
+  if(!S.trade)return;
+  const t=S.trade,delta=t.delta||S.delta;
+  const tslaMove=S.tsla-(t.tsla_entry||S.tsla);
+  const optMove=t.direction==='CALL'?tslaMove*delta:-tslaMove*delta;
+  let exitPrice=Math.max(0.01,t.entry_price+optMove-S.theta);
+  if(reason==='tp')exitPrice=t.tp;
+  if(reason==='sl')exitPrice=t.sl;
 
-  // Boost button state
-  const boostBtn = document.getElementById('boostBtn');
-  if (!trade.boosted) {
-    if (pnl >= 50) { boostBtn.className = 'boost-btn ready'; boostBtn.textContent = '🚀 تعزيز +1 عقد (أنت رابح +$' + pnl.toFixed(0) + ')'; }
-    else { boostBtn.className = 'boost-btn'; boostBtn.textContent = '🚀 تعزيز +1 عقد (متاح عند +$50)'; }
+  const r=await f('/tm/trade/close','POST',{session_id:S.sid,exit_price:exitPrice,reason});
+  if(r.ok){
+    if(S.timerIv)clearInterval(S.timerIv);
+    if(S.pnlIv)clearInterval(S.pnlIv);
+    S.trade=null;S.theta=0;
+    const pnl=r.pnl;
+    const msg=reason==='tp'?'🎯 TP':reason==='sl'?'🛑 SL':reason==='timeout'?'⏰ انتهى الوقت':'يدوي';
+    const pnlTxt=pnl>=0?`+$${pnl.toFixed(0)}`:`-$${Math.abs(pnl).toFixed(0)}`;
+    toast(`${msg} | ${pnlTxt}`,pnl>=0?'ok':'err');
+    updUI(r);addHist(r.trade);
+    document.getElementById('otpSection').style.display='none';
+    document.getElementById('formSection').style.display='block';
+    if(r.balance<100)setTimeout(()=>document.getElementById('loanModal').classList.add('show'),1000);
   }
-
-  lastPnl = pnl;
-
-  // Auto TP/SL
-  if (simPrice >= trade.tp) { showToast('🎯 TP — إغلاق تلقائي!', 'success'); closeTrade('tp', simPrice); }
-  else if (simPrice <= trade.sl) { showToast('🛑 SL — إغلاق تلقائي!', 'error'); closeTrade('sl', simPrice); }
 }
 
-// ── Boost ──
-async function boostTrade() {
-  const trade = session ? session.open_trade : null;
-  if (!trade || trade.boosted) return;
-  const delta = contractType === 'ITM' ? 0.70 : 0.50;
-  const tslaMove = currentPrice - trade.tsla_entry;
-  const optionMove = trade.direction === 'CALL' ? tslaMove * delta : -tslaMove * delta;
-  const simPrice = Math.max(0.01, trade.entry_price + optionMove);
-  const pnl = (simPrice - trade.entry_price) * 100 * trade.contracts;
-  if (pnl < 50) { showToast('⚠️ التعزيز فقط عند ربح +$50', 'warn'); return; }
-  try {
-    const r = await fetch('/tm/trade/boost', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: SESSION_ID, current_pnl: pnl, boost_price: simPrice })
-    });
-    const d = await r.json();
-    if (d.ok) {
-      session.open_trade = d.trade;
-      document.getElementById('boostBtn').className = 'boost-btn used';
-      document.getElementById('boostBtn').textContent = '✅ تم التعزيز (+1 عقد)';
-      document.getElementById('tickerContracts').textContent = d.trade.contracts + ' عقد | Delta ' + delta;
-      showToast(d.message, 'success');
-      if (navigator.vibrate) navigator.vibrate([50, 30, 50]);
-    } else { showToast(d.error, 'error'); }
-  } catch(e) { showToast('خطأ', 'error'); }
+// ═══ BOOST ═══
+async function doBoost(){
+  if(!S.trade||S.trade.boosted)return;
+  const t=S.trade,delta=t.delta||S.delta;
+  const tslaMove=S.tsla-(t.tsla_entry||S.tsla);
+  const optMove=t.direction==='CALL'?tslaMove*delta:-tslaMove*delta;
+  const pnl=(optMove-S.theta)*100*t.contracts;
+  const r=await f('/tm/trade/boost','POST',{session_id:S.sid,current_pnl:pnl,boost_price:t.entry_price+optMove});
+  if(r.ok){S.trade=r.trade;S.trade.delta=delta;document.getElementById('pnlInfo').textContent=`${r.trade.contracts} عقد | Delta ${delta.toFixed(2)} | Θ -$${S.theta.toFixed(2)}`;toast(r.message,'ok');}
+  else toast(r.error,'err');
 }
 
-// ── Close Trade ──
-async function closeTrade(reason, exitPrice) {
-  const trade = session ? session.open_trade : null;
-  if (!trade) return;
-  const delta = contractType === 'ITM' ? 0.70 : 0.50;
-  const tslaMove = currentPrice - trade.tsla_entry;
-  const optionMove = trade.direction === 'CALL' ? tslaMove * delta : -tslaMove * delta;
-  const calcExit = exitPrice || Math.max(0.01, trade.entry_price + optionMove);
-  clearInterval(timerInterval); clearInterval(pnlInterval);
-  try {
-    const r = await fetch('/tm/trade/close', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: SESSION_ID, exit_price: calcExit, reason: reason })
-    });
-    const d = await r.json();
-    if (d.ok) {
-      session.open_trade = null;
-      session.daily_pnl = d.daily_pnl;
-      session.balance = d.balance;
-      session.trades = (session.trades || []).concat([d.trade]);
-      session.circuit_broken = d.circuit_broken;
-      session.consecutive_losses = d.consecutive_losses;
-      session.current_streak = d.current_streak;
-      hideOpenTradePanel();
-      renderSession();
-      if (d.pnl > 0) showToast('✅ +$' + d.pnl.toFixed(2) + ' — رابحة! 🎯', 'success');
-      else showToast('❌ -$' + Math.abs(d.pnl).toFixed(2) + ' — خاسرة', 'error');
-      if (d.revenge_warning) { document.getElementById('revengeBanner').textContent = d.revenge_warning; document.getElementById('revengeBanner').classList.add('show'); }
-      if (d.streak_msg) setTimeout(function(){ showToast(d.streak_msg, 'success'); }, 2000);
-      if (d.circuit_broken) document.getElementById('circuitBanner').classList.add('show');
-    }
-  } catch(e) { showToast('خطأ', 'error'); }
+// ═══ LOAN ═══
+async function takeLoan(type,amount){
+  const r=await f(`/tm/session/${S.sid}/loan`,'POST',{type,amount});
+  if(r.ok){toast(r.message,'ok');updUI(r.session);closeLoan();}
+  else toast(r.error||'خطأ','err');
+}
+function closeLoan(){document.getElementById('loanModal').classList.remove('show');}
+
+// ═══ RESET ═══
+async function resetSession(){
+  if(!confirm('إعادة تعيين؟ سيتم حذف كل الصفقات'))return;
+  const r=await f(`/tm/session/${S.sid}/reset`,'POST');
+  if(r.ok){updUI(r.session);document.getElementById('hList').innerHTML='<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px">لا توجد صفقات بعد</div>';toast('🔄 تم إعادة التعيين','inf');}
 }
 
-function hideOpenTradePanel() {
-  document.getElementById('openTradePanel').classList.remove('show');
-  document.getElementById('tradeForm').style.display = 'block';
-  document.getElementById('entryPrice').value = '';
-  document.getElementById('tpPrice').value = '';
-  document.getElementById('slPrice').value = '';
-  lastPnl = 0; prevTickerPnl = 0;
+// ═══ UI UPDATE ═══
+function updUI(d){
+  if(!d)return;
+  if(d.balance!==undefined){const el=document.getElementById('sBalance');el.textContent=`$${Math.round(d.balance).toLocaleString()}`;el.className=d.balance>=3000?'val g':'val r';}
+  if(d.daily_pnl!==undefined){const el=document.getElementById('sPnl');if(d.daily_pnl>=0){el.textContent=`+$${d.daily_pnl.toFixed(0)}`;el.className='val g';}else{el.textContent=`-$${Math.abs(d.daily_pnl).toFixed(0)}`;el.className='val r';}}
+  if(d.current_streak!==undefined)document.getElementById('streakVal').textContent=d.current_streak;
+  if(d.max_streak!==undefined)document.getElementById('maxStreak').textContent=d.max_streak;
+  if(d.trades){
+    document.getElementById('sTrades').textContent=d.trades.length;
+    if(d.trades.length>0){const w=d.trades.filter(t=>t.pnl>0).length;document.getElementById('sWin').textContent=Math.round(w/d.trades.length*100)+'%';}
+    renderHist(d.trades);
+  }
+  if(d.circuit_broken)document.getElementById('circuitBanner').classList.add('show');
+  else document.getElementById('circuitBanner').classList.remove('show');
 }
 
-// ── Render ──
-function renderSession() {
-  if (!session) return;
-  const balance = session.balance || 10000;
-  const pnl = session.daily_pnl || 0;
-  const trades = (session.trades || []).length;
-  const wins = (session.trades || []).filter(function(t){ return t.pnl > 0; }).length;
-  const winRate = trades > 0 ? Math.round((wins / trades) * 100) : 0;
-  document.getElementById('statBalance').textContent = '$' + balance.toLocaleString('en-US', {maximumFractionDigits: 0});
-  const pnlEl = document.getElementById('statPnl');
-  pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(0);
-  pnlEl.className = 'stat-value ' + (pnl > 0 ? 'green' : pnl < 0 ? 'red' : '');
-  document.getElementById('statTrades').textContent = trades;
-  const wrEl = document.getElementById('statWinRate');
-  wrEl.textContent = trades > 0 ? winRate + '%' : '--';
-  wrEl.className = 'stat-value ' + (winRate >= 60 ? 'green' : winRate > 0 ? 'red' : '');
-  if (session.circuit_broken) { document.getElementById('circuitBanner').classList.add('show'); document.getElementById('submitBtn').disabled = true; }
-  renderHistory(session.trades || []);
+function addHist(t){
+  const list=document.getElementById('hList');
+  if(list.querySelector('div[style]'))list.innerHTML='';
+  const div=document.createElement('div');
+  const win=t.pnl>0;
+  div.className=`h-item ${win?'win':'loss'}`;
+  const pnlTxt=t.pnl>=0?`+$${t.pnl.toFixed(0)}`:`-$${Math.abs(t.pnl).toFixed(0)}`;
+  div.innerHTML=`<div class="hi-l"><span class="hi-n">#${t.id||'?'}</span><span class="hi-d ${t.direction.toLowerCase()}">${t.direction}</span><span class="hi-p">$${t.entry_price.toFixed(2)} → $${t.exit_price.toFixed(2)}</span></div><span class="hi-pnl ${win?'g':'r'}">${pnlTxt}</span>`;
+  list.insertBefore(div,list.firstChild);
+}
+function renderHist(trades){
+  const list=document.getElementById('hList');list.innerHTML='';
+  if(!trades||trades.length===0){list.innerHTML='<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px">لا توجد صفقات بعد</div>';return;}
+  trades.slice(-10).reverse().forEach(t=>addHist(t));
 }
 
-function renderHistory(trades) {
-  const list = document.getElementById('historyList');
-  if (!trades.length) { list.innerHTML = '<div class="empty-history">لا توجد صفقات بعد</div>'; return; }
-  list.innerHTML = trades.slice().reverse().slice(0, 20).map(function(t) {
-    const pnl = t.pnl || 0; const win = pnl > 0;
-    return '<div class="history-item ' + (win ? 'win' : 'loss') + '">' +
-      '<div class="hi-left"><span class="hi-num">#' + t.id + '</span><span class="hi-dir ' + t.direction.toLowerCase() + '">' + t.direction + '</span>' +
-      '<span class="hi-entry">$' + (t.entry_price ? t.entry_price.toFixed(2) : '?') + ' → $' + (t.exit_price ? t.exit_price.toFixed(2) : '?') + '</span></div>' +
-      '<div class="hi-pnl ' + (win ? 'pos' : 'neg') + '">' + (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(0) + '</div></div>';
-  }).join('');
+// ═══ HELPERS ═══
+async function f(url,method='GET',body=null){
+  const opts={method,headers:{'Content-Type':'application/json'}};
+  if(body)opts.body=JSON.stringify(body);
+  const r=await fetch(url,opts);return r.json();
 }
-
-// ── Toast ──
-var toastTimer = null;
-function showToast(msg, type) {
-  var el = document.getElementById('toast');
-  el.textContent = msg; el.className = 'toast show ' + (type || '');
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(function(){ el.classList.remove('show'); }, 4000);
-}
-
-init();
+function toast(msg,type){const el=document.getElementById('toast');el.textContent=msg;el.className=`toast show ${type}`;setTimeout(()=>el.classList.remove('show'),4000);}
 </script>
 </body>
 </html>

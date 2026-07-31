@@ -3937,7 +3937,8 @@ def _tm_new_session():
     """إنشاء جلسة محاكاة جديدة."""
     return {
         "id": str(_uuid.uuid4())[:8],
-        "balance": 10000.0,
+        "balance": 3000.0,
+        "initial_balance": 3000.0,
         "daily_pnl": 0.0,
         "trades": [],
         "open_trade": None,
@@ -3947,6 +3948,9 @@ def _tm_new_session():
         "current_streak": 0,
         "created_at": _dt.utcnow().isoformat(),
         "trade_count": 0,
+        "loans": [],
+        "loan_balance": 0.0,
+        "total_profit": 0.0,
     }
 
 @app.route('/tm-simulator', methods=['GET'])
@@ -4098,6 +4102,8 @@ def tm_close_trade():
     # تحديث الجلسة
     session["daily_pnl"] = round(session["daily_pnl"] + pnl, 2)
     session["balance"] = round(session["balance"] + pnl, 2)
+    if pnl > 0:
+        session["total_profit"] = round(session.get("total_profit", 0) + pnl, 2)
     session["trades"].append(dict(trade))
     session["open_trade"] = None
 
@@ -4143,14 +4149,57 @@ def tm_close_trade():
 
 @app.route('/tm/session/<sid>/reset', methods=['POST'])
 def tm_reset_session(sid):
-    """إعادة تعيين الجلسة."""
-    session = _tm_new_session()
-    session["id"] = sid
-    _tm_sessions[sid] = session
-    return jsonify({"ok": True, "session": session})
+    """إعادة تعيين الجلسة — ممنوع إذا الأرباح فوق $200."""
+    data = request.get_json(force=True, silent=True) or {}
+    force = data.get("force", False)
+    session = _tm_sessions.get(sid)
+    if session and not force:
+        if session.get("total_profit", 0) > 200:
+            return jsonify({"ok": False, "error": "⚠️ ممنوع إعادة التعيين — أرباحك فوق $200. استمر!"})
+    new_session = _tm_new_session()
+    new_session["id"] = sid
+    _tm_sessions[sid] = new_session
+    return jsonify({"ok": True, "session": new_session})
+
+
+@app.route('/tm/session/<sid>/loan', methods=['POST'])
+def tm_take_loan(sid):
+    """أخذ قرض — بنكي (5% فائدة) أو صديق (بدون فائدة)."""
+    data = request.get_json(force=True, silent=True) or {}
+    session = _tm_sessions.get(sid)
+    if not session:
+        return jsonify({"ok": False, "error": "session not found"}), 404
+
+    loan_type = data.get("type", "bank")  # bank or friend
+    amount = float(data.get("amount", 500))
+    if amount <= 0 or amount > 1500:
+        return jsonify({"ok": False, "error": "المبلغ يجب أن يكون بين $1 و $1500"})
+
+    interest = 0.05 if loan_type == "bank" else 0.0
+    repay_amount = round(amount * (1 + interest), 2)
+
+    loan = {
+        "type": loan_type,
+        "amount": amount,
+        "interest": interest,
+        "repay_amount": repay_amount,
+        "taken_at": _dt.utcnow().isoformat(),
+        "repaid": False
+    }
+    session["loans"].append(loan)
+    session["loan_balance"] = round(session.get("loan_balance", 0) + repay_amount, 2)
+    session["balance"] = round(session["balance"] + amount, 2)
+
+    label = "قرض بنكي" if loan_type == "bank" else "دعم صديق"
+    return jsonify({
+        "ok": True,
+        "message": f"✅ {label}: +${amount:.0f} | المطلوب إرجاعه: ${repay_amount:.0f}",
+        "session": session
+    })
+
 
 # ═══════════════════════════════════════════════════════════════════
-# TM Simulator V12.1 — Options Chain + Boost
+# TM Simulator V12.2 — Options Chain + Boost
 # ═══════════════════════════════════════════════════════════════════
 
 @app.route('/tm/options', methods=['GET'])

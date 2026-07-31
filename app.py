@@ -4053,6 +4053,9 @@ def tm_open_trade():
     elif direction == "PUT" and vwap > 0 and current_tsla > vwap:
         warning = "⚠️ تنبيه: السعر فوق VWAP — تداول PUT في ترند صاعد. تأكد من إشارة انعكاس قوية."
 
+    # جلب رمز العقد الحقيقي من Alpaca لتتبع السعر الحقيقي
+    option_symbol = data.get('symbol', '')
+
     # فتح الصفقة
     trade = {
         "id": session["trade_count"] + 1,
@@ -4062,6 +4065,7 @@ def tm_open_trade():
         "sl": sl,
         "contracts": contracts,
         "tsla_entry": current_tsla,
+        "symbol": option_symbol,
         "opened_at": _dt.utcnow().isoformat(),
         "status": "open",
         "pnl": 0.0,
@@ -4332,6 +4336,71 @@ def tm_boost_trade():
         "message": f"✅ تعزيز ناجح! العقود: {trade['contracts']} | متوسط: ${new_avg:.2f}",
         "trade": trade
     })
+
+
+@app.route('/tm/trade/status', methods=['GET'])
+def tm_trade_status():
+    """
+    جلب سعر العقد الحقيقي من Alpaca لتتبع الصفقة المفتوحة في المحاكي.
+    يعمل مثل /manual/status تماماً — يجلب mid الحقيقي ويحسب P&L واقعي.
+    """
+    sid = request.args.get('session_id')
+    session = _tm_sessions.get(sid)
+    if not session:
+        return jsonify({"ok": False, "error": "session not found"}), 404
+
+    trade = session.get('open_trade')
+    if not trade:
+        return jsonify({"ok": True, "has_trade": False})
+
+    symbol = trade.get('symbol')
+    if not symbol:
+        # لا يوجد رمز عقد — رجع بيانات بدون سعر حقيقي
+        return jsonify({"ok": True, "has_trade": True, "real_price": 0, "pnl": 0})
+
+    try:
+        from options_scalper import get_option_quote, get_tsla_snapshot
+        quote = get_option_quote(symbol)
+        current_mid = quote['mid'] if quote and quote['mid'] > 0 else 0
+
+        # جلب سعر TSLA الحالي
+        snap = get_tsla_snapshot()
+        tsla_price = snap['price'] if snap else 0
+
+        # حساب P&L الحقيقي
+        entry = trade.get('entry_price', 0)
+        contracts = trade.get('contracts', 1)
+        pnl = 0.0
+        pnl_pct = 0.0
+        if current_mid > 0 and entry > 0:
+            pnl = round((current_mid - entry) * 100 * contracts, 2)
+            pnl_pct = round(((current_mid - entry) / entry) * 100, 1)
+
+        # تحقق من TP/SL
+        tp = trade.get('tp', 0)
+        sl = trade.get('sl', 0)
+        hit_tp = current_mid >= tp if (tp > 0 and current_mid > 0) else False
+        hit_sl = current_mid <= sl if (sl > 0 and current_mid > 0) else False
+
+        return jsonify({
+            "ok": True,
+            "has_trade": True,
+            "symbol": symbol,
+            "real_price": current_mid,
+            "entry_price": entry,
+            "tp": tp,
+            "sl": sl,
+            "pnl": pnl,
+            "pnl_pct": pnl_pct,
+            "tsla_price": round(tsla_price, 2),
+            "hit_tp": hit_tp,
+            "hit_sl": hit_sl,
+            "contracts": contracts,
+            "direction": trade.get('direction', ''),
+        })
+    except Exception as e:
+        logger.error(f"[TM Status] Error: {e}")
+        return jsonify({"ok": False, "error": str(e)})
 
 
 # ══════════════════════════════════════════════════════════════════════════════

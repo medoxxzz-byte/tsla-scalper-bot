@@ -419,7 +419,7 @@ async function openTrade(){
   if(!tp||tp<=0)return toast('أدخل TP — OCO إجباري','err');
   if(!sl||sl<=0)return toast('أدخل SL — OCO إجباري','err');
 
-  const body={session_id:S.sid,direction:S.dir,entry_price:entry,tp,sl,contracts:S.qty,tsla_price:S.tsla,vwap:S.vwap,delta:S.delta,contract_symbol:S.contract?S.contract.symbol:''};
+  const body={session_id:S.sid,direction:S.dir,entry_price:entry,tp,sl,contracts:S.qty,tsla_price:S.tsla,vwap:S.vwap,delta:S.delta,symbol:S.contract?S.contract.symbol:''};
   const r=await f('/tm/trade/open','POST',body);
   if(r.ok){S.trade=r.trade;S.trade.delta=S.delta;S.theta=0;S.extended=false;S.secs=480;showOTP();toast('✅ تم فتح الصفقة','ok');}
   else toast(r.error||'خطأ','err');
@@ -462,38 +462,68 @@ function startTimer(){
   },1000);
 }
 
-// ═══ LIVE P&L ═══
-function updatePnL(){
+// ═══ LIVE P&L — يجلب السعر الحقيقي من Alpaca ═══
+async function updatePnL(){
   if(!S.trade)return;
-  const t=S.trade,delta=t.delta||S.delta;
+  const t=S.trade;
+
+  // إذا عندنا رمز عقد حقيقي — نجلب السعر من Alpaca
+  if(t.symbol){
+    try{
+      const r=await f(`/tm/trade/status?session_id=${S.sid}`);
+      if(r.ok&&r.has_trade&&r.real_price>0){
+        const currPrice=r.real_price;
+        const pnl=r.pnl;
+        const pnlPct=r.pnl_pct;
+
+        // تحديث سعر TSLA
+        if(r.tsla_price>0){S.tsla=r.tsla_price;document.getElementById('tslaPrice').textContent=`$${r.tsla_price.toFixed(2)}`;}
+
+        // تحديث العرض
+        const pnlEl=document.getElementById('pnlVal');
+        const box=document.getElementById('pnlBox');
+        if(pnl>=0){pnlEl.textContent=`+$${Math.abs(pnl).toFixed(0)} (+${pnlPct}%)`;pnlEl.className='pnl-val g';box.className='pnl-box profit';}
+        else{pnlEl.textContent=`-$${Math.abs(pnl).toFixed(0)} (${pnlPct}%)`;pnlEl.className='pnl-val r';box.className='pnl-box loss';}
+
+        document.getElementById('otCurr').textContent=`$${currPrice.toFixed(2)}`;
+        document.getElementById('pnlInfo').textContent=`${t.contracts} عقد | سعر حقيقي من Alpaca | ${pnlPct>0?'+':''}${pnlPct}%`;
+
+        // TP-SL bar
+        const range=t.tp-t.sl;
+        if(range>0){const pos=(currPrice-t.sl)/range;const pct=Math.max(0,Math.min(100,pos*100));const fill=document.getElementById('tpslFill');fill.style.width=pct+'%';fill.className=pct>=50?'tpsl-fill profit':'tpsl-fill loss';}
+
+        updBoost(pnl);
+
+        // Auto TP/SL — فقط بعد 10 ثوانٍ من الفتح لتجنب الإغلاق الفوري
+        const age=(Date.now()-new Date(t.opened_at).getTime())/1000;
+        if(age>10){
+          if(r.hit_tp){closeTrade('tp');toast('🎯 وصل الهدف! — TP حقيقي','ok');}
+          else if(r.hit_sl){closeTrade('sl');toast('🛑 وقف الخسارة! — SL حقيقي','err');}
+        }
+        return;
+      }
+    }catch(e){}
+  }
+
+  // Fallback: إذا لا يوجد رمز عقد — استخدم حركة TSLA كتقدير (أقل دقة)
+  const delta=t.delta||S.delta;
   const tslaMove=S.tsla-(t.tsla_entry||S.tsla);
   const optMove=t.direction==='CALL'?tslaMove*delta:-tslaMove*delta;
   const elapsed=(Date.now()-new Date(t.opened_at).getTime())/60000;
-  S.theta=elapsed*0.01;
+  S.theta=elapsed*0.005;
   const currPrice=Math.max(0.01,t.entry_price+optMove-S.theta);
   const pnl=(optMove-S.theta)*100*t.contracts;
 
-  // Update display
   const pnlEl=document.getElementById('pnlVal');
   const box=document.getElementById('pnlBox');
   if(pnl>=0){pnlEl.textContent=`+$${Math.abs(pnl).toFixed(0)}`;pnlEl.className='pnl-val g';box.className='pnl-box profit';}
   else{pnlEl.textContent=`-$${Math.abs(pnl).toFixed(0)}`;pnlEl.className='pnl-val r';box.className='pnl-box loss';}
-  
   document.getElementById('otCurr').textContent=`$${currPrice.toFixed(2)}`;
-  document.getElementById('pnlInfo').textContent=`${t.contracts} عقد | Delta ${delta.toFixed(2)} | Θ -$${S.theta.toFixed(2)}`;
-  
-  // TP-SL bar
+  document.getElementById('pnlInfo').textContent=`${t.contracts} عقد | تقدير (Delta) | اختر ATM/ITM للدقة`;
+
   const range=t.tp-t.sl;
   if(range>0){const pos=(currPrice-t.sl)/range;const pct=Math.max(0,Math.min(100,pos*100));const fill=document.getElementById('tpslFill');fill.style.width=pct+'%';fill.className=pct>=50?'tpsl-fill profit':'tpsl-fill loss';}
-  
   updBoost(pnl);
-  
-  // Auto SL/TP - إضافة فترة سماح 3 ثوانٍ لمنع الإغلاق الفوري
-  const age = (Date.now() - new Date(t.opened_at).getTime()) / 1000;
-  if (age > 3) {
-    if(currPrice>=t.tp){closeTrade('tp');toast('🎯 وصل الهدف! — TP','ok');}
-    else if(currPrice<=t.sl){closeTrade('sl');toast('🛑 وقف الخسارة! — SL','err');}
-  }
 }
 
 function updBoost(pnl){

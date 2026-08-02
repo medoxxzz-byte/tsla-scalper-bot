@@ -6355,18 +6355,195 @@ def _decision_brief(rsi, macd_h, wave_pos, price, vwap, trend_5m, trend_15m):
     return "⏸ متعادل — انتظر", 50, []
 
 
+
+
+
+# الدوال الجديدة — تضاف إلى options_scalper.py
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── 1. تحليل الحيتان (OBV + MOM + MFI + VOL) ──────────────────────────────
+
+def _whale_analysis(bars_5m, bars_15m=None):
+    """
+    يحلل OBV + MOM + MFI + VOL معاً ليكشف بصمة الحيتان وصناع السوق.
+    يرجع: dict مع whale_signal (نص) + whale_score (-3 إلى +3) + whale_emoji
+    """
+    if not bars_5m or len(bars_5m) < 8:
+        return {"whale_signal": "غير محدد", "whale_score": 0, "whale_emoji": "❓",
+                "obv_trend": "محايد", "mom_val": 0, "mfi_val": 50, "vol_ratio": 1.0}
+
+    closes = [float(b["c"]) for b in bars_5m]
+    highs  = [float(b["h"]) for b in bars_5m]
+    lows   = [float(b["l"]) for b in bars_5m]
+    vols   = [float(b["v"]) for b in bars_5m]
+
+    # ── OBV (On-Balance Volume) ──
+    obv = 0
+    obv_series = []
+    for i in range(1, len(closes)):
+        if closes[i] > closes[i-1]:
+            obv += vols[i]
+        elif closes[i] < closes[i-1]:
+            obv -= vols[i]
+        obv_series.append(obv)
+
+    obv_recent = sum(obv_series[-3:]) / 3 if len(obv_series) >= 3 else 0
+    obv_prev   = sum(obv_series[-6:-3]) / 3 if len(obv_series) >= 6 else 0
+    obv_trend  = "صاعد 📈" if obv_recent > obv_prev * 1.02 else ("هابط 📉" if obv_recent < obv_prev * 0.98 else "محايد ↔️")
+    obv_score  = 1 if obv_recent > obv_prev else (-1 if obv_recent < obv_prev else 0)
+
+    # ── MOM (Momentum) ──
+    mom_period = min(6, len(closes) - 2)
+    mom_val = closes[-1] - closes[-mom_period-1] if len(closes) > mom_period else 0
+    mom_score = 1 if mom_val > 0.5 else (-1 if mom_val < -0.5 else 0)
+
+    # ── MFI (Money Flow Index) ──
+    mfi_period = min(10, len(closes) - 1)
+    pos_mf = neg_mf = 0
+    for i in range(1, mfi_period + 1):
+        if i >= len(closes): break
+        tp = (highs[-i] + lows[-i] + closes[-i]) / 3
+        tp_prev = (highs[-i-1] + lows[-i-1] + closes[-i-1]) / 3 if i+1 < len(closes) else tp
+        mf = tp * vols[-i]
+        if tp > tp_prev:
+            pos_mf += mf
+        else:
+            neg_mf += mf
+    mfi_val = round(100 * pos_mf / (pos_mf + neg_mf), 1) if (pos_mf + neg_mf) > 0 else 50
+    mfi_score = 1 if mfi_val > 60 else (-1 if mfi_val < 40 else 0)
+
+    # ── VOL (Volume Ratio) ──
+    avg_vol = sum(vols[:-3]) / max(len(vols[:-3]), 1)
+    recent_vol = sum(vols[-3:]) / 3
+    vol_ratio = round(recent_vol / avg_vol, 2) if avg_vol > 0 else 1.0
+    vol_score = 1 if vol_ratio > 1.3 else (-1 if vol_ratio < 0.7 else 0)
+
+    # ── النتيجة الإجمالية ──
+    whale_score = obv_score + mom_score + mfi_score + vol_score  # -4 إلى +4
+
+    # تفسير بصمة الحيتان
+    if whale_score >= 3:
+        whale_signal = "🐋 تراكم قوي — الحيتان تشتري بصمت"
+        whale_emoji  = "🐋🟢"
+    elif whale_score >= 2:
+        whale_signal = "🐋 ضغط شرائي — مال يدخل"
+        whale_emoji  = "🟢"
+    elif whale_score >= 1:
+        whale_signal = "🐟 ضغط شرائي خفيف — انتبه"
+        whale_emoji  = "🟡"
+    elif whale_score <= -3:
+        whale_signal = "🐋 توزيع قوي — الحيتان تبيع"
+        whale_emoji  = "🐋🔴"
+    elif whale_score <= -2:
+        whale_signal = "🐋 ضغط بيعي — مال يخرج"
+        whale_emoji  = "🔴"
+    elif whale_score <= -1:
+        whale_signal = "🐟 ضغط بيعي خفيف — انتبه"
+        whale_emoji  = "🟠"
+    else:
+        whale_signal = "🦈 محايد — الحيتان تراقب"
+        whale_emoji  = "⚪"
+
+    return {
+        "whale_signal": whale_signal,
+        "whale_score": whale_score,
+        "whale_emoji": whale_emoji,
+        "obv_trend": obv_trend,
+        "mom_val": round(mom_val, 2),
+        "mfi_val": mfi_val,
+        "vol_ratio": vol_ratio,
+    }
+
+
+# ── 2. نظام المضاربة السريعة (20 سنت) ────────────────────────────────────
+
+def _scalp_signal(bars_5m, price, vwap, atr_5m):
+    """
+    يحدد نقطتي دخول للمضاربة السريعة (هدف 20 سنت).
+    يعتمد على: VWAP + EMA20 + ATR + مستويات نفسية.
+    يرجع: dict مع entry1, entry2, target, stop, direction, signal_text
+    """
+    if not bars_5m or len(bars_5m) < 10 or price == 0:
+        return None
+
+    closes = [float(b["c"]) for b in bars_5m]
+    lows   = [float(b["l"]) for b in bars_5m]
+    highs  = [float(b["h"]) for b in bars_5m]
+
+    # EMA20
+    def _ema_local(data, n):
+        k = 2/(n+1); e = data[0]
+        for x in data[1:]: e = e*(1-k) + x*k
+        return e
+
+    ema20 = _ema_local(closes, min(20, len(closes)))
+    ema9  = _ema_local(closes, min(9, len(closes)))
+
+    # ATR الشمعة الحالية
+    atr_candle = atr_5m if atr_5m > 0 else 1.0
+
+    # مستوى نفسي أقرب
+    psych = round(price / 0.5) * 0.5
+
+    # ── تحديد الاتجاه ──
+    above_vwap = price > vwap if vwap > 0 else True
+    above_ema20 = price > ema20
+
+    if above_vwap and above_ema20:
+        # بيئة صاعدة — نبحث عن CALL
+        direction = "CALL"
+        # نقطة دخول 1: عند تراجع لـ VWAP أو EMA9
+        entry1 = round(max(vwap, ema9) + 0.05, 2) if vwap > 0 else round(ema9 + 0.05, 2)
+        # نقطة دخول 2: عند تراجع لـ EMA20 أو مستوى نفسي
+        entry2 = round(min(ema20, psych) + 0.05, 2)
+        target = round(price + 0.20, 2)
+        stop   = round(entry1 - 0.12, 2)
+        signal_text = f"📈 CALL سريع — ادخل عند تراجع"
+    elif not above_vwap and not above_ema20:
+        # بيئة هابطة — نبحث عن PUT
+        direction = "PUT"
+        entry1 = round(min(vwap, ema9) - 0.05, 2) if vwap > 0 else round(ema9 - 0.05, 2)
+        entry2 = round(max(ema20, psych) - 0.05, 2)
+        target = round(price - 0.20, 2)
+        stop   = round(entry1 + 0.12, 2)
+        signal_text = f"📉 PUT سريع — ادخل عند ارتداد"
+    else:
+        # بيئة مختلطة — انتظر
+        return {
+            "direction": "WAIT",
+            "signal_text": "⏸ تذبذب — انتظر وضوح الاتجاه",
+            "entry1": 0, "entry2": 0, "target": 0, "stop": 0,
+            "ema20": round(ema20, 2), "ema9": round(ema9, 2),
+        }
+
+    return {
+        "direction": direction,
+        "signal_text": signal_text,
+        "entry1": entry1,
+        "entry2": entry2,
+        "target": target,
+        "stop": stop,
+        "ema20": round(ema20, 2),
+        "ema9": round(ema9, 2),
+        "rr": "2:1",
+    }
+
+
+# ── 3. generate_market_briefing الجديدة (مختصرة + توجيهية) ───────────────
+
 def generate_market_briefing():
     """
-    رسالة تلقرام شاملة كل 15 دقيقة:
-    - السعر والمؤشرات (RSI, MACD, ATR, BB)
-    - تحليل الموجة والزخم
-    - أسعار الانعكاس (دعم/مقاومة)
-    - قرار CALL/PUT مع نسبة الثقة
-    - تنبيهات وتحذيرات
+    رسالة تلغرام مختصرة وتوجيهية كل 15 دقيقة:
+    - سطر واحد للسعر والبيئة
+    - تحليل الحيتان (OBV+MOM+MFI+VOL)
+    - نقطتا دخول للمضاربة السريعة (20 سنت)
+    - قرار حاسم مع توجيه عملي
+    - تنبيهات مهمة فقط (لا ضجيج)
     """
     try:
+        import datetime as _dt_mod
         now_et = _et_now()
-        time_str = now_et.strftime("%H:%M ET")
+        time_str = now_et.strftime("%I:%M %p ET")
 
         snap = get_tsla_snapshot()
         price = snap.get("price", 0) if snap else _state.get("current_price", 0)
@@ -6381,57 +6558,28 @@ def generate_market_briefing():
             return None
 
         closes_5m  = [float(b["c"]) for b in bars_5m]
-        closes_1m  = [float(b["c"]) for b in bars_1m]  if bars_1m  else closes_5m
         closes_15m = [float(b["c"]) for b in bars_15m] if bars_15m else closes_5m
 
-        # ── المؤشرات ──
-        # RSI: استخدام period أقصر إذا البيانات غير كافية
-        rsi_5m  = _calc_rsi_brief(closes_5m, min(14, len(closes_5m) - 2))
-        rsi_1m  = _calc_rsi_brief(closes_1m, min(14, len(closes_1m) - 2))
-        # MACD: استخدام 1Min (120 بار) لضمان بيانات كافية دائماً
-        # إذا 5Min كافية (>35) نستخدمها، وإلا نستخدم 1Min
+        # ── المؤشرات الأساسية ──
+        rsi_5m = _calc_rsi_brief(closes_5m, min(14, len(closes_5m) - 2))
         if len(closes_5m) >= 35:
             macd_l, macd_s, macd_h = _calc_macd_brief(closes_5m)
         else:
+            closes_1m = [float(b["c"]) for b in bars_1m] if bars_1m else closes_5m
             macd_l, macd_s, macd_h = _calc_macd_brief(closes_1m)
-        atr_5m  = _calc_atr_brief(bars_5m, min(14, len(bars_5m) - 1))
-        # BB: استخدام period ديناميكي (min 10) لتجنب القيم المتطابقة
-        bb_period = min(20, max(10, len(closes_5m) - 1))
-        bb_upper, bb_mid, bb_lower = _calc_bb_brief(closes_5m, bb_period)
+        atr_5m = _calc_atr_brief(bars_5m, min(14, len(bars_5m) - 1))
 
-        # ── State + Fallback مباشر من Alpaca ──
-        # VWAP — من snapshot أو حساب مباشر
-        snap2 = get_tsla_snapshot()
+        # ── VWAP ──
         vwap = _state.get("vwap", 0)
-        if vwap == 0 and snap2 and snap2.get("vwap", 0) > 0:
-            vwap = snap2["vwap"]
+        if vwap == 0 and snap and snap.get("vwap", 0) > 0:
+            vwap = snap["vwap"]
         if vwap == 0 and bars_5m:
             total_pv = sum((float(b['h'])+float(b['l'])+float(b['c']))/3 * float(b['v']) for b in bars_5m)
             total_v  = sum(float(b['v']) for b in bars_5m)
             vwap = round(total_pv / total_v, 2) if total_v > 0 else 0
-        # Day High/Low — من snapshot أو من bars
-        day_high = _state.get("day_high", 0)
-        day_low  = _state.get("day_low", 0)
-        if day_high == 0 and snap2 and snap2.get("high", 0) > 0:
-            day_high = snap2["high"]
-            day_low  = snap2.get("low", 0)
-        if day_high == 0 and bars_5m:
-            day_high = max(float(b['h']) for b in bars_5m)
-            day_low  = min(float(b['l']) for b in bars_5m)
-        # PDH/PDL
-        pdh = _state.get("pdh", 0)
-        pdl = _state.get("pdl", 0)
-        if pdh == 0:
-            try:
-                prev = get_previous_day_bars()
-                if prev:
-                    pdh = float(prev.get('h', 0))
-                    pdl = float(prev.get('l', 0))
-            except:
-                pass
-        orh = _state.get("opening_range_high", 0)
-        orl = _state.get("opening_range_low", 0)
-        # Trend — من _state أو EMA9/EMA21 مباشر
+
+        # ── الموجة والاتجاه ──
+        wave = _wave_brief(bars_5m)
         trend_5m  = _state.get("trend_5m") or _state.get("trend")
         trend_15m = _state.get("trend_15m") or trend_5m
         def _ema_q(data, n):
@@ -6449,105 +6597,120 @@ def generate_market_briefing():
         if not trend_15m:
             trend_15m = trend_5m
 
-        # ── SPY ──
-        spy_dir, spy_chg = get_spy_direction()
-        spy_emoji = {"BULL": "📈", "BEAR": "📉", "FLAT": "↔️"}.get(spy_dir, "❓")
-
-        # ── تحليل الموجة ──
-        wave = _wave_brief(bars_5m)
-
-        # ── مناطق الانعكاس ──
-        resistances, supports = _reversal_zones_brief(bars_5m, price, vwap, pdh, pdl, orh, orl)
+        # ── بيئة السوق ──
+        ema200_dist = _state.get("ema200_distance", 0)
+        if ema200_dist < -10:
+            env_label = "هبوط حاد 🔴"
+            env_note  = "⚠️ ضد الاتجاه"
+        elif ema200_dist < 0:
+            env_label = "تحت EMA200 🟠"
+            env_note  = "⚠️ حذر"
+        else:
+            env_label = "صاعد ✅"
+            env_note  = ""
 
         # ── القرار ──
         decision, confidence, reasons = _decision_brief(
             rsi_5m, macd_h, wave["wave_pos"], price, vwap, trend_5m, trend_15m
         )
 
-        # ── تغيير السعر خلال 15 دقيقة ──
+        # ── تحليل الحيتان ──
+        whale = _whale_analysis(bars_5m, bars_15m)
+
+        # ── نقاط المضاربة السريعة ──
+        scalp = _scalp_signal(bars_5m, price, vwap, atr_5m)
+
+        # ── مناطق الانعكاس (أقرب مستويين فقط) ──
+        pdh = _state.get("pdh", 0)
+        pdl = _state.get("pdl", 0)
+        orh = _state.get("opening_range_high", 0)
+        orl = _state.get("opening_range_low", 0)
+        resistances, supports = _reversal_zones_brief(bars_5m, price, vwap, pdh, pdl, orh, orl)
+        nearest_res = resistances[0] if resistances else None
+        nearest_sup = supports[0]    if supports    else None
+
+        # ── تغيير السعر ──
         price_15m_ago = closes_5m[-4] if len(closes_5m) >= 4 else closes_5m[0]
         price_change  = price - price_15m_ago
         change_emoji  = "🔺" if price_change > 0 else "🔻"
 
-        # ── تنبيهات ──
+        # ── تنبيهات (أهم 2 فقط) ──
         alerts = []
-        if rsi_5m > 75:
-            alerts.append("⚠️ RSI تشبع شراء — خطر انعكاس")
-        if rsi_5m < 25:
-            alerts.append("⚠️ RSI تشبع بيع — فرصة ارتداد")
+        if rsi_5m > 75:   alerts.append("🔴 RSI تشبع شراء — خطر انعكاس")
+        if rsi_5m < 25:   alerts.append("🟢 RSI تشبع بيع — فرصة ارتداد")
         if vwap > 0 and abs(price - vwap) / price < 0.002:
-            alerts.append(f"⚠️ قرب VWAP ${vwap:.2f} — منطقة خطر")
-        if pdh > 0 and abs(price - pdh) / price < 0.003:
-            alerts.append(f"⚠️ قرب PDH ${pdh:.2f} — مقاومة قوية")
-        if pdl > 0 and abs(price - pdl) / price < 0.003:
-            alerts.append(f"⚠️ قرب PDL ${pdl:.2f} — دعم قوي")
-        if price >= bb_upper * 0.998:
-            alerts.append(f"🔴 عند BB Upper ${bb_upper:.2f} — انعكاس محتمل")
-        if price <= bb_lower * 1.002:
-            alerts.append(f"🟢 عند BB Lower ${bb_lower:.2f} — ارتداد محتمل")
-        if macd_h > 0 and macd_h < 0.02:
-            alerts.append("⚡ MACD يقترب من الانعكاس السلبي")
-        if macd_h < 0 and macd_h > -0.02:
-            alerts.append("⚡ MACD يقترب من الانعكاس الإيجابي")
+            alerts.append(f"⚠️ قرب VWAP ${vwap:.2f} — منطقة قرار")
         if now_et.hour == 10:
             alerts.append("🚫 ساعة Chop (10 ET) — تجنب الدخول")
         if now_et.hour >= 13 and now_et.minute >= 30:
-            alerts.append("⏳ بعد 1:30 PM ET — حجم منخفض")
+            alerts.append("⏳ بعد 1:30 PM — حجم منخفض")
+        if whale["whale_score"] >= 3:
+            alerts.insert(0, f"🐋 تراكم قوي — الحيتان تشتري!")
+        elif whale["whale_score"] <= -3:
+            alerts.insert(0, f"🐋 توزيع قوي — الحيتان تبيع!")
 
-        # ── بناء الرسالة ──
-        trend_e = {"BULL": "📈", "BEAR": "📉"}.get(str(trend_5m), "↔️")
+        # ── بناء الرسالة المختصرة ──
         vwap_side = "فوق ✅" if price > vwap else "تحت ⚠️"
 
-        msg  = f"🦟 <b>ثاقب — Market Briefing</b>\n"
-        msg += f"🕐 {time_str}\n"
-        msg += f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        msg  = f"🦟 <b>ثاقب | تقرير {time_str}</b>\n"
+        msg += f"━━━━━━━━━━━━━━\n"
 
-        msg += f"<b>💰 TSLA: ${price:.2f}</b>  {change_emoji}{abs(price_change):.2f}$ (15د)\n"
-        msg += f"📊 VWAP: ${vwap:.2f} — {vwap_side}\n"
-        msg += f"📅 High: ${day_high:.2f} | Low: ${day_low:.2f}\n"
-        msg += f"{spy_emoji} SPY: {spy_dir} ({spy_chg:+.2f}%)\n\n"
+        # السطر الأول: السعر + البيئة
+        msg += f"💰 <b>${price:.2f}</b>  {change_emoji}{abs(price_change):.2f}$  |  📊 VWAP: {vwap_side}\n"
+        msg += f"🌍 البيئة: {env_label}  |  🌊 {wave['momentum']}\n"
+        msg += f"━━━━━━━━━━━━━━\n"
 
-        msg += f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        msg += f"<b>📡 المؤشرات</b>\n"
-        msg += f"RSI 5m: <b>{rsi_5m}</b>  |  RSI 1m: {rsi_1m}\n"
-        msg += f"MACD: {macd_l:+.3f} | Sig: {macd_s:+.3f} | Hist: <b>{macd_h:+.3f}</b>\n"
-        msg += f"ATR 5m: ${atr_5m:.2f}  {wave['atr_signal']}\n"
-        msg += f"BB: 🔴{bb_upper:.2f} ⚪{bb_mid:.2f} 🟢{bb_lower:.2f}\n\n"
+        # تحليل الحيتان
+        msg += f"<b>{whale['whale_emoji']} الحيتان:</b> {whale['whale_signal']}\n"
+        msg += f"OBV: {whale['obv_trend']}  |  MFI: {whale['mfi_val']}  |  VOL: ×{whale['vol_ratio']}\n"
+        msg += f"━━━━━━━━━━━━━━\n"
 
-        msg += f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        msg += f"<b>🌊 الموجة والزخم</b>\n"
-        msg += f"{wave['wave']}\n"
-        msg += f"{wave['momentum']}\n"
-        msg += f"موقع الموجة: {wave['wave_pos']}%\n"
-        msg += f"Trend: {trend_e} 5m={trend_5m or '?'} | 15m={trend_15m or '?'}\n\n"
+        # نقاط المضاربة السريعة
+        if scalp:
+            if scalp["direction"] == "WAIT":
+                msg += f"⚡ <b>سكالب:</b> {scalp['signal_text']}\n"
+            else:
+                msg += f"⚡ <b>سكالب 20¢ — {scalp['direction']}:</b>\n"
+                msg += f"🟢 دخول 1: ${scalp['entry1']}  |  دخول 2: ${scalp['entry2']}\n"
+                msg += f"🎯 هدف: ${scalp['target']}  |  🛑 وقف: ${scalp['stop']}\n"
+        msg += f"━━━━━━━━━━━━━━\n"
 
-        msg += f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        msg += f"<b>🎯 أسعار الانعكاس</b>\n"
-        if resistances:
-            msg += "🔴 <b>مقاومة:</b>\n"
-            for r in resistances:
-                dist = r['price'] - price
-                msg += f"  {r['icon']} ${r['price']:.2f} ({r['name']}) +${dist:.2f}\n"
-        if supports:
-            msg += "🟢 <b>دعم:</b>\n"
-            for s in supports:
-                dist = price - s['price']
-                msg += f"  {s['icon']} ${s['price']:.2f} ({s['name']}) -${dist:.2f}\n"
-
-        msg += f"\n━━━━━━━━━━━━━━━━━━━━━━━\n"
-        msg += f"<b>🎲 القرار</b>\n"
-        msg += f"<b>{decision}</b>\n"
+        # القرار الحاسم
+        msg += f"<b>🎯 القرار: {decision}</b>\n"
         if reasons:
-            msg += "📌 " + " | ".join(reasons[:4]) + "\n"
+            msg += f"📌 {' | '.join(reasons[:3])}\n"
 
+        # أقرب مستويات الانعكاس
+        if nearest_res or nearest_sup:
+            msg += f"━━━━━━━━━━━━━━\n"
+            if nearest_res:
+                msg += f"🔴 مقاومة: ${nearest_res['price']:.2f} ({nearest_res['name']})\n"
+            if nearest_sup:
+                msg += f"🟢 دعم: ${nearest_sup['price']:.2f} ({nearest_sup['name']})\n"
+
+        # التنبيهات (أهم 2 فقط)
         if alerts:
-            msg += f"\n<b>⚡ تنبيهات</b>\n"
-            for a in alerts[:4]:
+            msg += f"━━━━━━━━━━━━━━\n"
+            for a in alerts[:2]:
                 msg += f"{a}\n"
 
-        msg += f"\n━━━━━━━━━━━━━━━━━━━━━━━"
+        # التوجيه الختامي
+        msg += f"━━━━━━━━━━━━━━\n"
+        if "CALL" in decision and "ضعيف" not in decision:
+            if env_note:
+                msg += f"⚡ <b>توجيه:</b> {env_note} — اخطف 20¢ واهرب. لا تطمع!\n"
+            else:
+                msg += f"⚡ <b>توجيه:</b> فوق VWAP + زخم صاعد. جهز CALL عند تراجع لـ ${round(vwap+0.1,2) if vwap else 'VWAP'}. هدفك 20¢.\n"
+        elif "PUT" in decision and "ضعيف" not in decision:
+            msg += f"⚡ <b>توجيه:</b> تحت VWAP + ضغط بيعي. جهز PUT عند ارتداد لـ ${round(vwap-0.1,2) if vwap else 'VWAP'}. هدفك 20¢.\n"
+        elif "انتظر" in decision or "متعادل" in decision or "WAIT" in str(scalp):
+            msg += f"⚡ <b>توجيه:</b> السوق يتذبذب — لا تدخل. انتظر كسر ${nearest_res['price']:.2f} أو ارتداد من ${nearest_sup['price']:.2f}.\n" if nearest_res and nearest_sup else "⚡ <b>توجيه:</b> انتظر — لا وضوح الآن.\n"
+        else:
+            msg += f"⚡ <b>توجيه:</b> إشارة ضعيفة — تداول بحجم صغير فقط.\n"
+
         return msg
 
     except Exception as e:
-        logger.error(f"[Briefing] Error: {e}")
+        logger.error(f"[Briefing V13] Error: {e}")
         return None
+

@@ -6344,15 +6344,16 @@ def _decision_brief(rsi, macd_h, wave_pos, price, vwap, trend_5m, trend_15m):
         return "⏸ انتظر", 0, []
     cp = round(cs / total * 100)
     pp = round(ps / total * 100)
-    if cs >= 4 and cs > ps + 1:
+    # جرأة في القرار — عتبة منخفضة لإعطاء إشارة واضحة
+    if cs >= 3 and cs > ps:
         return f"✅ CALL ({cp}%)", cp, rc
-    elif ps >= 4 and ps > cs + 1:
+    elif ps >= 3 and ps > cs:
         return f"✅ PUT ({pp}%)", pp, rp
-    elif cs > ps:
-        return f"⚠️ CALL ضعيف ({cp}%)", cp, rc
-    elif ps > cs:
-        return f"⚠️ PUT ضعيف ({pp}%)", pp, rp
-    return "⏸ متعادل — انتظر", 50, []
+    elif cs == 2 and cs > ps:
+        return f"🟡 CALL محتمل ({cp}%) — انتظر تأكيداً", cp, rc
+    elif ps == 2 and ps > cs:
+        return f"🟡 PUT محتمل ({pp}%) — انتظر تأكيداً", pp, rp
+    return "⏸ تذبذب — لا تدخل", 50, []
 
 
 
@@ -6694,19 +6695,26 @@ def generate_market_briefing():
             for a in alerts[:2]:
                 msg += f"{a}\n"
 
-        # التوجيه الختامي
-        msg += f"━━━━━━━━━━━━━━\n"
-        if "CALL" in decision and "ضعيف" not in decision:
-            if env_note:
-                msg += f"⚡ <b>توجيه:</b> {env_note} — اخطف 20¢ واهرب. لا تطمع!\n"
+        # التوجيه الختامي — جريء وحاسم
+        msg += f"⏸⏸⏸⏸⏸⏸⏸\n"
+        if "✅ CALL" in decision:
+            if env_note and "ضد" in env_note:
+                msg += f"⚡ <b>توجيه:</b> ضد الاتجاه لكن الإشارة موجودة. اخطف 20¢ واخرج فوراً. لا تطمع ولا تنتظر.\n"
             else:
-                msg += f"⚡ <b>توجيه:</b> فوق VWAP + زخم صاعد. جهز CALL عند تراجع لـ ${round(vwap+0.1,2) if vwap else 'VWAP'}. هدفك 20¢.\n"
-        elif "PUT" in decision and "ضعيف" not in decision:
-            msg += f"⚡ <b>توجيه:</b> تحت VWAP + ضغط بيعي. جهز PUT عند ارتداد لـ ${round(vwap-0.1,2) if vwap else 'VWAP'}. هدفك 20¢.\n"
-        elif "انتظر" in decision or "متعادل" in decision or "WAIT" in str(scalp):
-            msg += f"⚡ <b>توجيه:</b> السوق يتذبذب — لا تدخل. انتظر كسر ${nearest_res['price']:.2f} أو ارتداد من ${nearest_sup['price']:.2f}.\n" if nearest_res and nearest_sup else "⚡ <b>توجيه:</b> انتظر — لا وضوح الآن.\n"
+                entry_hint = f"${scalp['entry1']}" if scalp and scalp.get('entry1') else (f"${round(vwap+0.1,2)}" if vwap else "VWAP")
+                msg += f"⚡ <b>توجيه:</b> ادخل CALL عند {entry_hint}. هدفك 20¢ فقط ثم اخرج. لا تبقى داخل.\n"
+        elif "✅ PUT" in decision:
+            entry_hint = f"${scalp['entry1']}" if scalp and scalp.get('entry1') else (f"${round(vwap-0.1,2)}" if vwap else "VWAP")
+            msg += f"⚡ <b>توجيه:</b> ادخل PUT عند {entry_hint}. هدفك 20¢ فقط ثم اخرج. لا تبقى داخل.\n"
+        elif "🟡 CALL" in decision:
+            msg += f"⚡ <b>توجيه:</b> CALL محتمل — انتظر شمعة واحدة تأكيد. إذا جاء التأكيد ادخل بسرعة.\n"
+        elif "🟡 PUT" in decision:
+            msg += f"⚡ <b>توجيه:</b> PUT محتمل — انتظر شمعة واحدة تأكيد. إذا جاء التأكيد ادخل بسرعة.\n"
         else:
-            msg += f"⚡ <b>توجيه:</b> إشارة ضعيفة — تداول بحجم صغير فقط.\n"
+            # تذبذب حقيقي — هنا فقط نقول لا تدخل
+            res_hint = f"${nearest_res['price']:.2f}" if nearest_res else "المقاومة"
+            sup_hint = f"${nearest_sup['price']:.2f}" if nearest_sup else "الدعم"
+            msg += f"⚡ <b>توجيه:</b> تذبذب حقيقي — لا تدخل الآن. انتظر كسر {res_hint} أو ارتداد من {sup_hint}.\n"
 
         return msg
 

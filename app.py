@@ -1999,6 +1999,62 @@ def webhook():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# TM Silent Sniper Pro — Webhook Endpoint
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route("/sniper", methods=["POST"])
+def sniper_webhook():
+    """
+    TM Silent Sniper Pro — يستقبل JSON من TradingView ويرسل رسالة تلغرام مباشرة.
+    الإشارات المدعومة: CALL | PUT | ACCUMULATION | DISTRIBUTION | CHOP_WARNING
+    """
+    try:
+        data = request.get_json() if request.is_json else json.loads(request.data.decode("utf-8"))
+    except Exception as e:
+        logger.error(f"[Sniper] JSON parse error: {e}")
+        return jsonify({"error": "Parse error"}), 400
+
+    action  = data.get("action", "").upper()
+    message = data.get("message", "")
+    price   = data.get("price", "?")
+
+    logger.info(f"[Sniper] Received: action={action} | price=${price}")
+
+    if not action or not message:
+        return jsonify({"error": "Missing action or message"}), 400
+
+    # بناء رسالة تلغرام مباشرة من الـ message القادم من Pine Script
+    tg_msg = message
+
+    # إضافة السعر الحالي إذا متوفر
+    if price and price != "?":
+        tg_msg = f"💰 السعر: <b>${price}</b>\n" + tg_msg
+
+    tg_ok = send_telegram(tg_msg)
+
+    logger.info(f"[Sniper] Telegram: {'sent' if tg_ok else 'failed'} | action={action}")
+
+    return jsonify({
+        "status":   "processed",
+        "action":   action,
+        "telegram": "sent" if tg_ok else "failed"
+    }), 200
+
+
+@app.route("/test_sniper", methods=["GET"])
+def test_sniper():
+    """اختبار TM Silent Sniper Pro — يرسل رسالة CALL تجريبية"""
+    test_msg = (
+        "💰 السعر: <b>$318.50</b>\n"
+        "🟢 🎯 قناص تسلا: CALL\n"
+        "السبب: ترند قوي (ADX نشط) + تقاطع ماكد عميق + سيولة حقيقية.\n"
+        "العمل: افتح فريم الدقيقة، استهدف 15-20 سنت واهرب بدم بارد!"
+    )
+    tg_ok = send_telegram(test_msg)
+    return jsonify({"status": "test_sent", "telegram": "sent" if tg_ok else "failed"}), 200
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Test & Utility Endpoints
 # ──────────────────────────────────────────────────────────────────────────────
 

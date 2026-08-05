@@ -1,0 +1,188 @@
+// ============================================================
+// TM Silent Sniper Pro — v1.0
+// فريم: 5 دقائق | رمز: TSLA
+// المطور: TM Sniper System
+// الفلسفة: قرار واحد حاسم — لا حشو، لا تعارض
+// ============================================================
+
+//@version=5
+indicator(title="TM Silent Sniper Pro", shorttitle="TM🎯", overlay=true, max_labels_count=500)
+
+// ============================================================
+// ⚙️ الإعدادات
+// ============================================================
+webhook_url = input.string("", title="Webhook URL", group="🔗 Webhook")
+
+// MACD
+macd_fast   = input.int(12, title="MACD Fast", group="📊 MACD")
+macd_slow   = input.int(26, title="MACD Slow", group="📊 MACD")
+macd_signal = input.int(9,  title="MACD Signal", group="📊 MACD")
+macd_deep   = input.float(0.15, title="MACD Histogram عمق الإشارة", group="📊 MACD")
+
+// ADX
+adx_len     = input.int(14, title="ADX Period", group="📈 ADX")
+adx_thresh  = input.float(20.0, title="ADX حد الترند", group="📈 ADX")
+
+// MFI
+mfi_len     = input.int(14, title="MFI Period", group="💧 MFI")
+mfi_ob      = input.float(80.0, title="MFI تشبع شراء", group="💧 MFI")
+mfi_os      = input.float(20.0, title="MFI تشبع بيع", group="💧 MFI")
+
+// Volume
+vol_sma_len = input.int(20, title="Volume SMA", group="📦 Volume")
+vol_mult    = input.float(1.3, title="Volume مضاعف", group="📦 Volume")
+
+// ============================================================
+// 📐 حساب المؤشرات
+// ============================================================
+
+// MACD
+[macd_line, signal_line, hist] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// VWAP
+vwap_val = ta.vwap(hlc3)
+
+// ADX
+[diplus, diminus, adx_val] = ta.dmi(adx_len, adx_len)
+
+// MFI
+mfi_val = ta.mfi(hlc3, mfi_len)
+
+// OBV
+obv_val = ta.obv
+obv_rising  = obv_val > obv_val[3]
+obv_falling = obv_val < obv_val[3]
+
+// Volume
+vol_sma = ta.sma(volume, vol_sma_len)
+vol_high = volume > vol_sma * vol_mult
+
+// ============================================================
+// 🎯 شروط الإشارات (barstate.isconfirmed فقط)
+// ============================================================
+
+// تقاطع MACD — إيجابي عميق
+macd_cross_up   = ta.crossover(macd_line, signal_line) and hist > macd_deep
+// تقاطع MACD — سلبي عميق
+macd_cross_down = ta.crossunder(macd_line, signal_line) and hist < -macd_deep
+
+// ترند قوي
+trend_active = adx_val > adx_thresh
+
+// السعر فوق/تحت VWAP
+above_vwap = close > vwap_val
+below_vwap = close < vwap_val
+
+// ============================================================
+// 🟢 إشارة CALL
+// ============================================================
+call_signal = barstate.isconfirmed and
+     above_vwap and
+     trend_active and
+     macd_cross_up and
+     vol_high
+
+// ============================================================
+// 🔴 إشارة PUT
+// ============================================================
+put_signal = barstate.isconfirmed and
+     below_vwap and
+     trend_active and
+     macd_cross_down and
+     vol_high
+
+// ============================================================
+// 🕵️ تجميع خفي — Smart Money Accumulation
+// ============================================================
+accumulation = barstate.isconfirmed and
+     obv_rising and
+     mfi_val < mfi_os
+
+// ============================================================
+// 🚨 تصريف خفي — Smart Money Distribution
+// ============================================================
+distribution = barstate.isconfirmed and
+     obv_falling and
+     mfi_val > mfi_ob
+
+// ============================================================
+// 😴 منطقة التخشيب — Chop Zone (مرة واحدة عند الكسر)
+// ============================================================
+chop_warning = barstate.isconfirmed and
+     adx_val < adx_thresh and
+     adx_val[1] >= adx_thresh
+
+// ============================================================
+// 📊 رسم على الشارت
+// ============================================================
+plotshape(call_signal,
+     title="CALL 🟢",
+     location=location.belowbar,
+     style=shape.triangleup,
+     color=color.new(color.green, 0),
+     size=size.normal,
+     text="CALL")
+
+plotshape(put_signal,
+     title="PUT 🔴",
+     location=location.abovebar,
+     style=shape.triangledown,
+     color=color.new(color.red, 0),
+     size=size.normal,
+     text="PUT")
+
+plotshape(accumulation,
+     title="🕵️ تجميع",
+     location=location.belowbar,
+     style=shape.circle,
+     color=color.new(color.blue, 0),
+     size=size.small,
+     text="🕵️")
+
+plotshape(distribution,
+     title="🚨 تصريف",
+     location=location.abovebar,
+     style=shape.circle,
+     color=color.new(color.orange, 0),
+     size=size.small,
+     text="🚨")
+
+plotshape(chop_warning,
+     title="😴 Chop",
+     location=location.abovebar,
+     style=shape.xcross,
+     color=color.new(color.gray, 0),
+     size=size.small,
+     text="😴")
+
+// VWAP
+plot(vwap_val, title="VWAP", color=color.new(color.yellow, 0), linewidth=2)
+
+// ============================================================
+// 📡 التنبيهات — JSON Webhook
+// ============================================================
+
+// 🟢 CALL
+if call_signal
+    alert('{"action":"CALL","price":"' + str.tostring(close, "#.##") + '","message":"🟢 🎯 قناص تسلا: CALL\\nالسبب: ترند قوي (ADX نشط) + تقاطع ماكد عميق + سيولة حقيقية.\\nالعمل: افتح فريم الدقيقة، استهدف 15-20 سنت واهرب بدم بارد!"}',
+         alert.freq_once_per_bar)
+
+// 🔴 PUT
+if put_signal
+    alert('{"action":"PUT","price":"' + str.tostring(close, "#.##") + '","message":"🔴 🎯 قناص تسلا: PUT\\nالسبب: ترند هابط قوي (ADX نشط) + تقاطع ماكد سلبي + فوليوم بيع حقيقي.\\nالعمل: افتح فريم الدقيقة، استهدف 15-20 سنت واهرب بدم بارد!"}',
+         alert.freq_once_per_bar)
+
+// 🕵️ تجميع خفي
+if accumulation
+    alert('{"action":"ACCUMULATION","message":"🕵️ 💡 تنبيه حيتان: تجميع خفي بقاع الموجة!\\nالـ MFI في تشبع بيعي عميق لكن السيولة التراكمية (OBV) ترتفع. الحيتان يجمعون بصمت.\\nالعمل: راقب بصمت، جهز نفسك لانفجار صاعد وشيك (Call)."}',
+         alert.freq_once_per_bar)
+
+// 🚨 تصريف خفي
+if distribution
+    alert('{"action":"DISTRIBUTION","message":"🚨 🩸 تنبيه حيتان: تصريف خفي بقمة الموجة!\\nالـ MFI في تشبع شرائي لكن السيولة (OBV) تنسحب. السعر وهمي!\\nالعمل: احذر فخ التعليقة! لا تشتري Call، جهز نفسك للـ Put."}',
+         alert.freq_once_per_bar)
+
+// 😴 منطقة التخشيب
+if chop_warning
+    alert('{"action":"CHOP_WARNING","message":"😴 🛑 تحذير: السوق دخل مرحلة التخشيب (Chop Zone)!\\nمؤشر الـ ADX تحت 20. لا يوجد اتجاه واضح وصانع السوق يحرق العقود بالثيتا.\\nالعمل: ارفع يدك عن الماوس، الكاش هو الملك الآن."}',
+         alert.freq_once_per_bar)

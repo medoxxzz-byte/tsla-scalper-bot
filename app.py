@@ -2041,6 +2041,84 @@ def sniper_webhook():
     }), 200
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# V15: TM MACD Journey — Webhook Endpoint
+# ──────────────────────────────────────────────────────────────────────────────
+
+# حالة تتبع الرحلة لمنع التعارض والتكرار
+journey_state = {
+    "active_trade": None,  # "CALL" أو "PUT" أو None
+    "last_action": None,
+    "last_update": 0
+}
+
+@app.route("/journey", methods=["POST"])
+def journey_webhook():
+    """
+    TM MACD Journey V15
+    يستقبل 5 حالات فقط: ENTRY_EXPLORE_CALL/PUT, SUPPORT_OK, WARNING, DIVE_CONFIRMED, EXIT
+    يمنع التعارض (لا CALL و PUT في نفس الوقت) ويقلل الإزعاج.
+    """
+    global journey_state
+    try:
+        data = request.get_json() if request.is_json else json.loads(request.data.decode("utf-8"))
+    except Exception as e:
+        logger.error(f"[Journey] JSON parse error: {e}")
+        return jsonify({"error": "Parse error"}), 400
+
+    action  = data.get("action", "").upper()
+    message = data.get("message", "")
+    price   = data.get("price", "?")
+    now = time.time()
+
+    logger.info(f"[Journey] Received: action={action} | price=${price}")
+
+    if not action or not message:
+        return jsonify({"error": "Missing action or message"}), 400
+
+    # 1. فلترة التعارض وإدارة الحالة
+    if "ENTRY_EXPLORE_CALL" in action:
+        if journey_state["active_trade"] == "PUT":
+            logger.info("[Journey] Ignored CALL explore because PUT is active.")
+            return jsonify({"status": "ignored", "reason": "opposite trade active"}), 200
+        journey_state["active_trade"] = "CALL"
+        
+    elif "ENTRY_EXPLORE_PUT" in action:
+        if journey_state["active_trade"] == "CALL":
+            logger.info("[Journey] Ignored PUT explore because CALL is active.")
+            return jsonify({"status": "ignored", "reason": "opposite trade active"}), 200
+        journey_state["active_trade"] = "PUT"
+        
+    elif action == "EXIT":
+        journey_state["active_trade"] = None  # تصفير الحالة بعد الخروج
+
+    # منع تكرار نفس الرسالة المساعدة (Support/Warning) في أقل من 10 دقائق
+    if action in ["SUPPORT_OK", "WARNING"]:
+        if action == journey_state["last_action"] and (now - journey_state["last_update"] < 600):
+            logger.info(f"[Journey] Ignored duplicate {action} within 10m.")
+            return jsonify({"status": "ignored", "reason": "duplicate state"}), 200
+
+    # تحديث الحالة
+    journey_state["last_action"] = action
+    journey_state["last_update"] = now
+
+    # 2. بناء رسالة تلغرام
+    tg_msg = message
+    if price and price != "?":
+        tg_msg = f"💰 السعر: <b>${price}</b>\n" + tg_msg
+
+    tg_ok = send_telegram(tg_msg)
+
+    logger.info(f"[Journey] Telegram: {'sent' if tg_ok else 'failed'} | action={action}")
+
+    return jsonify({
+        "status":   "processed",
+        "action":   action,
+        "active_trade": journey_state["active_trade"],
+        "telegram": "sent" if tg_ok else "failed"
+    }), 200
+
+
 @app.route("/test_sniper", methods=["GET"])
 def test_sniper():
     """اختبار TM Silent Sniper Pro — يرسل رسالة CALL تجريبية"""

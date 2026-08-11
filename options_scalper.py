@@ -6533,6 +6533,9 @@ def _scalp_signal(bars_5m, price, vwap, atr_5m):
 # ── 3. generate_market_briefing الجديدة (مختصرة + توجيهية) ───────────────
 
 def generate_market_briefing():
+    # V15 Update: إيقاف رسائل ثاقب المجدولة (كل 15 دقيقة) بناءً على طلب المستخدم
+    return None
+
     """
     رسالة تلغرام مختصرة وتوجيهية كل 15 دقيقة:
     - سطر واحد للسعر والبيئة

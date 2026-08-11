@@ -1,0 +1,129 @@
+// ============================================================
+// TM MACD Journey — V15
+// فريم: 5 دقائق / 1 دقيقة | رمز: TSLA
+// المطور: TM Sniper System
+// الفلسفة: تتبع رحلة MACD من المنطقة الوسطى نحو الصفر بقوة (3 أعمدة متزايدة)
+// المكان: دعم/مقاومة أو BB Upper/Lower — شرط أساسي
+// التأكيد: OBV أو MOM أو VWAP
+// الرسائل: 5 حالات (دخول استكشاف، دعم، تحذير، غوص مؤكد، خروج) — بلا تعارض
+// ============================================================
+//@version=5
+indicator(title="TM MACD Journey V15", shorttitle="TM🎯V15", overlay=true, max_labels_count=500)
+
+// ============================================================
+// ⚙️ الإعدادات
+// ============================================================
+webhook_url = input.string("", title="Webhook URL", group="🔗 Webhook")
+
+// MACD
+macd_fast   = input.int(12, title="MACD Fast", group="📊 MACD")
+macd_slow   = input.int(26, title="MACD Slow", group="📊 MACD")
+macd_signal = input.int(9,  title="MACD Signal", group="📊 MACD")
+
+// ADX
+adx_len     = input.int(14, title="ADX Period", group="📈 ADX")
+adx_thresh  = input.float(20.0, title="ADX حد التخشيب", group="📈 ADX")
+
+// BB
+bb_len      = input.int(20, title="BB Period", group="🌐 Bollinger Bands")
+bb_mult     = input.float(2.0, title="BB Multiplier", group="🌐 Bollinger Bands")
+
+// ============================================================
+// 📐 حساب المؤشرات
+// ============================================================
+// MACD
+[macd_line, signal_line, hist] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// MACD Journey Conditions (3 consecutive increasing/decreasing histogram bars towards zero)
+hist_up_towards_zero = hist < 0 and hist > hist[1] and hist[1] > hist[2] and hist[2] > hist[3]
+hist_down_towards_zero = hist > 0 and hist < hist[1] and hist[1] < hist[2] and hist[2] < hist[3]
+
+// ADX
+[diplus, diminus, adx_val] = ta.dmi(adx_len, adx_len)
+
+// VWAP
+vwap_val = ta.vwap(hlc3)
+
+// OBV & MOM
+obv_val = ta.obv
+obv_rising = obv_val > obv_val[1]
+obv_falling = obv_val < obv_val[1]
+
+mom_val = ta.mom(close, 10)
+mom_rising = mom_val > mom_val[1]
+mom_falling = mom_val < mom_val[1]
+
+// Bollinger Bands
+[bb_basis, bb_upper, bb_lower] = ta.bb(close, bb_len, bb_mult)
+
+// المكان الصلب (Solid Ground)
+near_bb_lower = close <= bb_lower * 1.002 // Tolerance
+near_bb_upper = close >= bb_upper * 0.998 // Tolerance
+
+// ============================================================
+// 🎯 شروط الإشارات (barstate.isconfirmed)
+// ============================================================
+
+// صمت إذا كان السوق مخشب أو MACD قريب جداً من الصفر (أقل من 0.05)
+is_chop = adx_val < adx_thresh
+is_macd_flat = math.abs(hist) < 0.05
+can_trade = not is_chop and not is_macd_flat
+
+// 🟢 دخول استكشاف (CALL)
+// MACD يصعد نحو الصفر + السعر قرب BB Lower أو فوق VWAP + OBV أو MOM يدعم
+call_explore = barstate.isconfirmed and can_trade and hist_up_towards_zero and (near_bb_lower or close > vwap_val) and (obv_rising or mom_rising)
+
+// 🔴 دخول استكشاف (PUT)
+// MACD ينزل نحو الصفر + السعر قرب BB Upper أو تحت VWAP + OBV أو MOM يدعم
+put_explore = barstate.isconfirmed and can_trade and hist_down_towards_zero and (near_bb_upper or close < vwap_val) and (obv_falling or mom_falling)
+
+// 🛡️ دعم مستمر (Support OK)
+// استمرار تحسن MACD + استمرار دعم OBV
+call_support = barstate.isconfirmed and hist > hist[1] and obv_rising
+put_support = barstate.isconfirmed and hist < hist[1] and obv_falling
+
+// ⚠️ تحذير مبكر (Warning - لا تعزز)
+// السعر لم يعكس بعد، لكن OBV أو MOM سحب دعمه
+call_warning = barstate.isconfirmed and hist > hist[1] and obv_falling and mom_falling
+put_warning = barstate.isconfirmed and hist < hist[1] and obv_rising and mom_rising
+
+// 🌊 غوص مؤكد (Dive Confirmed - تقاطع الصفر)
+call_dive = barstate.isconfirmed and ta.crossover(hist, 0)
+put_dive = barstate.isconfirmed and ta.crossunder(hist, 0)
+
+// 🛑 خروج موضوعي (Exit)
+// شمعة عكسية أكبر من سابقتها + فشل MACD
+bullish_engulfing = close > open and close > open[1] and open < close[1]
+bearish_engulfing = close < open and close < open[1] and open > close[1]
+
+call_exit = barstate.isconfirmed and bearish_engulfing and hist < hist[1]
+put_exit = barstate.isconfirmed and bullish_engulfing and hist > hist[1]
+
+// ============================================================
+// 📡 التنبيهات (JSON)
+// ============================================================
+
+if call_explore
+    alert('{"action": "ENTRY_EXPLORE_CALL", "message": "🟢 🚀 رحلة MACD: دخول استكشاف (CALL) بعقد واحد. MACD يصعد نحو الصفر بقوة من منطقة دعم. جهز نفسك للغوص!"}', alert.freq_once_per_bar_close)
+
+if put_explore
+    alert('{"action": "ENTRY_EXPLORE_PUT", "message": "🔴 🚀 رحلة MACD: دخول استكشاف (PUT) بعقد واحد. MACD ينزل نحو الصفر بقوة من منطقة مقاومة. جهز نفسك للغوص!"}', alert.freq_once_per_bar_close)
+
+if call_support or put_support
+    alert('{"action": "SUPPORT_OK", "message": "🛡️ دعم مستمر: المؤشرات تساند الاتجاه. استمر بثقة."}', alert.freq_once_per_bar_close)
+
+if call_warning or put_warning
+    alert('{"action": "WARNING", "message": "⚠️ تحذير مبكر: السيولة (OBV/MOM) تسحب دعمها! لا تعزز العقود وكن جاهزاً للخروج."}', alert.freq_once_per_bar_close)
+
+if call_dive or put_dive
+    alert('{"action": "DIVE_CONFIRMED", "message": "🌊 🎯 غوص مؤكد: MACD اخترق الصفر بنجاح! إذا كنت داخل الصفقة، هذا وقت التعزيز أو جني الربح السريع."}', alert.freq_once_per_bar_close)
+
+if call_exit or put_exit
+    alert('{"action": "EXIT", "message": "🛑 خروج إجباري: شمعة عكسية ابتلعت الزخم وتراجع الماكد. اخرج فوراً بسعر السوق لحماية الكاش."}', alert.freq_once_per_bar_close)
+
+// ============================================================
+// 📊 رسم على الشارت
+// ============================================================
+plotshape(call_explore, title="CALL Explore", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small, text="CALL 1")
+plotshape(put_explore, title="PUT Explore", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small, text="PUT 1")
+plotshape(call_exit or put_exit, title="EXIT", location=location.absolute, color=color.orange, style=shape.xcross, size=size.small, text="EXIT")

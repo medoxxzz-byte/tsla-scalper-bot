@@ -35,6 +35,7 @@ import time
 import logging
 import threading
 from datetime import datetime, timezone, timedelta
+import app_v16_update
 
 try:
     from flask import Flask, request, jsonify, render_template
@@ -2052,10 +2053,10 @@ journey_state = {
     "last_update": 0
 }
 
-@app.route("/journey", methods=["POST"])
-def journey_webhook():
+@app.route("/journey_v15_legacy", methods=["POST"])
+def journey_webhook_v15_legacy():
     """
-    TM MACD Journey V15
+    TM MACD Journey V15 legacy endpoint (disabled from TradingView)
     يستقبل 5 حالات فقط: ENTRY_EXPLORE_CALL/PUT, SUPPORT_OK, WARNING, DIVE_CONFIRMED, EXIT
     يمنع التعارض (لا CALL و PUT في نفس الوقت) ويقلل الإزعاج.
     """

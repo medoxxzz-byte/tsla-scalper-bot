@@ -4666,8 +4666,15 @@ def tm_test_telegram():
         return jsonify({"ok": False, "error": str(e)})
 
 
+@app.route('/journey', methods=['POST'])
+def journey_webhook():
+    data = request.get_json() or {}
+    return jsonify(app_v16_update.process_v16_webhook(data, send_telegram))
+
 # استدعاء مباشر عند بدء التشغيل
 _start_background_threads()
+shield_thread = threading.Thread(target=app_v16_update.shield_scheduler_loop, args=(send_telegram,), daemon=True)
+shield_thread.start()
 
 if __name__ == "__main__":
     app.run(host=SERVER_HOST, port=SERVER_PORT, debug=False)

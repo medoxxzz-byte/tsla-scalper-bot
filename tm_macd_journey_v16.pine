@@ -1,0 +1,96 @@
+//@version=5
+indicator("TM MACD Journey & Shield V16", overlay=true)
+
+// --- Inputs ---
+macd_fast = input.int(12, "MACD Fast")
+macd_slow = input.int(26, "MACD Slow")
+macd_sig = input.int(9, "MACD Signal")
+mom_len = input.int(12, "Momentum Length")
+obv_sma_len = input.int(30, "OBV SMA Length")
+adx_len = input.int(14, "ADX Length")
+stoch_k = input.int(14, "Stoch %K")
+stoch_d = input.int(3, "Stoch %D")
+stoch_smooth = input.int(3, "Stoch Smooth")
+
+// --- MACD ---
+[macdLine, signalLine, histLine] = ta.macd(close, macd_fast, macd_slow, macd_sig)
+
+// --- Momentum & OBV ---
+mom = close - close[mom_len]
+obv = ta.cum(math.sign(ta.change(close)) * volume)
+obv_sma = ta.sma(obv, obv_sma_len)
+
+// --- ADX ---
+[diPlus, diMinus, adx] = ta.dmi(adx_len, adx_len)
+
+// --- Stochastic RSI ---
+rsi14 = ta.rsi(close, 14)
+stoch = ta.stoch(rsi14, rsi14, rsi14, stoch_k)
+k = ta.sma(stoch, stoch_smooth)
+d = ta.sma(k, stoch_d)
+
+// --- Journey States ---
+// 1. START: MACD crosses from far/mid area towards zero
+bool call_start = ta.crossover(histLine, 0) and macdLine < 0
+bool put_start = ta.crossunder(histLine, 0) and macdLine > 0
+
+// 2. TARGET: MACD reaches zero
+bool call_target = ta.crossover(macdLine, 0)
+bool put_target = ta.crossunder(macdLine, 0)
+
+// 3. REVERSAL (Exit): MACD reverses before or after target
+bool call_reversal = ta.crossunder(histLine, 0)
+bool put_reversal = ta.crossover(histLine, 0)
+
+// --- Alert Logic ---
+// We use a simple state machine to avoid spam
+var string journey_state = "IDLE"
+var int bars_since_start = 0
+
+if journey_state != "IDLE"
+    bars_since_start += 1
+
+// Start Journey
+if call_start and journey_state == "IDLE"
+    journey_state := "CALL"
+    bars_since_start := 0
+    alert('{"action":"START_CALL", "macd":' + str.tostring(macdLine, "#.##") + '}', alert.freq_once_per_bar_close)
+
+if put_start and journey_state == "IDLE"
+    journey_state := "PUT"
+    bars_since_start := 0
+    alert('{"action":"START_PUT", "macd":' + str.tostring(macdLine, "#.##") + '}', alert.freq_once_per_bar_close)
+
+// 3-Minute Pulse (OBV/MOM)
+bool pulse_3m = bars_since_start % 3 == 0 and bars_since_start > 0
+if pulse_3m and journey_state == "CALL"
+    bool support = obv > obv_sma and mom > 0
+    alert('{"action":"PULSE_3M", "support":' + (support ? "true" : "false") + '}', alert.freq_once_per_bar_close)
+
+if pulse_3m and journey_state == "PUT"
+    bool support = obv < obv_sma and mom < 0
+    alert('{"action":"PULSE_3M", "support":' + (support ? "true" : "false") + '}', alert.freq_once_per_bar_close)
+
+// 5-Minute Pulse (ADX/Stoch)
+bool pulse_5m = bars_since_start % 5 == 0 and bars_since_start > 0
+if pulse_5m
+    alert('{"action":"PULSE_5M", "adx":' + str.tostring(adx, "#.#") + ', "k":' + str.tostring(k, "#.#") + '}', alert.freq_once_per_bar_close)
+
+// Target Reached
+if call_target and journey_state == "CALL"
+    alert('{"action":"TARGET_REACHED"}', alert.freq_once_per_bar_close)
+
+if put_target and journey_state == "PUT"
+    alert('{"action":"TARGET_REACHED"}', alert.freq_once_per_bar_close)
+
+// Reversal / Exit
+if call_reversal and journey_state == "CALL"
+    journey_state := "IDLE"
+    alert('{"action":"REVERSAL"}', alert.freq_once_per_bar_close)
+
+if put_reversal and journey_state == "PUT"
+    journey_state := "IDLE"
+    alert('{"action":"REVERSAL"}', alert.freq_once_per_bar_close)
+
+// --- Visuals ---
+bgcolor(journey_state == "CALL" ? color.new(color.green, 90) : journey_state == "PUT" ? color.new(color.red, 90) : na)

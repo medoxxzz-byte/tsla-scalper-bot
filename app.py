@@ -35,7 +35,8 @@ import time
 import logging
 import threading
 from datetime import datetime, timezone, timedelta
-import app_v16_update
+import app_v16_update  # محفوظ للرجوع فقط؛ لا يُشغّل في V17
+import app_v17_update
 
 try:
     from flask import Flask, request, jsonify, render_template
@@ -4669,13 +4670,19 @@ def tm_test_telegram():
 
 @app.route('/journey', methods=['POST'])
 def journey_webhook():
-    data = request.get_json() or {}
-    return jsonify(app_v16_update.process_v16_webhook(data, send_telegram))
+    """V16 retained for rollback but deliberately muted to stop repetitive messages."""
+    return jsonify({"status": "disabled", "message": "V16 journey alerts are muted; use /reversal_map for V17."}), 200
+
+@app.route('/reversal_map', methods=['POST'])
+def reversal_map_webhook():
+    """TM Reversal Map V17 — receives only scheduled maps and one decisive zone alert."""
+    data = request.get_json(silent=True) or {}
+    return jsonify(app_v17_update.process_v17_webhook(data, send_telegram))
 
 # استدعاء مباشر عند بدء التشغيل
 _start_background_threads()
-shield_thread = threading.Thread(target=app_v16_update.shield_scheduler_loop, args=(send_telegram,), daemon=True)
-shield_thread.start()
+v17_exit_thread = threading.Thread(target=app_v17_update.exit_scheduler_loop, args=(send_telegram,), daemon=True)
+v17_exit_thread.start()
 
 if __name__ == "__main__":
     app.run(host=SERVER_HOST, port=SERVER_PORT, debug=False)

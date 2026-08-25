@@ -1,0 +1,217 @@
+//@version=5
+indicator("TM Reversal Map V17 — مناطق وقرار هادئ", overlay=true, max_labels_count=100)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TM Reversal Map V17
+// يعمل على TSLA / فريم 5 دقائق / مع تفعيل Extended Hours في الشارت.
+// يرسل خرائط في 09:25، 09:45، 10:15، 11:00 ET عند إغلاق الشمعة السابقة.
+// بعد 11:00: تنبيه واحد فقط عند منطقة خريطة + إغلاق 5 دقائق حاسم.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Inputs ────────────────────────────────────────────────────────────────────
+tz               = input.string("America/New_York", "Market Timezone")
+baseHalfWidth    = input.float(0.15, "Base Zone Half-Width ($)", minval=0.01, step=0.01)
+maxHalfWidth     = input.float(0.60, "Max Zone Half-Width ($)", minval=0.15, step=0.05)
+atrWidthFactor   = input.float(0.12, "ATR Width Multiplier", minval=0.01, step=0.01)
+pivotLen         = input.int(3, "5m Pivot Strength", minval=2, maxval=8)
+cmfLen           = input.int(20, "CMF Length", minval=5)
+obvLen           = input.int(30, "OBV Average Length", minval=5)
+momLen           = input.int(12, "Momentum Length", minval=2)
+adxLen           = input.int(14, "ADX Length", minval=5)
+showZones        = input.bool(true, "Show Reversal Map Zones")
+
+// ── Core indicators ───────────────────────────────────────────────────────────
+vwapValue = ta.vwap(hlc3)
+[macdLine, signalLine, histLine] = ta.macd(close, 12, 26, 9)
+momValue = close - close[momLen]
+obvValue = ta.cum(math.sign(ta.change(close)) * volume)
+obvAvg   = ta.sma(obvValue, obvLen)
+[diPlus, diMinus, adxValue] = ta.dmi(adxLen, adxLen)
+rsiValue = ta.rsi(close, 14)
+stochRaw = ta.stoch(rsiValue, rsiValue, rsiValue, 14)
+stochK   = ta.sma(stochRaw, 3)
+stochD   = ta.sma(stochK, 3)
+atrValue = ta.atr(14)
+volAvg   = ta.sma(volume, 20)
+relVol   = na(volAvg) or volAvg == 0 ? 1.0 : volume / volAvg
+
+// CMF: Money Flow Multiplier × Volume, normalised by total volume.
+mfMultiplier = high == low ? 0.0 : ((close - low) - (high - close)) / (high - low)
+mfVolume     = mfMultiplier * volume
+cmfValue     = ta.sum(mfVolume, cmfLen) / ta.sum(volume, cmfLen)
+
+// ── Time helpers ──────────────────────────────────────────────────────────────
+nyHour = hour(time, tz)
+nyMin  = minute(time, tz)
+newDay = ta.change(time("D")) != 0
+
+isPremarket = (nyHour > 4 or (nyHour == 4 and nyMin >= 0)) and (nyHour < 9 or (nyHour == 9 and nyMin < 30))
+isOpenFirst15 = nyHour == 9 and nyMin >= 30 and nyMin < 45
+isRegular = (nyHour > 9 or (nyHour == 9 and nyMin >= 30)) and (nyHour < 16)
+afterMap90 = nyHour > 11 or (nyHour == 11 and nyMin >= 0)
+
+// Trigger on 5m bar START; alert() is at bar close, so the delivery times are:
+// 09:20→09:25, 09:40→09:45, 10:10→10:15, 10:55→11:00 ET.
+mapPreopenBar = nyHour == 9 and nyMin == 20
+map15Bar      = nyHour == 9 and nyMin == 40
+map45Bar      = nyHour == 10 and nyMin == 10
+map90Bar      = nyHour == 10 and nyMin == 55
+
+// ── Daily map levels ──────────────────────────────────────────────────────────
+var float preHigh = na
+var float preLow = na
+var float open15High = na
+var float open15Low = na
+var float lastPivotHigh = na
+var float lastPivotLow = na
+var bool zoneAlertSent = false
+
+if newDay
+    preHigh := na
+    preLow := na
+    open15High := na
+    open15Low := na
+    lastPivotHigh := na
+    lastPivotLow := na
+    zoneAlertSent := false
+
+if isPremarket
+    preHigh := na(preHigh) ? high : math.max(preHigh, high)
+    preLow := na(preLow) ? low : math.min(preLow, low)
+
+if isOpenFirst15
+    open15High := na(open15High) ? high : math.max(open15High, high)
+    open15Low := na(open15Low) ? low : math.min(open15Low, low)
+
+pivotHigh = ta.pivothigh(high, pivotLen, pivotLen)
+pivotLow  = ta.pivotlow(low, pivotLen, pivotLen)
+if not na(pivotHigh)
+    lastPivotHigh := pivotHigh
+if not na(pivotLow)
+    lastPivotLow := pivotLow
+
+prevDayHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_off)
+prevDayLow  = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_off)
+zoneHalfWidth = math.min(maxHalfWidth, math.max(baseHalfWidth, atrValue * atrWidthFactor))
+
+// Find the closest usable resistance above current price and support below it.
+f_nearest_above(_price, _a, _b, _c, _d, _e) =>
+    float best = na
+    if not na(_a) and _a > _price
+        best := _a
+    if not na(_b) and _b > _price and (na(best) or _b < best)
+        best := _b
+    if not na(_c) and _c > _price and (na(best) or _c < best)
+        best := _c
+    if not na(_d) and _d > _price and (na(best) or _d < best)
+        best := _d
+    if not na(_e) and _e > _price and (na(best) or _e < best)
+        best := _e
+    best
+
+f_nearest_below(_price, _a, _b, _c, _d, _e) =>
+    float best = na
+    if not na(_a) and _a < _price
+        best := _a
+    if not na(_b) and _b < _price and (na(best) or _b > best)
+        best := _b
+    if not na(_c) and _c < _price and (na(best) or _c > best)
+        best := _c
+    if not na(_d) and _d < _price and (na(best) or _d > best)
+        best := _d
+    if not na(_e) and _e < _price and (na(best) or _e > best)
+        best := _e
+    best
+
+mapResistance = f_nearest_above(close, prevDayHigh, preHigh, open15High, lastPivotHigh, vwapValue)
+mapSupport    = f_nearest_below(close, prevDayLow, preLow, open15Low, lastPivotLow, vwapValue)
+
+// If no level sits on a side of price, use the closest reference to maintain a map.
+mapResistance := na(mapResistance) ? (na(lastPivotHigh) ? preHigh : lastPivotHigh) : mapResistance
+mapSupport := na(mapSupport) ? (na(lastPivotLow) ? preLow : lastPivotLow) : mapSupport
+
+// ── 5m state: price action first, indicators confirm ──────────────────────────
+bullStructure = close > vwapValue and close > open
+bearStructure = close < vwapValue and close < open
+bullLiquidity = obvValue > obvAvg and cmfValue > 0 and relVol >= 0.85
+bearLiquidity = obvValue < obvAvg and cmfValue < 0 and relVol >= 0.85
+bullMomentum = histLine > 0 and momValue > 0 and (adxValue < 20 or diPlus >= diMinus) and stochK >= stochD
+bearMomentum = histLine < 0 and momValue < 0 and (adxValue < 20 or diMinus >= diPlus) and stochK <= stochD
+
+bullScore = (bullStructure ? 1 : 0) + (bullLiquidity ? 1 : 0) + (bullMomentum ? 1 : 0)
+bearScore = (bearStructure ? 1 : 0) + (bearLiquidity ? 1 : 0) + (bearMomentum ? 1 : 0)
+
+nearSupport = not na(mapSupport) and math.abs(close - mapSupport) <= zoneHalfWidth
+nearResistance = not na(mapResistance) and math.abs(close - mapResistance) <= zoneHalfWidth
+callZoneConfirm = nearSupport and close > mapSupport and bullScore >= 2
+putZoneConfirm  = nearResistance and close < mapResistance and bearScore >= 2
+
+// ── JSON helpers ──────────────────────────────────────────────────────────────
+f_jsonNum(_value) => na(_value) ? "null" : str.tostring(_value, "#.##")
+f_bool(_value) => _value ? "true" : "false"
+
+f_mapPayload(_action) =>
+    '{"action":"' + _action + '"' +
+    ',"timeframe":"5m"' +
+    ',"price":' + f_jsonNum(close) +
+    ',"vwap":' + f_jsonNum(vwapValue) +
+    ',"resistance":' + f_jsonNum(mapResistance) +
+    ',"support":' + f_jsonNum(mapSupport) +
+    ',"zone_half_width":' + f_jsonNum(zoneHalfWidth) +
+    ',"cmf":' + f_jsonNum(cmfValue) +
+    ',"obv_bull":' + f_bool(obvValue > obvAvg) +
+    ',"relative_volume":' + f_jsonNum(relVol) +
+    ',"hist":' + f_jsonNum(histLine) +
+    ',"momentum":' + f_jsonNum(momValue) +
+    ',"adx":' + f_jsonNum(adxValue) +
+    ',"stoch_k":' + f_jsonNum(stochK) +
+    ',"bull_score":' + str.tostring(bullScore) +
+    ',"bear_score":' + str.tostring(bearScore) +
+    ',"close_above_vwap":' + f_bool(close > vwapValue) +
+    '}'
+
+// ── Scheduled maps: only four per day ─────────────────────────────────────────
+if barstate.isconfirmed and mapPreopenBar
+    alert(f_mapPayload("MAP_PREOPEN"), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and map15Bar
+    alert(f_mapPayload("MAP_OPEN_15"), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and map45Bar
+    alert(f_mapPayload("MAP_45"), alert.freq_once_per_bar_close)
+
+if barstate.isconfirmed and map90Bar
+    alert(f_mapPayload("MAP_90"), alert.freq_once_per_bar_close)
+
+// ── One decisive zone alert after the 90-minute map ────────────────────────────
+if barstate.isconfirmed and isRegular and afterMap90 and not zoneAlertSent
+    if callZoneConfirm
+        zoneAlertSent := true
+        alert(f_mapPayload("ZONE_CALL_CONFIRM"), alert.freq_once_per_bar_close)
+    else if putZoneConfirm
+        zoneAlertSent := true
+        alert(f_mapPayload("ZONE_PUT_CONFIRM"), alert.freq_once_per_bar_close)
+
+// ── Visuals ───────────────────────────────────────────────────────────────────
+resTop = mapResistance + zoneHalfWidth
+resBottom = mapResistance - zoneHalfWidth
+supTop = mapSupport + zoneHalfWidth
+supBottom = mapSupport - zoneHalfWidth
+
+pResTop = plot(showZones ? resTop : na, "Resistance Zone Top", color=color.new(color.red, 35), linewidth=1, style=plot.style_linebr)
+pResBottom = plot(showZones ? resBottom : na, "Resistance Zone Bottom", color=color.new(color.red, 35), linewidth=1, style=plot.style_linebr)
+pSupTop = plot(showZones ? supTop : na, "Support Zone Top", color=color.new(color.green, 35), linewidth=1, style=plot.style_linebr)
+pSupBottom = plot(showZones ? supBottom : na, "Support Zone Bottom", color=color.new(color.green, 35), linewidth=1, style=plot.style_linebr)
+fill(pResTop, pResBottom, color=color.new(color.red, 92), title="Resistance Area")
+fill(pSupTop, pSupBottom, color=color.new(color.green, 92), title="Support Area")
+plot(showZones ? vwapValue : na, "VWAP", color=color.orange, linewidth=2)
+
+plotshape(showZones and callZoneConfirm and afterMap90 and not zoneAlertSent[1], title="CALL Zone Confirmation", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.tiny, text="MAP")
+plotshape(showZones and putZoneConfirm and afterMap90 and not zoneAlertSent[1], title="PUT Zone Confirmation", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.tiny, text="MAP")
+
+// Status label shown only on the final historical bar.
+var label statusLabel = na
+if barstate.islast and showZones
+    label.delete(statusLabel)
+    statusText = "TM Map V17 | 5m\nCMF: " + (cmfValue > 0 ? "سيولة داعمة" : cmfValue < 0 ? "سيولة سلبية" : "سيولة محايدة") + "\nMap only — no chase"
+    statusLabel := label.new(bar_index, high, statusText, style=label.style_label_down, textcolor=color.white, color=color.new(color.black, 25), size=size.tiny)

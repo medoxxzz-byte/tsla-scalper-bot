@@ -151,24 +151,7 @@ f_jsonNum(_value) => na(_value) ? "null" : str.tostring(_value, "#.##")
 f_bool(_value) => _value ? "true" : "false"
 
 f_mapPayload(_action) =>
-    '{"action":"' + _action + '"' +
-    ',"timeframe":"5m"' +
-    ',"price":' + f_jsonNum(close) +
-    ',"vwap":' + f_jsonNum(vwapValue) +
-    ',"resistance":' + f_jsonNum(mapResistance) +
-    ',"support":' + f_jsonNum(mapSupport) +
-    ',"zone_half_width":' + f_jsonNum(zoneHalfWidth) +
-    ',"cmf":' + f_jsonNum(cmfValue) +
-    ',"obv_bull":' + f_bool(obvValue > obvAvg) +
-    ',"relative_volume":' + f_jsonNum(relVol) +
-    ',"hist":' + f_jsonNum(histLine) +
-    ',"momentum":' + f_jsonNum(momValue) +
-    ',"adx":' + f_jsonNum(adxValue) +
-    ',"stoch_k":' + f_jsonNum(stochK) +
-    ',"bull_score":' + str.tostring(bullScore) +
-    ',"bear_score":' + str.tostring(bearScore) +
-    ',"close_above_vwap":' + f_bool(close > vwapValue) +
-    '}'
+    '{"action":"' + _action + '","timeframe":"5m","price":' + f_jsonNum(close) + ',"vwap":' + f_jsonNum(vwapValue) + ',"resistance":' + f_jsonNum(mapResistance) + ',"support":' + f_jsonNum(mapSupport) + ',"zone_half_width":' + f_jsonNum(zoneHalfWidth) + ',"cmf":' + f_jsonNum(cmfValue) + ',"obv_bull":' + f_bool(obvValue > obvAvg) + ',"relative_volume":' + f_jsonNum(relVol) + ',"hist":' + f_jsonNum(histLine) + ',"momentum":' + f_jsonNum(momValue) + ',"adx":' + f_jsonNum(adxValue) + ',"stoch_k":' + f_jsonNum(stochK) + ',"bull_score":' + str.tostring(bullScore) + ',"bear_score":' + str.tostring(bearScore) + ',"close_above_vwap":' + f_bool(close > vwapValue) + '}'
 
 // ── Scheduled maps: only four per day ─────────────────────────────────────────
 if barstate.isconfirmed and mapPreopenBar

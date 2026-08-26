@@ -38,7 +38,7 @@ relVol   = na(volAvg) or volAvg == 0 ? 1.0 : volume / volAvg
 // CMF: Money Flow Multiplier × Volume, normalised by total volume.
 mfMultiplier = high == low ? 0.0 : ((close - low) - (high - close)) / (high - low)
 mfVolume     = mfMultiplier * volume
-cmfValue     = ta.sum(mfVolume, cmfLen) / ta.sum(volume, cmfLen)
+cmfValue     = math.sum(mfVolume, cmfLen) / math.sum(volume, cmfLen)
 
 // ── Time helpers ──────────────────────────────────────────────────────────────
 nyHour = hour(time, tz)

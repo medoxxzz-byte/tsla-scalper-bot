@@ -37,6 +37,7 @@ import threading
 from datetime import datetime, timezone, timedelta
 import app_v16_update  # محفوظ للرجوع فقط؛ لا يُشغّل في V17
 import app_v17_update
+import app_v18_experiments  # تجارب الدقيقة وإغلاق السوق؛ منفصلة عن V17
 
 try:
     from flask import Flask, request, jsonify, render_template
@@ -4678,6 +4679,12 @@ def reversal_map_webhook():
     """TM Reversal Map V17 — receives only scheduled maps and one decisive zone alert."""
     data = request.get_json(silent=True) or {}
     return jsonify(app_v17_update.process_v17_webhook(data, send_telegram))
+
+@app.route('/reversal_experiments', methods=['POST'])
+def reversal_experiments_webhook():
+    """V18 research only: one bounded 1m confirmation and one close observation."""
+    data = request.get_json(silent=True) or {}
+    return jsonify(app_v18_experiments.process_v18_webhook(data, send_telegram))
 
 # استدعاء مباشر عند بدء التشغيل
 _start_background_threads()

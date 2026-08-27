@@ -1,0 +1,219 @@
+//@version=5
+indicator("TM Reversal Experiments V18 — 1m research windows", overlay=true, max_labels_count=30)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// V18 is deliberately separate from TM Reversal Map V17.
+// Use it on TSLA / 1-minute chart / Extended Hours enabled.
+// It has two limited experiments:
+// 1) 10:05–10:35 ET: one map + at most one 1m support/resistance confirmation.
+// 2) 15:30–15:55 ET: at most one close-breakout research alert.
+// Neither experiment changes the V17 5-minute map or GEX messages.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Inputs ────────────────────────────────────────────────────────────────────
+tz                = input.string("America/New_York", "Market Timezone")
+showExperimentMap = input.bool(true, "Show Experiment Zones")
+minuteBaseWidth   = input.float(0.08, "1m Base Zone Half-Width ($)", minval=0.03, step=0.01)
+minuteMaxWidth    = input.float(0.30, "1m Max Zone Half-Width ($)", minval=0.08, step=0.01)
+minuteAtrFactor   = input.float(0.12, "1m ATR Width Multiplier", minval=0.01, step=0.01)
+cmfLen            = input.int(20, "CMF Length", minval=5)
+obvLen            = input.int(30, "OBV Average Length", minval=5)
+momLen            = input.int(12, "Momentum Length", minval=2)
+pivotLen          = input.int(3, "1m Pivot Strength", minval=2, maxval=6)
+
+// ── Current 1-minute indicators ──────────────────────────────────────────────
+vwapValue = ta.vwap(hlc3)
+[macdLine, signalLine, histLine] = ta.macd(close, 12, 26, 9)
+momValue = close - close[momLen]
+obvValue = ta.cum(math.sign(ta.change(close)) * volume)
+obvAvg   = ta.sma(obvValue, obvLen)
+atrValue = ta.atr(14)
+volAvg   = ta.sma(volume, 20)
+relVol   = na(volAvg) or volAvg == 0 ? 1.0 : volume / volAvg
+
+mfMultiplier = high == low ? 0.0 : ((close - low) - (high - close)) / (high - low)
+mfVolume     = mfMultiplier * volume
+cmfVolumeSum = math.sum(mfVolume, cmfLen)
+volumeSum    = math.sum(volume, cmfLen)
+cmfValue     = na(volumeSum) or volumeSum == 0 ? 0.0 : cmfVolumeSum / volumeSum
+
+// ── Confirming 5-minute context; it is a veto, not another 1m signal. ────────
+f_macd_hist() =>
+    [_, _, _hist] = ta.macd(close, 12, 26, 9)
+    _hist
+
+fiveClose = request.security(syminfo.tickerid, "5", close, lookahead=barmerge.lookahead_off)
+fiveVwap  = request.security(syminfo.tickerid, "5", ta.vwap(hlc3), lookahead=barmerge.lookahead_off)
+fiveHist  = request.security(syminfo.tickerid, "5", f_macd_hist(), lookahead=barmerge.lookahead_off)
+fiveBull  = fiveClose > fiveVwap and fiveHist >= 0
+fiveBear  = fiveClose < fiveVwap and fiveHist <= 0
+fiveBias  = fiveBull ? "bull" : fiveBear ? "bear" : "mixed"
+
+// ── Time and daily state ──────────────────────────────────────────────────────
+nyHour = hour(time, tz)
+nyMin  = minute(time, tz)
+newDay = ta.change(time("D")) != 0
+isRegular = (nyHour > 9 or (nyHour == 9 and nyMin >= 30)) and nyHour < 16
+
+// The alert is emitted at bar close: 10:04 bar -> 10:05 delivery.
+minuteMapAnchor = nyHour == 10 and nyMin == 4
+minuteWindow    = nyHour == 10 and nyMin >= 5 and nyMin < 35
+rangeBuild      = nyHour == 15 and nyMin >= 15 and nyMin < 30
+closeWindow     = nyHour == 15 and nyMin >= 30 and nyMin < 55
+
+// ── Local levels used only by the 10:05–10:35 experiment ──────────────────────
+var float open15High = na
+var float open15Low = na
+var float lastPivotHigh = na
+var float lastPivotLow = na
+var float expResistance = na
+var float expSupport = na
+var float expHalfWidth = na
+var bool minuteMapSent = false
+var bool minuteAlertSent = false
+
+// ── 15:15–15:30 range used only by the close experiment ───────────────────────
+var float closingRangeHigh = na
+var float closingRangeLow = na
+var bool closingAlertSent = false
+
+if newDay
+    open15High := na
+    open15Low := na
+    lastPivotHigh := na
+    lastPivotLow := na
+    expResistance := na
+    expSupport := na
+    expHalfWidth := na
+    minuteMapSent := false
+    minuteAlertSent := false
+    closingRangeHigh := na
+    closingRangeLow := na
+    closingAlertSent := false
+
+isOpenFirst15 = nyHour == 9 and nyMin >= 30 and nyMin < 45
+if isOpenFirst15
+    open15High := na(open15High) ? high : math.max(open15High, high)
+    open15Low := na(open15Low) ? low : math.min(open15Low, low)
+
+pivotHigh = ta.pivothigh(high, pivotLen, pivotLen)
+pivotLow  = ta.pivotlow(low, pivotLen, pivotLen)
+if not na(pivotHigh)
+    lastPivotHigh := pivotHigh
+if not na(pivotLow)
+    lastPivotLow := pivotLow
+
+if rangeBuild
+    closingRangeHigh := na(closingRangeHigh) ? high : math.max(closingRangeHigh, high)
+    closingRangeLow := na(closingRangeLow) ? low : math.min(closingRangeLow, low)
+
+prevDayHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_off)
+prevDayLow  = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_off)
+
+f_nearest_above(_price, _a, _b, _c, _d) =>
+    float best = na
+    if not na(_a) and _a > _price
+        best := _a
+    if not na(_b) and _b > _price and (na(best) or _b < best)
+        best := _b
+    if not na(_c) and _c > _price and (na(best) or _c < best)
+        best := _c
+    if not na(_d) and _d > _price and (na(best) or _d < best)
+        best := _d
+    best
+
+f_nearest_below(_price, _a, _b, _c, _d) =>
+    float best = na
+    if not na(_a) and _a < _price
+        best := _a
+    if not na(_b) and _b < _price and (na(best) or _b > best)
+        best := _b
+    if not na(_c) and _c < _price and (na(best) or _c > best)
+        best := _c
+    if not na(_d) and _d < _price and (na(best) or _d > best)
+        best := _d
+    best
+
+candidateResistance = f_nearest_above(close, prevDayHigh, open15High, lastPivotHigh, vwapValue)
+candidateSupport    = f_nearest_below(close, prevDayLow, open15Low, lastPivotLow, vwapValue)
+candidateResistance := na(candidateResistance) ? lastPivotHigh : candidateResistance
+candidateSupport := na(candidateSupport) ? lastPivotLow : candidateSupport
+minuteWidth = math.min(minuteMaxWidth, math.max(minuteBaseWidth, atrValue * minuteAtrFactor))
+
+// ── Shared payload helpers ────────────────────────────────────────────────────
+f_json_num(_value) =>
+    na(_value) ? "null" : str.tostring(_value, "#.##")
+
+f_bool(_value) =>
+    _value ? "true" : "false"
+
+f_payload(_action, _resistance, _support, _width, _rangeHigh, _rangeLow) =>
+    '{"action":"' + _action + '","timeframe":"1m","price":' + f_json_num(close) + ',"vwap":' + f_json_num(vwapValue) + ',"resistance":' + f_json_num(_resistance) + ',"support":' + f_json_num(_support) + ',"zone_half_width":' + f_json_num(_width) + ',"range_high":' + f_json_num(_rangeHigh) + ',"range_low":' + f_json_num(_rangeLow) + ',"cmf":' + f_json_num(cmfValue) + ',"obv_bull":' + f_bool(obvValue > obvAvg) + ',"relative_volume":' + f_json_num(relVol) + ',"hist":' + f_json_num(histLine) + ',"momentum":' + f_json_num(momValue) + ',"bull_score":' + str.tostring((close > vwapValue ? 1 : 0) + (cmfValue > 0 and obvValue > obvAvg and relVol >= 0.85 ? 1 : 0) + (histLine > 0 and momValue > 0 ? 1 : 0)) + ',"bear_score":' + str.tostring((close < vwapValue ? 1 : 0) + (cmfValue < 0 and obvValue < obvAvg and relVol >= 0.85 ? 1 : 0) + (histLine < 0 and momValue < 0 ? 1 : 0)) + ',"five_minute_bias":"' + fiveBias + '"}'
+
+// ── Experiment A: one 1-minute map, then at most one confirmation ───────────
+if barstate.isconfirmed and minuteMapAnchor and not minuteMapSent
+    expResistance := candidateResistance
+    expSupport := candidateSupport
+    expHalfWidth := minuteWidth
+    minuteMapSent := true
+    alert(f_payload("MINUTE_MAP", expResistance, expSupport, expHalfWidth, na, na), alert.freq_once_per_bar_close)
+
+touchSupport = minuteMapSent and not na(expSupport) and not na(expHalfWidth) and low <= expSupport + expHalfWidth and high >= expSupport - expHalfWidth
+touchResistance = minuteMapSent and not na(expResistance) and not na(expHalfWidth) and high >= expResistance - expHalfWidth and low <= expResistance + expHalfWidth
+
+bullStructure = close > open and close > expSupport
+bearStructure = close < open and close < expResistance
+bullLiquidity = cmfValue > 0 and obvValue > obvAvg and relVol >= 0.85
+bearLiquidity = cmfValue < 0 and obvValue < obvAvg and relVol >= 0.85
+bullMomentum  = histLine > 0 and momValue > 0
+bearMomentum  = histLine < 0 and momValue < 0
+bullScore = (bullStructure ? 1 : 0) + (bullLiquidity ? 1 : 0) + (bullMomentum ? 1 : 0)
+bearScore = (bearStructure ? 1 : 0) + (bearLiquidity ? 1 : 0) + (bearMomentum ? 1 : 0)
+
+minuteCallConfirm = minuteWindow and touchSupport and bullScore >= 2 and fiveBull
+minutePutConfirm = minuteWindow and touchResistance and bearScore >= 2 and fiveBear
+
+if barstate.isconfirmed and isRegular and not minuteAlertSent
+    if minuteCallConfirm
+        minuteAlertSent := true
+        alert(f_payload("MINUTE_CALL_CONFIRM", expResistance, expSupport, expHalfWidth, na, na), alert.freq_once_per_bar_close)
+    else if minutePutConfirm
+        minuteAlertSent := true
+        alert(f_payload("MINUTE_PUT_CONFIRM", expResistance, expSupport, expHalfWidth, na, na), alert.freq_once_per_bar_close)
+
+// ── Experiment B: one close-breakout research alert; never after 15:55 ET ────
+closeBreakout = closeWindow and not na(closingRangeHigh) and close > closingRangeHigh and volume > volAvg and cmfValue > 0 and not fiveBear
+closeBreakdown = closeWindow and not na(closingRangeLow) and close < closingRangeLow and volume > volAvg and cmfValue < 0 and not fiveBull
+
+if barstate.isconfirmed and isRegular and not closingAlertSent
+    if closeBreakout
+        closingAlertSent := true
+        alert(f_payload("CLOSE_BREAKOUT_CALL", closingRangeHigh, closingRangeLow, 0.0, closingRangeHigh, closingRangeLow), alert.freq_once_per_bar_close)
+    else if closeBreakdown
+        closingAlertSent := true
+        alert(f_payload("CLOSE_BREAKDOWN_PUT", closingRangeHigh, closingRangeLow, 0.0, closingRangeHigh, closingRangeLow), alert.freq_once_per_bar_close)
+
+// ── Visuals: only the temporary 1m experiment zones ───────────────────────────
+resTop = expResistance + expHalfWidth
+resBottom = expResistance - expHalfWidth
+supTop = expSupport + expHalfWidth
+supBottom = expSupport - expHalfWidth
+
+pResTop = plot(showExperimentMap and minuteMapSent ? resTop : na, "1m Experiment Resistance Top", color=color.new(color.red, 30), linewidth=1, style=plot.style_linebr)
+pResBottom = plot(showExperimentMap and minuteMapSent ? resBottom : na, "1m Experiment Resistance Bottom", color=color.new(color.red, 30), linewidth=1, style=plot.style_linebr)
+pSupTop = plot(showExperimentMap and minuteMapSent ? supTop : na, "1m Experiment Support Top", color=color.new(color.lime, 30), linewidth=1, style=plot.style_linebr)
+pSupBottom = plot(showExperimentMap and minuteMapSent ? supBottom : na, "1m Experiment Support Bottom", color=color.new(color.lime, 30), linewidth=1, style=plot.style_linebr)
+fill(pResTop, pResBottom, color=color.new(color.red, 92), title="1m Experiment Resistance Area")
+fill(pSupTop, pSupBottom, color=color.new(color.lime, 92), title="1m Experiment Support Area")
+plot(showExperimentMap ? vwapValue : na, "1m VWAP", color=color.orange, linewidth=1)
+
+plotshape(showExperimentMap and minuteCallConfirm and not minuteAlertSent[1], title="1m CALL Experiment", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.tiny, text="1m")
+plotshape(showExperimentMap and minutePutConfirm and not minuteAlertSent[1], title="1m PUT Experiment", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.tiny, text="1m")
+plotshape(showExperimentMap and closeBreakout and not closingAlertSent[1], title="Close Breakout Research", style=shape.labelup, location=location.belowbar, color=color.green, size=size.tiny, text="CLOSE")
+plotshape(showExperimentMap and closeBreakdown and not closingAlertSent[1], title="Close Breakdown Research", style=shape.labeldown, location=location.abovebar, color=color.maroon, size=size.tiny, text="CLOSE")
+
+var label statusLabel = na
+if barstate.islast and showExperimentMap
+    label.delete(statusLabel)
+    statusText = "TM V18 Experiments | 1m\n10:05–10:35 ET map + one confirmation\n15:30–15:55 ET one close observation\nResearch only — no chase"
+    statusLabel := label.new(bar_index, high, statusText, style=label.style_label_down, textcolor=color.white, color=color.new(color.black, 25), size=size.tiny)

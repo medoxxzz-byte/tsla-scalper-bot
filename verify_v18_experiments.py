@@ -21,9 +21,12 @@ base = {
     "range_low": 349.90,
     "cmf": 0.12,
     "obv_bull": True,
+    "obv_breakout": True,
     "relative_volume": 1.35,
     "hist": 0.10,
     "momentum": 0.25,
+    "rsi": 61.0,
+    "adx": 24.0,
     "bull_score": 3,
     "bear_score": 0,
     "five_minute_bias": "bull",
@@ -32,6 +35,7 @@ base = {
 v18.v18_state["today"] = ""
 v18.v18_state["sent_actions"] = set()
 v18.v18_state["minute_alert_sent"] = False
+v18.v18_state["trend_alert_sent"] = False
 v18.v18_state["closing_alert_sent"] = False
 
 minute_map = v18.process_v18_webhook({**base, "action": "MINUTE_MAP"}, fake_send)
@@ -42,6 +46,19 @@ assert "لا دخول عند الخريطة" in sent_messages[-1]
 minute_duplicate = v18.process_v18_webhook({**base, "action": "MINUTE_MAP"}, fake_send)
 assert minute_duplicate["status"] == "ignored", minute_duplicate
 assert minute_duplicate["reason"] == "duplicate_event", minute_duplicate
+
+trend_bull = v18.process_v18_webhook({**base, "action": "MINUTE_TREND_BULL"}, fake_send)
+assert trend_bull["status"] == "processed", trend_bull
+assert "بيئة ترند صاعد" in sent_messages[-1]
+assert "ركز على الكول فقط" in sent_messages[-1]
+assert "لا تطارد الصعود" in sent_messages[-1]
+
+trend_bear_after_bull = v18.process_v18_webhook(
+    {**base, "action": "MINUTE_TREND_BEAR", "cmf": -0.10, "obv_bull": False, "five_minute_bias": "bear"},
+    fake_send,
+)
+assert trend_bear_after_bull["status"] == "ignored", trend_bear_after_bull
+assert trend_bear_after_bull["reason"] == "trend_alert_already_sent", trend_bear_after_bull
 
 minute_call = v18.process_v18_webhook({**base, "action": "MINUTE_CALL_CONFIRM"}, fake_send)
 assert minute_call["status"] == "processed", minute_call
@@ -71,5 +88,5 @@ unknown = v18.process_v18_webhook({**base, "action": "NOT_A_SIGNAL"}, fake_send)
 assert unknown["status"] == "ignored", unknown
 assert unknown["reason"] == "unknown_action", unknown
 
-assert len(sent_messages) == 3, sent_messages
-print("V18 experiment formatter verification passed: map + one 1m alert + one closing observation only.")
+assert len(sent_messages) == 4, sent_messages
+print("V18 verification passed: map + one trend context + one 1m confirmation + one closing observation only.")

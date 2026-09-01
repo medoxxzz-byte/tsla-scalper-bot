@@ -22,6 +22,7 @@ v18_state = {
     "today": "",
     "sent_actions": set(),
     "minute_alert_sent": False,
+    "trend_alert_sent": False,
     "closing_alert_sent": False,
 }
 
@@ -37,6 +38,7 @@ def _reset_daily_state(now_ksa):
         v18_state["today"] = today
         v18_state["sent_actions"] = set()
         v18_state["minute_alert_sent"] = False
+        v18_state["trend_alert_sent"] = False
         v18_state["closing_alert_sent"] = False
 
 
@@ -139,6 +141,47 @@ def _format_minute_confirmation(data, action):
     )
 
 
+def _format_trend_context(data, action):
+    price = _format_price(data.get("price"))
+    vwap = _format_price(data.get("vwap"))
+    support = _format_zone(data.get("support"), _as_float(data.get("zone_half_width"), 0.08))
+    resistance = _format_zone(data.get("resistance"), _as_float(data.get("zone_half_width"), 0.08))
+    five = _five_minute_text(data)
+
+    if action == "MINUTE_TREND_BULL":
+        header = "🟢 <b>بيئة ترند صاعد — تجربة دقيقة</b>"
+        evidence = "السعر فوق VWAP، MACD فوق الصفر بزخم متصاعد، RSI إيجابي، وOBV مع ADX يؤيدان الحركة."
+        instruction = (
+            "ركز على الكول فقط ولا تطارد الصعود. انتظر رجوعاً إلى دعم خريطة الدقيقة أو VWAP، "
+            "ثم إغلاق دقيقة فوقه قبل التفكير في صفقة. تجاهل PUT ما دام هذا السياق قائماً."
+        )
+        opposite = "أي إغلاق 5د تحت VWAP أو ضعف واضح في OBV يلغي سياق الترند."
+    else:
+        header = "🔴 <b>بيئة ترند هابط — تجربة دقيقة</b>"
+        evidence = "السعر تحت VWAP، MACD تحت الصفر بزخم هابط، RSI ضعيف، وOBV مع ADX يؤيدان الحركة."
+        instruction = (
+            "ركز على البوت فقط ولا تطارد الهبوط. انتظر ارتداداً إلى مقاومة خريطة الدقيقة أو VWAP، "
+            "ثم إغلاق دقيقة تحتها قبل التفكير في صفقة. تجاهل CALL ما دام هذا السياق قائماً."
+        )
+        opposite = "أي إغلاق 5د فوق VWAP أو تحسن واضح في OBV يلغي سياق الترند."
+
+    return (
+        "🧪 <b>فريم الدقيقة | 10:05–10:35 نيويورك</b>\n"
+        "━━━━━━━━━━━━━━\n"
+        f"💰 السعر: <code>{price}</code> | VWAP: <code>{vwap}</code>\n"
+        f"🟢 الدعم التجريبي: <code>{support}</code>\n"
+        f"🔴 المقاومة التجريبية: <code>{resistance}</code>\n"
+        "━━━━━━━━━━━━━━\n"
+        f"{header}\n"
+        f"📊 {evidence}\n"
+        f"🧭 {five}.\n"
+        "━━━━━━━━━━━━━━\n"
+        f"<b>العمل:</b> {instruction}\n"
+        f"⚠️ الإلغاء: {opposite}"
+        f"{V18_RESEARCH_GUARD}"
+    )
+
+
 def _format_closing_observation(data, action):
     price = _format_price(data.get("price"))
     range_high = _format_price(data.get("range_high"))
@@ -174,6 +217,8 @@ def format_v18_message(data):
         return _format_minute_map(data)
     if action in {"MINUTE_CALL_CONFIRM", "MINUTE_PUT_CONFIRM"}:
         return _format_minute_confirmation(data, action)
+    if action in {"MINUTE_TREND_BULL", "MINUTE_TREND_BEAR"}:
+        return _format_trend_context(data, action)
     if action in {"CLOSE_BREAKOUT_CALL", "CLOSE_BREAKDOWN_PUT"}:
         return _format_closing_observation(data, action)
     raise ValueError(f"Unsupported V18 action: {action}")
@@ -188,6 +233,8 @@ def process_v18_webhook(data, send_telegram_func):
         "MINUTE_MAP",
         "MINUTE_CALL_CONFIRM",
         "MINUTE_PUT_CONFIRM",
+        "MINUTE_TREND_BULL",
+        "MINUTE_TREND_BEAR",
         "CLOSE_BREAKOUT_CALL",
         "CLOSE_BREAKDOWN_PUT",
     }
@@ -197,7 +244,11 @@ def process_v18_webhook(data, send_telegram_func):
     if action in v18_state["sent_actions"]:
         return {"status": "ignored", "reason": "duplicate_event", "action": action}
 
-    if action.startswith("MINUTE_") and action != "MINUTE_MAP":
+    if action in {"MINUTE_TREND_BULL", "MINUTE_TREND_BEAR"}:
+        if v18_state["trend_alert_sent"]:
+            return {"status": "ignored", "reason": "trend_alert_already_sent", "action": action}
+        v18_state["trend_alert_sent"] = True
+    if action in {"MINUTE_CALL_CONFIRM", "MINUTE_PUT_CONFIRM"}:
         if v18_state["minute_alert_sent"]:
             return {"status": "ignored", "reason": "minute_alert_already_sent", "action": action}
         v18_state["minute_alert_sent"] = True

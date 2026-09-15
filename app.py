@@ -38,6 +38,7 @@ from datetime import datetime, timezone, timedelta
 import app_v16_update  # محفوظ للرجوع فقط؛ لا يُشغّل في V17
 import app_v17_update
 import app_v18_experiments  # تجارب الدقيقة وإغلاق السوق؛ منفصلة عن V17
+from event_store import ResearchEventStore
 
 try:
     from flask import Flask, request, jsonify, render_template
@@ -339,6 +340,9 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# طبقة بحث مستقلة: تحفظ Webhook الخام ولا تغيّر قرار V17/V18 أو Telegram.
+research_event_store = ResearchEventStore()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Flask App & State
@@ -4676,15 +4680,26 @@ def journey_webhook():
 
 @app.route('/reversal_map', methods=['POST'])
 def reversal_map_webhook():
-    """TM Reversal Map V17 — receives only scheduled maps and one decisive zone alert."""
+    """TM Reversal Map V17 — preserves raw research telemetry before alert handling."""
     data = request.get_json(silent=True) or {}
-    return jsonify(app_v17_update.process_v17_webhook(data, send_telegram))
+    storage = research_event_store.record_event("v17", data)
+    result = app_v17_update.process_v17_webhook(data, send_telegram)
+    result["event_store"] = storage
+    return jsonify(result)
 
 @app.route('/reversal_experiments', methods=['POST'])
 def reversal_experiments_webhook():
-    """V18 research only: one bounded 1m confirmation and one close observation."""
+    """V18 research only — preserves raw telemetry before the bounded alert workflow."""
     data = request.get_json(silent=True) or {}
-    return jsonify(app_v18_experiments.process_v18_webhook(data, send_telegram))
+    storage = research_event_store.record_event("v18", data)
+    result = app_v18_experiments.process_v18_webhook(data, send_telegram)
+    result["event_store"] = storage
+    return jsonify(result)
+
+@app.route('/research/events/storage_status', methods=['GET'])
+def research_event_storage_status():
+    """Operational health endpoint for the research-event store; exposes no secrets."""
+    return jsonify(research_event_store.healthcheck())
 
 # استدعاء مباشر عند بدء التشغيل
 _start_background_threads()

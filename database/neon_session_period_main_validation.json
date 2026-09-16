@@ -1,0 +1,6 @@
+{
+  "project_id": "restless-cherry-50615923",
+  "branch_id": "br-dark-field-aw56dvi2",
+  "database_name": "tm_sniper",
+  "sql": "SELECT (SELECT count(*) FROM public.tm_research_events) AS raw_event_rows, (SELECT count(*) FROM public.tm_research_events_session_period) AS classified_event_rows, (SELECT count(*) FROM public.tm_research_events WHERE received_at < TIMESTAMPTZ '2026-09-16 00:22:42+00') AS pilot_rows_unchanged, EXISTS (SELECT 1 FROM information_schema.views WHERE table_schema = 'public' AND table_name = 'tm_research_events_session_period') AS view_exists;"
+}

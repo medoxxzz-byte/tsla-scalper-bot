@@ -1,0 +1,6 @@
+{
+  "project_id": "restless-cherry-50615923",
+  "branch_id": "br-wandering-snow-awv3861r",
+  "database_name": "tm_sniper",
+  "sql": "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'tm_research_events_session_period' ORDER BY ordinal_position;"
+}

@@ -61,6 +61,23 @@ class EventStoreIdentityTests(unittest.TestCase):
         self.assertIsNone(identity)
         self.assertIn("source_timeframe_mismatch", errors)
 
+    def test_acceptance_action_requires_explicit_test_marker(self):
+        test_payload = dict(
+            self.payload,
+            action="STORAGE_ACCEPTANCE_TEST",
+            timeframe="5m",
+            bar_open_time="1789565400000",
+            bar_close_time="1789565700000",
+        )
+        identity, errors = validate_official_identity("v17", test_payload)
+        self.assertIsNone(identity)
+        self.assertIn("test_action_not_authorized", errors)
+
+        allowed_payload = dict(test_payload, _research_acceptance_test=True)
+        identity, errors = validate_official_identity("v17", allowed_payload)
+        self.assertIsNotNone(identity)
+        self.assertEqual(errors, [])
+
     def test_payload_hash_is_order_independent_but_value_sensitive(self):
         reordered = {key: self.payload[key] for key in reversed(self.payload)}
         changed = dict(self.payload, cmf=-0.09)

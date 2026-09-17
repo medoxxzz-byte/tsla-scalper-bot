@@ -1,0 +1,23 @@
+{
+  "schema_version": "event-v2",
+  "symbol": "TSLA",
+  "timeframe": "5m",
+  "bar_open_time": "1789566000000",
+  "bar_close_time": "1789566300000",
+  "action": "STORAGE_ACCEPTANCE_TEST",
+  "price": 360.12,
+  "vwap": 359.81,
+  "support": 359.39,
+  "resistance": 361.90,
+  "zone_half_width": 0.10,
+  "cmf": 0.08,
+  "relative_volume": 1.05,
+  "hist": 0.05,
+  "momentum": 0.96,
+  "adx": 24.0,
+  "bull_score": 2,
+  "bear_score": 0,
+  "close_above_vwap": true,
+  "_research_acceptance_test": true,
+  "acceptance_test_marker": "render-restart-replay-v1"
+}

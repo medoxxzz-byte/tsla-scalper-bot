@@ -4682,7 +4682,17 @@ def journey_webhook():
 def reversal_map_webhook():
     """TM Reversal Map V17 — preserves raw research telemetry before alert handling."""
     data = request.get_json(silent=True) or {}
-    storage = research_event_store.record_event("v17", data)
+    # A deliberately named, test-tier action lets the acceptance suite verify
+    # persistence after a Render restart without emitting a fabricated Telegram
+    # trading message. Pine never emits this action; all normal V17 traffic is
+    # still recorded as ``official``.
+    is_acceptance_test = (
+        data.get("_research_acceptance_test") is True
+        and str(data.get("action", "")).upper() == "STORAGE_ACCEPTANCE_TEST"
+    )
+    storage = research_event_store.record_event(
+        "v17", data, data_quality_tier="test" if is_acceptance_test else "official"
+    )
     result = app_v17_update.process_v17_webhook(data, send_telegram)
     result["event_store"] = storage
     return jsonify(result)

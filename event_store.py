@@ -49,6 +49,7 @@ SIGNAL_FAMILIES = {
         "MAP_90": "reversal_map",
         "ZONE_CALL_CONFIRM": "zone_reversal",
         "ZONE_PUT_CONFIRM": "zone_reversal",
+        "STORAGE_ACCEPTANCE_TEST": "storage_acceptance_test",
     },
     "v18": {
         "MINUTE_MAP": "minute_map",
@@ -178,6 +179,8 @@ def validate_official_identity(source: str, payload: Dict[str, Any]) -> Tuple[Op
         errors.append("missing_or_invalid_action")
     elif signal_family is None:
         errors.append("unsupported_action_for_source")
+    elif action == "STORAGE_ACCEPTANCE_TEST" and payload.get("_research_acceptance_test") is not True:
+        errors.append("test_action_not_authorized")
 
     symbol = str(payload.get("symbol", "")).strip().upper()
     if not SYMBOL_PATTERN.fullmatch(symbol):

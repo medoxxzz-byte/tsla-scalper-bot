@@ -39,6 +39,7 @@ import app_v16_update  # محفوظ للرجوع فقط؛ لا يُشغّل في
 import app_v17_update
 import app_v18_experiments  # تجارب الدقيقة وإغلاق السوق؛ منفصلة عن V17
 from event_store import ResearchEventStore
+from outcome_store import ResearchOutcomeStore
 
 try:
     from flask import Flask, request, jsonify, render_template
@@ -343,6 +344,7 @@ logger = logging.getLogger(__name__)
 
 # طبقة بحث مستقلة: تحفظ Webhook الخام ولا تغيّر قرار V17/V18 أو Telegram.
 research_event_store = ResearchEventStore()
+research_outcome_store = ResearchOutcomeStore()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Flask App & State
@@ -4682,6 +4684,8 @@ def journey_webhook():
 def reversal_map_webhook():
     """TM Reversal Map V17 — preserves raw research telemetry before alert handling."""
     data = request.get_json(silent=True) or {}
+    if data.get("tracking_version"):
+        return jsonify({"outcome_store": research_outcome_store.record_observation("v17", data)})
     # A deliberately named, test-tier action lets the acceptance suite verify
     # persistence after a Render restart without emitting a fabricated Telegram
     # trading message. Pine never emits this action; all normal V17 traffic is
@@ -4693,6 +4697,8 @@ def reversal_map_webhook():
     storage = research_event_store.record_event(
         "v17", data, data_quality_tier="test" if is_acceptance_test else "official"
     )
+    if storage.get("event_key"):
+        research_outcome_store.reconcile_orphans(storage["event_key"])
     result = app_v17_update.process_v17_webhook(data, send_telegram)
     result["event_store"] = storage
     return jsonify(result)
@@ -4701,7 +4707,11 @@ def reversal_map_webhook():
 def reversal_experiments_webhook():
     """V18 research only — preserves raw telemetry before the bounded alert workflow."""
     data = request.get_json(silent=True) or {}
+    if data.get("tracking_version"):
+        return jsonify({"outcome_store": research_outcome_store.record_observation("v18", data)})
     storage = research_event_store.record_event("v18", data)
+    if storage.get("event_key"):
+        research_outcome_store.reconcile_orphans(storage["event_key"])
     result = app_v18_experiments.process_v18_webhook(data, send_telegram)
     result["event_store"] = storage
     return jsonify(result)
@@ -4710,6 +4720,12 @@ def reversal_experiments_webhook():
 def research_event_storage_status():
     """Operational health endpoint for the research-event store; exposes no secrets."""
     return jsonify(research_event_store.healthcheck())
+
+
+@app.route('/research/outcomes/storage_status', methods=['GET'])
+def research_outcome_storage_status():
+    """Operational status for the silent Phase-B outcome store; exposes no secrets."""
+    return jsonify(research_outcome_store.healthcheck())
 
 # استدعاء مباشر عند بدء التشغيل
 _start_background_threads()

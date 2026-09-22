@@ -66,6 +66,21 @@ var float lastPivotHigh = na
 var float lastPivotLow = na
 var bool zoneAlertSent = false
 
+// Phase B keeps a short in-script queue because the 11:00 map and one possible
+// zone confirmation can overlap.  Tracking alerts are sent to Neon only.
+var trackActions = array.new_string()
+var trackOpenTimes = array.new_int()
+var trackCloseTimes = array.new_int()
+var trackPrices = array.new_float()
+var trackSupports = array.new_float()
+var trackResistances = array.new_float()
+var trackWidths = array.new_float()
+var trackHighs = array.new_float()
+var trackLows = array.new_float()
+var trackPost5Sent = array.new_bool()
+var trackPost10Sent = array.new_bool()
+var trackPost15Sent = array.new_bool()
+
 if newDay
     preHigh := na
     preLow := na
@@ -74,6 +89,18 @@ if newDay
     lastPivotHigh := na
     lastPivotLow := na
     zoneAlertSent := false
+    array.clear(trackActions)
+    array.clear(trackOpenTimes)
+    array.clear(trackCloseTimes)
+    array.clear(trackPrices)
+    array.clear(trackSupports)
+    array.clear(trackResistances)
+    array.clear(trackWidths)
+    array.clear(trackHighs)
+    array.clear(trackLows)
+    array.clear(trackPost5Sent)
+    array.clear(trackPost10Sent)
+    array.clear(trackPost15Sent)
 
 if isPremarket
     preHigh := na(preHigh) ? high : math.max(preHigh, high)
@@ -153,27 +180,100 @@ f_bool(_value) => _value ? "true" : "false"
 f_mapPayload(_action) =>
     '{"schema_version":"event-v2","symbol":"' + syminfo.ticker + '","timeframe":"5m","bar_open_time":' + str.tostring(time) + ',"bar_close_time":' + str.tostring(time_close) + ',"action":"' + _action + '","price":' + f_jsonNum(close) + ',"vwap":' + f_jsonNum(vwapValue) + ',"resistance":' + f_jsonNum(mapResistance) + ',"support":' + f_jsonNum(mapSupport) + ',"zone_half_width":' + f_jsonNum(zoneHalfWidth) + ',"cmf":' + f_jsonNum(cmfValue) + ',"obv_bull":' + f_bool(obvValue > obvAvg) + ',"relative_volume":' + f_jsonNum(relVol) + ',"hist":' + f_jsonNum(histLine) + ',"momentum":' + f_jsonNum(momValue) + ',"adx":' + f_jsonNum(adxValue) + ',"stoch_k":' + f_jsonNum(stochK) + ',"bull_score":' + str.tostring(bullScore) + ',"bear_score":' + str.tostring(bearScore) + ',"close_above_vwap":' + f_bool(close > vwapValue) + '}'
 
+f_startTracking(_action) =>
+    array.push(trackActions, _action)
+    array.push(trackOpenTimes, time)
+    array.push(trackCloseTimes, time_close)
+    array.push(trackPrices, close)
+    array.push(trackSupports, mapSupport)
+    array.push(trackResistances, mapResistance)
+    array.push(trackWidths, zoneHalfWidth)
+    array.push(trackHighs, close)
+    array.push(trackLows, close)
+    array.push(trackPost5Sent, false)
+    array.push(trackPost10Sent, false)
+    array.push(trackPost15Sent, false)
+
+f_trackingPayload(_index, _observationType) =>
+    _parentAction = array.get(trackActions, _index)
+    _parentOpen = array.get(trackOpenTimes, _index)
+    _parentClose = array.get(trackCloseTimes, _index)
+    _parentPrice = array.get(trackPrices, _index)
+    _parentSupport = array.get(trackSupports, _index)
+    _parentResistance = array.get(trackResistances, _index)
+    _parentWidth = array.get(trackWidths, _index)
+    _cumulativeHigh = array.get(trackHighs, _index)
+    _cumulativeLow = array.get(trackLows, _index)
+    '{"tracking_version":"tracking-v1","parent_schema_version":"event-v2","parent_symbol":"' + syminfo.ticker + '","parent_timeframe":"5m","parent_bar_open_time":' + str.tostring(_parentOpen) + ',"parent_bar_close_time":' + str.tostring(_parentClose) + ',"parent_action":"' + _parentAction + '","parent_support":' + f_jsonNum(_parentSupport) + ',"parent_resistance":' + f_jsonNum(_parentResistance) + ',"parent_range_low":null,"parent_range_high":null,"parent_zone_half_width":' + f_jsonNum(_parentWidth) + ',"observation_type":"' + _observationType + '","observed_bar_open_time":' + str.tostring(time) + ',"observed_bar_close_time":' + str.tostring(time_close) + ',"price_open":' + f_jsonNum(open) + ',"price_high":' + f_jsonNum(high) + ',"price_low":' + f_jsonNum(low) + ',"price_close":' + f_jsonNum(close) + ',"volume":' + f_jsonNum(volume) + ',"vwap":' + f_jsonNum(vwapValue) + ',"cmf":' + f_jsonNum(cmfValue) + ',"relative_volume":' + f_jsonNum(relVol) + ',"cumulative_high":' + f_jsonNum(_cumulativeHigh) + ',"cumulative_low":' + f_jsonNum(_cumulativeLow) + '}'
+
+f_removeTracking(_index) =>
+    array.remove(trackActions, _index)
+    array.remove(trackOpenTimes, _index)
+    array.remove(trackCloseTimes, _index)
+    array.remove(trackPrices, _index)
+    array.remove(trackSupports, _index)
+    array.remove(trackResistances, _index)
+    array.remove(trackWidths, _index)
+    array.remove(trackHighs, _index)
+    array.remove(trackLows, _index)
+    array.remove(trackPost5Sent, _index)
+    array.remove(trackPost10Sent, _index)
+    array.remove(trackPost15Sent, _index)
+
+f_emitEvent(_action) =>
+    alert(f_mapPayload(_action), alert.freq_once_per_bar_close)
+    f_startTracking(_action)
+
 // ── Scheduled maps: only four per day ─────────────────────────────────────────
 if barstate.isconfirmed and mapPreopenBar
-    alert(f_mapPayload("MAP_PREOPEN"), alert.freq_once_per_bar_close)
+    f_emitEvent("MAP_PREOPEN")
 
 if barstate.isconfirmed and map15Bar
-    alert(f_mapPayload("MAP_OPEN_15"), alert.freq_once_per_bar_close)
+    f_emitEvent("MAP_OPEN_15")
 
 if barstate.isconfirmed and map45Bar
-    alert(f_mapPayload("MAP_45"), alert.freq_once_per_bar_close)
+    f_emitEvent("MAP_45")
 
 if barstate.isconfirmed and map90Bar
-    alert(f_mapPayload("MAP_90"), alert.freq_once_per_bar_close)
+    f_emitEvent("MAP_90")
 
 // ── One decisive zone alert after the 90-minute map ────────────────────────────
 if barstate.isconfirmed and isRegular and afterMap90 and not zoneAlertSent
     if callZoneConfirm
         zoneAlertSent := true
-        alert(f_mapPayload("ZONE_CALL_CONFIRM"), alert.freq_once_per_bar_close)
+        f_emitEvent("ZONE_CALL_CONFIRM")
     else if putZoneConfirm
         zoneAlertSent := true
-        alert(f_mapPayload("ZONE_PUT_CONFIRM"), alert.freq_once_per_bar_close)
+        f_emitEvent("ZONE_PUT_CONFIRM")
+
+// ── Phase B: 5/10/15-minute silent observations after every V17 event ───────
+if barstate.isconfirmed and array.size(trackActions) > 0
+    for index = array.size(trackActions) - 1 to 0
+        cumulativeHigh = math.max(array.get(trackHighs, index), high)
+        cumulativeLow = math.min(array.get(trackLows, index), low)
+        array.set(trackHighs, index, cumulativeHigh)
+        array.set(trackLows, index, cumulativeLow)
+        elapsedMs = time_close - array.get(trackCloseTimes, index)
+        atRegularSessionClose = nyHour == 15 and nyMin == 55
+        finalDueAt = array.get(trackCloseTimes, index) + 15 * 60 * 1000
+        needsSessionCensor = time_close <= finalDueAt
+        if atRegularSessionClose and needsSessionCensor
+            alert(f_trackingPayload(index, "close_1600"), alert.freq_all)
+            f_removeTracking(index)
+        else if atRegularSessionClose
+            // A completed horizon should already have been removed.  Never
+            // continue an incomplete research tracker into after-hours.
+            f_removeTracking(index)
+        else if elapsedMs == 5 * 60 * 1000 and not array.get(trackPost5Sent, index)
+            array.set(trackPost5Sent, index, true)
+            alert(f_trackingPayload(index, "post_5m"), alert.freq_all)
+        if elapsedMs == 10 * 60 * 1000 and not array.get(trackPost10Sent, index)
+            array.set(trackPost10Sent, index, true)
+            alert(f_trackingPayload(index, "post_10m"), alert.freq_all)
+        if elapsedMs == 15 * 60 * 1000 and not array.get(trackPost15Sent, index)
+            array.set(trackPost15Sent, index, true)
+            alert(f_trackingPayload(index, "post_15m"), alert.freq_all)
+            f_removeTracking(index)
 
 // ── Visuals ───────────────────────────────────────────────────────────────────
 resTop = mapResistance + zoneHalfWidth

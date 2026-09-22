@@ -93,6 +93,23 @@ var float closingRangeHigh = na
 var float closingRangeLow = na
 var bool closingAlertSent = false
 
+// Phase B keeps every V18 parent event separate.  Observations are research
+// telemetry only and do not create Telegram messages.
+var trackActions = array.new_string()
+var trackOpenTimes = array.new_int()
+var trackCloseTimes = array.new_int()
+var trackPrices = array.new_float()
+var trackSupports = array.new_float()
+var trackResistances = array.new_float()
+var trackWidths = array.new_float()
+var trackRangeHighs = array.new_float()
+var trackRangeLows = array.new_float()
+var trackHighs = array.new_float()
+var trackLows = array.new_float()
+var trackPost3Sent = array.new_bool()
+var trackPost6Sent = array.new_bool()
+var trackPost12Sent = array.new_bool()
+
 if newDay
     open15High := na
     open15Low := na
@@ -113,6 +130,20 @@ if newDay
     closingRangeHigh := na
     closingRangeLow := na
     closingAlertSent := false
+    array.clear(trackActions)
+    array.clear(trackOpenTimes)
+    array.clear(trackCloseTimes)
+    array.clear(trackPrices)
+    array.clear(trackSupports)
+    array.clear(trackResistances)
+    array.clear(trackWidths)
+    array.clear(trackRangeHighs)
+    array.clear(trackRangeLows)
+    array.clear(trackHighs)
+    array.clear(trackLows)
+    array.clear(trackPost3Sent)
+    array.clear(trackPost6Sent)
+    array.clear(trackPost12Sent)
 
 isOpenFirst15 = nyHour == 9 and nyMin >= 30 and nyMin < 45
 if isOpenFirst15
@@ -176,13 +207,62 @@ f_experiment_window(_action) =>
 f_payload(string _action, float _resistance, float _support, float _width, float _rangeHigh, float _rangeLow) =>
     '{"schema_version":"event-v2","symbol":"' + syminfo.ticker + '","timeframe":"1m","bar_open_time":' + str.tostring(time) + ',"bar_close_time":' + str.tostring(time_close) + ',"action":"' + _action + '","experiment_window":"' + f_experiment_window(_action) + '","price":' + f_json_num(close) + ',"vwap":' + f_json_num(vwapValue) + ',"resistance":' + f_json_num(_resistance) + ',"support":' + f_json_num(_support) + ',"zone_half_width":' + f_json_num(_width) + ',"range_high":' + f_json_num(_rangeHigh) + ',"range_low":' + f_json_num(_rangeLow) + ',"cmf":' + f_json_num(cmfValue) + ',"obv_bull":' + f_bool(obvValue > obvAvg) + ',"obv_breakout":' + f_bool(obvValue > ta.highest(obvValue[1], 10) or obvValue < ta.lowest(obvValue[1], 10)) + ',"relative_volume":' + f_json_num(relVol) + ',"hist":' + f_json_num(histLine) + ',"momentum":' + f_json_num(momValue) + ',"rsi":' + f_json_num(rsiValue) + ',"adx":' + f_json_num(adxValue) + ',"bull_score":' + str.tostring((close > vwapValue ? 1 : 0) + (cmfValue > 0 and obvValue > obvAvg and relVol >= 0.85 ? 1 : 0) + (histLine > 0 and momValue > 0 ? 1 : 0)) + ',"bear_score":' + str.tostring((close < vwapValue ? 1 : 0) + (cmfValue < 0 and obvValue < obvAvg and relVol >= 0.85 ? 1 : 0) + (histLine < 0 and momValue < 0 ? 1 : 0)) + ',"five_minute_bias":"' + fiveBias + '"}'
 
+f_startTracking(_action, _resistance, _support, _width, _rangeHigh, _rangeLow) =>
+    array.push(trackActions, _action)
+    array.push(trackOpenTimes, time)
+    array.push(trackCloseTimes, time_close)
+    array.push(trackPrices, close)
+    array.push(trackSupports, _support)
+    array.push(trackResistances, _resistance)
+    array.push(trackWidths, _width)
+    array.push(trackRangeHighs, _rangeHigh)
+    array.push(trackRangeLows, _rangeLow)
+    array.push(trackHighs, close)
+    array.push(trackLows, close)
+    array.push(trackPost3Sent, false)
+    array.push(trackPost6Sent, false)
+    array.push(trackPost12Sent, false)
+
+f_trackingPayload(_index, _observationType) =>
+    _parentAction = array.get(trackActions, _index)
+    _parentOpen = array.get(trackOpenTimes, _index)
+    _parentClose = array.get(trackCloseTimes, _index)
+    _parentSupport = array.get(trackSupports, _index)
+    _parentResistance = array.get(trackResistances, _index)
+    _parentWidth = array.get(trackWidths, _index)
+    _parentRangeHigh = array.get(trackRangeHighs, _index)
+    _parentRangeLow = array.get(trackRangeLows, _index)
+    _cumulativeHigh = array.get(trackHighs, _index)
+    _cumulativeLow = array.get(trackLows, _index)
+    '{"tracking_version":"tracking-v1","parent_schema_version":"event-v2","parent_symbol":"' + syminfo.ticker + '","parent_timeframe":"1m","parent_bar_open_time":' + str.tostring(_parentOpen) + ',"parent_bar_close_time":' + str.tostring(_parentClose) + ',"parent_action":"' + _parentAction + '","parent_support":' + f_json_num(_parentSupport) + ',"parent_resistance":' + f_json_num(_parentResistance) + ',"parent_range_low":' + f_json_num(_parentRangeLow) + ',"parent_range_high":' + f_json_num(_parentRangeHigh) + ',"parent_zone_half_width":' + f_json_num(_parentWidth) + ',"observation_type":"' + _observationType + '","observed_bar_open_time":' + str.tostring(time) + ',"observed_bar_close_time":' + str.tostring(time_close) + ',"price_open":' + f_json_num(open) + ',"price_high":' + f_json_num(high) + ',"price_low":' + f_json_num(low) + ',"price_close":' + f_json_num(close) + ',"volume":' + f_json_num(volume) + ',"vwap":' + f_json_num(vwapValue) + ',"cmf":' + f_json_num(cmfValue) + ',"relative_volume":' + f_json_num(relVol) + ',"five_minute_close":' + f_json_num(fiveClose) + ',"five_minute_vwap":' + f_json_num(fiveVwap) + ',"cumulative_high":' + f_json_num(_cumulativeHigh) + ',"cumulative_low":' + f_json_num(_cumulativeLow) + '}'
+
+f_removeTracking(_index) =>
+    array.remove(trackActions, _index)
+    array.remove(trackOpenTimes, _index)
+    array.remove(trackCloseTimes, _index)
+    array.remove(trackPrices, _index)
+    array.remove(trackSupports, _index)
+    array.remove(trackResistances, _index)
+    array.remove(trackWidths, _index)
+    array.remove(trackRangeHighs, _index)
+    array.remove(trackRangeLows, _index)
+    array.remove(trackHighs, _index)
+    array.remove(trackLows, _index)
+    array.remove(trackPost3Sent, _index)
+    array.remove(trackPost6Sent, _index)
+    array.remove(trackPost12Sent, _index)
+
+f_emitEvent(_action, _resistance, _support, _width, _rangeHigh, _rangeLow) =>
+    alert(f_payload(_action, _resistance, _support, _width, _rangeHigh, _rangeLow), alert.freq_once_per_bar_close)
+    f_startTracking(_action, _resistance, _support, _width, _rangeHigh, _rangeLow)
+
 // ── Experiment A: one 1-minute map, then at most one confirmation ───────────
 if barstate.isconfirmed and minuteMapAnchor and not minuteMapSent
     expResistance := candidateResistance
     expSupport := candidateSupport
     expHalfWidth := minuteWidth
     minuteMapSent := true
-    alert(f_payload("MINUTE_MAP", expResistance, expSupport, expHalfWidth, float(na), float(na)), alert.freq_once_per_bar_close)
+    f_emitEvent("MINUTE_MAP", expResistance, expSupport, expHalfWidth, float(na), float(na))
 
 // ── Experiment B: an independent post-opening map and one confirmation ───────
 if barstate.isconfirmed and minuteBMapAnchor and not minuteBMapSent
@@ -191,7 +271,7 @@ if barstate.isconfirmed and minuteBMapAnchor and not minuteBMapSent
     minuteBHalfWidth := minuteWidth
     minuteBMapCloseTime := time_close
     minuteBMapSent := true
-    alert(f_payload("MINUTE_B_MAP", minuteBResistance, minuteBSupport, minuteBHalfWidth, float(na), float(na)), alert.freq_once_per_bar_close)
+    f_emitEvent("MINUTE_B_MAP", minuteBResistance, minuteBSupport, minuteBHalfWidth, float(na), float(na))
 
 touchSupport = minuteMapSent and not na(expSupport) and not na(expHalfWidth) and low <= expSupport + expHalfWidth and high >= expSupport - expHalfWidth
 touchResistance = minuteMapSent and not na(expResistance) and not na(expHalfWidth) and high >= expResistance - expHalfWidth and low <= expResistance + expHalfWidth
@@ -225,26 +305,26 @@ trendBear = trendWindow and close < vwapValue and macdLine < 0 and macdBearPower
 if barstate.isconfirmed and isRegular and not trendAlertSent
     if trendBull
         trendAlertSent := true
-        alert(f_payload("MINUTE_TREND_BULL", expResistance, expSupport, expHalfWidth, float(na), float(na)), alert.freq_once_per_bar_close)
+        f_emitEvent("MINUTE_TREND_BULL", expResistance, expSupport, expHalfWidth, float(na), float(na))
     else if trendBear
         trendAlertSent := true
-        alert(f_payload("MINUTE_TREND_BEAR", expResistance, expSupport, expHalfWidth, float(na), float(na)), alert.freq_once_per_bar_close)
+        f_emitEvent("MINUTE_TREND_BEAR", expResistance, expSupport, expHalfWidth, float(na), float(na))
 
 if barstate.isconfirmed and isRegular and not minuteAlertSent
     if minuteCallConfirm
         minuteAlertSent := true
-        alert(f_payload("MINUTE_CALL_CONFIRM", expResistance, expSupport, expHalfWidth, float(na), float(na)), alert.freq_once_per_bar_close)
+        f_emitEvent("MINUTE_CALL_CONFIRM", expResistance, expSupport, expHalfWidth, float(na), float(na))
     else if minutePutConfirm
         minuteAlertSent := true
-        alert(f_payload("MINUTE_PUT_CONFIRM", expResistance, expSupport, expHalfWidth, float(na), float(na)), alert.freq_once_per_bar_close)
+        f_emitEvent("MINUTE_PUT_CONFIRM", expResistance, expSupport, expHalfWidth, float(na), float(na))
 
 if barstate.isconfirmed and isRegular and not minuteBAlertSent
     if minuteBCallConfirm
         minuteBAlertSent := true
-        alert(f_payload("MINUTE_B_CALL_CONFIRM", minuteBResistance, minuteBSupport, minuteBHalfWidth, float(na), float(na)), alert.freq_once_per_bar_close)
+        f_emitEvent("MINUTE_B_CALL_CONFIRM", minuteBResistance, minuteBSupport, minuteBHalfWidth, float(na), float(na))
     else if minuteBPutConfirm
         minuteBAlertSent := true
-        alert(f_payload("MINUTE_B_PUT_CONFIRM", minuteBResistance, minuteBSupport, minuteBHalfWidth, float(na), float(na)), alert.freq_once_per_bar_close)
+        f_emitEvent("MINUTE_B_PUT_CONFIRM", minuteBResistance, minuteBSupport, minuteBHalfWidth, float(na), float(na))
 
 // ── Experiment B: one close-breakout research alert; never after 15:55 ET ────
 closeBreakout = closeWindow and not na(closingRangeHigh) and close > closingRangeHigh and volume > volAvg and cmfValue > 0 and not fiveBear
@@ -253,10 +333,40 @@ closeBreakdown = closeWindow and not na(closingRangeLow) and close < closingRang
 if barstate.isconfirmed and isRegular and not closingAlertSent
     if closeBreakout
         closingAlertSent := true
-        alert(f_payload("CLOSE_BREAKOUT_CALL", closingRangeHigh, closingRangeLow, 0.0, closingRangeHigh, closingRangeLow), alert.freq_once_per_bar_close)
+        f_emitEvent("CLOSE_BREAKOUT_CALL", closingRangeHigh, closingRangeLow, 0.0, closingRangeHigh, closingRangeLow)
     else if closeBreakdown
         closingAlertSent := true
-        alert(f_payload("CLOSE_BREAKDOWN_PUT", closingRangeHigh, closingRangeLow, 0.0, closingRangeHigh, closingRangeLow), alert.freq_once_per_bar_close)
+        f_emitEvent("CLOSE_BREAKDOWN_PUT", closingRangeHigh, closingRangeLow, 0.0, closingRangeHigh, closingRangeLow)
+
+// ── Phase B: 3/6/12-minute silent observations after every V18 event ─────────
+if barstate.isconfirmed and array.size(trackActions) > 0
+    for index = array.size(trackActions) - 1 to 0
+        cumulativeHigh = math.max(array.get(trackHighs, index), high)
+        cumulativeLow = math.min(array.get(trackLows, index), low)
+        array.set(trackHighs, index, cumulativeHigh)
+        array.set(trackLows, index, cumulativeLow)
+        elapsedMs = time_close - array.get(trackCloseTimes, index)
+        closingParent = str.startswith(array.get(trackActions, index), "CLOSE_")
+        atRegularSessionClose = nyHour == 15 and nyMin == 59
+        finalDueAt = array.get(trackCloseTimes, index) + 12 * 60 * 1000
+        needsSessionCensor = time_close <= finalDueAt
+        if closingParent and atRegularSessionClose and needsSessionCensor
+            alert(f_trackingPayload(index, "close_1600"), alert.freq_all)
+            f_removeTracking(index)
+        else if closingParent and atRegularSessionClose
+            // A completed horizon should already have been removed.  Do not
+            // emit a late observation into after-hours if it was not.
+            f_removeTracking(index)
+        else if elapsedMs == 3 * 60 * 1000 and not array.get(trackPost3Sent, index)
+            array.set(trackPost3Sent, index, true)
+            alert(f_trackingPayload(index, "post_3m"), alert.freq_all)
+        else if elapsedMs == 6 * 60 * 1000 and not array.get(trackPost6Sent, index)
+            array.set(trackPost6Sent, index, true)
+            alert(f_trackingPayload(index, "post_6m"), alert.freq_all)
+        else if elapsedMs == 12 * 60 * 1000 and not array.get(trackPost12Sent, index)
+            array.set(trackPost12Sent, index, true)
+            alert(f_trackingPayload(index, "post_12m"), alert.freq_all)
+            f_removeTracking(index)
 
 // ── Visuals: only the temporary 1m experiment zones ───────────────────────────
 resTop = expResistance + expHalfWidth

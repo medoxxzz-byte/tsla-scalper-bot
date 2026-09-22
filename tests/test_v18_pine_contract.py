@@ -23,9 +23,11 @@ class V18PineContractTests(unittest.TestCase):
     def test_b_window_has_its_own_map_and_actions(self):
         self.assertIn("minuteBMapAnchor = nyHour == 10 and nyMin == 34", self.source)
         self.assertIn("minuteBWindow    = (nyHour == 10 and nyMin >= 35) or (nyHour == 11 and nyMin < 5)", self.source)
-        self.assertIn('alert(f_payload("MINUTE_B_MAP", minuteBResistance, minuteBSupport, minuteBHalfWidth', self.source)
-        self.assertIn('alert(f_payload("MINUTE_B_CALL_CONFIRM", minuteBResistance, minuteBSupport, minuteBHalfWidth', self.source)
-        self.assertIn('alert(f_payload("MINUTE_B_PUT_CONFIRM", minuteBResistance, minuteBSupport, minuteBHalfWidth', self.source)
+        self.assertIn('f_emitEvent("MINUTE_B_MAP", minuteBResistance, minuteBSupport, minuteBHalfWidth', self.source)
+        self.assertIn('f_emitEvent("MINUTE_B_CALL_CONFIRM", minuteBResistance, minuteBSupport, minuteBHalfWidth', self.source)
+        self.assertIn('f_emitEvent("MINUTE_B_PUT_CONFIRM", minuteBResistance, minuteBSupport, minuteBHalfWidth', self.source)
+        self.assertIn("f_emitEvent(_action, _resistance, _support, _width, _rangeHigh, _rangeLow) =>", self.source)
+        self.assertIn("alert(f_payload(_action, _resistance, _support, _width, _rangeHigh, _rangeLow)", self.source)
 
     def test_b_confirmation_cannot_fire_on_its_map_bar(self):
         self.assertIn("minuteBMapCloseTime := time_close", self.source)

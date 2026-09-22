@@ -64,6 +64,25 @@ class OutcomeStoreValidationTests(unittest.TestCase):
         self.assertIsNone(observation)
         self.assertIn("parent_missing_or_invalid_bar_close_time", errors)
 
+    def test_safe_storage_acceptance_parent_requires_its_explicit_marker(self):
+        raw = tracking_payload(
+            parent_timeframe="5m",
+            parent_action="STORAGE_ACCEPTANCE_TEST",
+            parent_bar_open_time="1789565100000",
+            parent_bar_close_time="1789565400000",
+            observation_type="post_5m",
+            observed_bar_open_time="1789565400000",
+            observed_bar_close_time="1789565700000",
+        )
+        observation, errors = _validate_tracking_payload("v17", raw)
+        self.assertIsNone(observation)
+        self.assertIn("parent_test_action_not_authorized", errors)
+
+        raw["parent_research_acceptance_test"] = True
+        observation, errors = _validate_tracking_payload("v17", raw)
+        self.assertEqual(errors, [])
+        self.assertEqual(observation["parent"]["action"], "STORAGE_ACCEPTANCE_TEST")
+
     def test_same_point_has_same_key_despite_measurement_changes(self):
         first, errors = _validate_tracking_payload("v18", tracking_payload())
         self.assertEqual(errors, [])

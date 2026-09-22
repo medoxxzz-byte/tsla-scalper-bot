@@ -108,6 +108,9 @@ def _parent_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
         "range_low": raw.get("parent_range_low"),
         "range_high": raw.get("parent_range_high"),
         "zone_half_width": raw.get("parent_zone_half_width"),
+        # This exists only for the deliberately safe STORAGE_ACCEPTANCE_TEST
+        # parent. Pine never uses the field for natural research events.
+        "_research_acceptance_test": raw.get("parent_research_acceptance_test"),
     }
 
 

@@ -4,9 +4,10 @@ indicator("TM Reversal Experiments V18 — 1m research windows", overlay=true, m
 // ─────────────────────────────────────────────────────────────────────────────
 // V18 is deliberately separate from TM Reversal Map V17.
 // Use it on TSLA / 1-minute chart / Extended Hours enabled.
-// It has two limited experiments:
+// It has three limited experiments:
 // 1) 10:05–10:35 ET: one map + at most one 1m support/resistance confirmation.
-// 2) 15:30–15:55 ET: at most one close-breakout research alert.
+// 2) 10:35–11:05 ET: a separate map + at most one independent confirmation.
+// 3) 15:30–15:55 ET: at most one close-breakout research alert.
 // Neither experiment changes the V17 5-minute map or GEX messages.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -64,6 +65,8 @@ isRegular = (nyHour > 9 or (nyHour == 9 and nyMin >= 30)) and nyHour < 16
 minuteMapAnchor = nyHour == 10 and nyMin == 4
 minuteWindow    = nyHour == 10 and nyMin >= 5 and nyMin < 35
 trendWindow     = minuteWindow
+minuteBMapAnchor = nyHour == 10 and nyMin == 34
+minuteBWindow    = (nyHour == 10 and nyMin >= 35) or (nyHour == 11 and nyMin < 5)
 rangeBuild      = nyHour == 15 and nyMin >= 15 and nyMin < 30
 closeWindow     = nyHour == 15 and nyMin >= 30 and nyMin < 55
 
@@ -78,6 +81,12 @@ var float expHalfWidth = na
 var bool minuteMapSent = false
 var bool minuteAlertSent = false
 var bool trendAlertSent = false
+var float minuteBResistance = na
+var float minuteBSupport = na
+var float minuteBHalfWidth = na
+var int minuteBMapCloseTime = na
+var bool minuteBMapSent = false
+var bool minuteBAlertSent = false
 
 // ── 15:15–15:30 range used only by the close experiment ───────────────────────
 var float closingRangeHigh = na
@@ -95,6 +104,12 @@ if newDay
     minuteMapSent := false
     minuteAlertSent := false
     trendAlertSent := false
+    minuteBResistance := na
+    minuteBSupport := na
+    minuteBHalfWidth := na
+    minuteBMapCloseTime := na
+    minuteBMapSent := false
+    minuteBAlertSent := false
     closingRangeHigh := na
     closingRangeLow := na
     closingAlertSent := false
@@ -155,8 +170,11 @@ f_json_num(_value) =>
 f_bool(_value) =>
     _value ? "true" : "false"
 
+f_experiment_window(_action) =>
+    str.startswith(_action, "MINUTE_B_") ? "B_10_35_11_05" : str.startswith(_action, "MINUTE_") ? "A_10_05_10_35" : str.startswith(_action, "CLOSE_") ? "CLOSING_15_30_15_55" : "unknown"
+
 f_payload(string _action, float _resistance, float _support, float _width, float _rangeHigh, float _rangeLow) =>
-    '{"schema_version":"event-v2","symbol":"' + syminfo.ticker + '","timeframe":"1m","bar_open_time":' + str.tostring(time) + ',"bar_close_time":' + str.tostring(time_close) + ',"action":"' + _action + '","price":' + f_json_num(close) + ',"vwap":' + f_json_num(vwapValue) + ',"resistance":' + f_json_num(_resistance) + ',"support":' + f_json_num(_support) + ',"zone_half_width":' + f_json_num(_width) + ',"range_high":' + f_json_num(_rangeHigh) + ',"range_low":' + f_json_num(_rangeLow) + ',"cmf":' + f_json_num(cmfValue) + ',"obv_bull":' + f_bool(obvValue > obvAvg) + ',"obv_breakout":' + f_bool(obvValue > ta.highest(obvValue[1], 10) or obvValue < ta.lowest(obvValue[1], 10)) + ',"relative_volume":' + f_json_num(relVol) + ',"hist":' + f_json_num(histLine) + ',"momentum":' + f_json_num(momValue) + ',"rsi":' + f_json_num(rsiValue) + ',"adx":' + f_json_num(adxValue) + ',"bull_score":' + str.tostring((close > vwapValue ? 1 : 0) + (cmfValue > 0 and obvValue > obvAvg and relVol >= 0.85 ? 1 : 0) + (histLine > 0 and momValue > 0 ? 1 : 0)) + ',"bear_score":' + str.tostring((close < vwapValue ? 1 : 0) + (cmfValue < 0 and obvValue < obvAvg and relVol >= 0.85 ? 1 : 0) + (histLine < 0 and momValue < 0 ? 1 : 0)) + ',"five_minute_bias":"' + fiveBias + '"}'
+    '{"schema_version":"event-v2","symbol":"' + syminfo.ticker + '","timeframe":"1m","bar_open_time":' + str.tostring(time) + ',"bar_close_time":' + str.tostring(time_close) + ',"action":"' + _action + '","experiment_window":"' + f_experiment_window(_action) + '","price":' + f_json_num(close) + ',"vwap":' + f_json_num(vwapValue) + ',"resistance":' + f_json_num(_resistance) + ',"support":' + f_json_num(_support) + ',"zone_half_width":' + f_json_num(_width) + ',"range_high":' + f_json_num(_rangeHigh) + ',"range_low":' + f_json_num(_rangeLow) + ',"cmf":' + f_json_num(cmfValue) + ',"obv_bull":' + f_bool(obvValue > obvAvg) + ',"obv_breakout":' + f_bool(obvValue > ta.highest(obvValue[1], 10) or obvValue < ta.lowest(obvValue[1], 10)) + ',"relative_volume":' + f_json_num(relVol) + ',"hist":' + f_json_num(histLine) + ',"momentum":' + f_json_num(momValue) + ',"rsi":' + f_json_num(rsiValue) + ',"adx":' + f_json_num(adxValue) + ',"bull_score":' + str.tostring((close > vwapValue ? 1 : 0) + (cmfValue > 0 and obvValue > obvAvg and relVol >= 0.85 ? 1 : 0) + (histLine > 0 and momValue > 0 ? 1 : 0)) + ',"bear_score":' + str.tostring((close < vwapValue ? 1 : 0) + (cmfValue < 0 and obvValue < obvAvg and relVol >= 0.85 ? 1 : 0) + (histLine < 0 and momValue < 0 ? 1 : 0)) + ',"five_minute_bias":"' + fiveBias + '"}'
 
 // ── Experiment A: one 1-minute map, then at most one confirmation ───────────
 if barstate.isconfirmed and minuteMapAnchor and not minuteMapSent
@@ -165,6 +183,15 @@ if barstate.isconfirmed and minuteMapAnchor and not minuteMapSent
     expHalfWidth := minuteWidth
     minuteMapSent := true
     alert(f_payload("MINUTE_MAP", expResistance, expSupport, expHalfWidth, float(na), float(na)), alert.freq_once_per_bar_close)
+
+// ── Experiment B: an independent post-opening map and one confirmation ───────
+if barstate.isconfirmed and minuteBMapAnchor and not minuteBMapSent
+    minuteBResistance := candidateResistance
+    minuteBSupport := candidateSupport
+    minuteBHalfWidth := minuteWidth
+    minuteBMapCloseTime := time_close
+    minuteBMapSent := true
+    alert(f_payload("MINUTE_B_MAP", minuteBResistance, minuteBSupport, minuteBHalfWidth, float(na), float(na)), alert.freq_once_per_bar_close)
 
 touchSupport = minuteMapSent and not na(expSupport) and not na(expHalfWidth) and low <= expSupport + expHalfWidth and high >= expSupport - expHalfWidth
 touchResistance = minuteMapSent and not na(expResistance) and not na(expHalfWidth) and high >= expResistance - expHalfWidth and low <= expResistance + expHalfWidth
@@ -180,6 +207,12 @@ bearScore = (bearStructure ? 1 : 0) + (bearLiquidity ? 1 : 0) + (bearMomentum ? 
 
 minuteCallConfirm = minuteWindow and touchSupport and bullScore >= 2 and fiveBull
 minutePutConfirm = minuteWindow and touchResistance and bearScore >= 2 and fiveBear
+
+touchMinuteBSupport = minuteBMapSent and not na(minuteBSupport) and not na(minuteBHalfWidth) and low <= minuteBSupport + minuteBHalfWidth and high >= minuteBSupport - minuteBHalfWidth
+touchMinuteBResistance = minuteBMapSent and not na(minuteBResistance) and not na(minuteBHalfWidth) and high >= minuteBResistance - minuteBHalfWidth and low <= minuteBResistance + minuteBHalfWidth
+minuteBReady = minuteBMapSent and not na(minuteBMapCloseTime) and time_close > minuteBMapCloseTime
+minuteBCallConfirm = minuteBWindow and minuteBReady and touchMinuteBSupport and bullScore >= 2 and fiveBull
+minuteBPutConfirm = minuteBWindow and minuteBReady and touchMinuteBResistance and bearScore >= 2 and fiveBear
 
 // ── Experiment A.1: one trend-context message; it never means buy at market. ──
 macdBullPower = not na(histLine[2]) and histLine > 0 and histLine[1] > 0 and histLine > histLine[1] and histLine[1] > histLine[2] and histLine > histAbsAvg * trendHistFactor and histLine[1] > histAbsAvg[1] * trendHistFactor
@@ -205,6 +238,14 @@ if barstate.isconfirmed and isRegular and not minuteAlertSent
         minuteAlertSent := true
         alert(f_payload("MINUTE_PUT_CONFIRM", expResistance, expSupport, expHalfWidth, float(na), float(na)), alert.freq_once_per_bar_close)
 
+if barstate.isconfirmed and isRegular and not minuteBAlertSent
+    if minuteBCallConfirm
+        minuteBAlertSent := true
+        alert(f_payload("MINUTE_B_CALL_CONFIRM", minuteBResistance, minuteBSupport, minuteBHalfWidth, float(na), float(na)), alert.freq_once_per_bar_close)
+    else if minuteBPutConfirm
+        minuteBAlertSent := true
+        alert(f_payload("MINUTE_B_PUT_CONFIRM", minuteBResistance, minuteBSupport, minuteBHalfWidth, float(na), float(na)), alert.freq_once_per_bar_close)
+
 // ── Experiment B: one close-breakout research alert; never after 15:55 ET ────
 closeBreakout = closeWindow and not na(closingRangeHigh) and close > closingRangeHigh and volume > volAvg and cmfValue > 0 and not fiveBear
 closeBreakdown = closeWindow and not na(closingRangeLow) and close < closingRangeLow and volume > volAvg and cmfValue < 0 and not fiveBull
@@ -229,17 +270,29 @@ pSupTop = plot(showExperimentMap and minuteMapSent ? supTop : na, "1m Experiment
 pSupBottom = plot(showExperimentMap and minuteMapSent ? supBottom : na, "1m Experiment Support Bottom", color=color.new(color.lime, 30), linewidth=1, style=plot.style_linebr)
 fill(pResTop, pResBottom, color=color.new(color.red, 92), title="1m Experiment Resistance Area")
 fill(pSupTop, pSupBottom, color=color.new(color.lime, 92), title="1m Experiment Support Area")
+bResTop = minuteBResistance + minuteBHalfWidth
+bResBottom = minuteBResistance - minuteBHalfWidth
+bSupTop = minuteBSupport + minuteBHalfWidth
+bSupBottom = minuteBSupport - minuteBHalfWidth
+pBResTop = plot(showExperimentMap and minuteBMapSent ? bResTop : na, "1m B Resistance Top", color=color.new(color.orange, 25), linewidth=1, style=plot.style_linebr)
+pBResBottom = plot(showExperimentMap and minuteBMapSent ? bResBottom : na, "1m B Resistance Bottom", color=color.new(color.orange, 25), linewidth=1, style=plot.style_linebr)
+pBSupTop = plot(showExperimentMap and minuteBMapSent ? bSupTop : na, "1m B Support Top", color=color.new(color.aqua, 25), linewidth=1, style=plot.style_linebr)
+pBSupBottom = plot(showExperimentMap and minuteBMapSent ? bSupBottom : na, "1m B Support Bottom", color=color.new(color.aqua, 25), linewidth=1, style=plot.style_linebr)
+fill(pBResTop, pBResBottom, color=color.new(color.orange, 92), title="1m B Resistance Area")
+fill(pBSupTop, pBSupBottom, color=color.new(color.aqua, 92), title="1m B Support Area")
 plot(showExperimentMap ? vwapValue : na, "1m VWAP", color=color.orange, linewidth=1)
 
 plotshape(showExperimentMap and trendBull and not trendAlertSent[1], title="1m Bull Trend Context", style=shape.labelup, location=location.belowbar, color=color.green, size=size.tiny, text="TREND")
 plotshape(showExperimentMap and trendBear and not trendAlertSent[1], title="1m Bear Trend Context", style=shape.labeldown, location=location.abovebar, color=color.maroon, size=size.tiny, text="TREND")
 plotshape(showExperimentMap and minuteCallConfirm and not minuteAlertSent[1], title="1m CALL Experiment", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.tiny, text="1m")
 plotshape(showExperimentMap and minutePutConfirm and not minuteAlertSent[1], title="1m PUT Experiment", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.tiny, text="1m")
+plotshape(showExperimentMap and minuteBCallConfirm and not minuteBAlertSent[1], title="1m B CALL Experiment", style=shape.triangleup, location=location.belowbar, color=color.aqua, size=size.tiny, text="B")
+plotshape(showExperimentMap and minuteBPutConfirm and not minuteBAlertSent[1], title="1m B PUT Experiment", style=shape.triangledown, location=location.abovebar, color=color.orange, size=size.tiny, text="B")
 plotshape(showExperimentMap and closeBreakout and not closingAlertSent[1], title="Close Breakout Research", style=shape.labelup, location=location.belowbar, color=color.green, size=size.tiny, text="CLOSE")
 plotshape(showExperimentMap and closeBreakdown and not closingAlertSent[1], title="Close Breakdown Research", style=shape.labeldown, location=location.abovebar, color=color.maroon, size=size.tiny, text="CLOSE")
 
 var label statusLabel = na
 if barstate.islast and showExperimentMap
     label.delete(statusLabel)
-    statusText = "TM V18 Experiments | 1m\n10:05–10:35 ET map + one trend context + one confirmation\n15:30–15:55 ET one close observation\nResearch only — no chase"
+    statusText = "TM V18 Experiments | 1m\nA: 10:05–10:35 map + one trend context + one confirmation\nB: 10:35–11:05 independent map + one confirmation\n15:30–15:55 one close observation\nResearch only — no chase"
     statusLabel := label.new(bar_index, high, statusText, style=label.style_label_down, textcolor=color.white, color=color.new(color.black, 25), size=size.tiny)

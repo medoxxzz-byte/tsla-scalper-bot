@@ -23,6 +23,7 @@ v18_state = {
     "sent_actions": set(),
     "minute_alert_sent": False,
     "trend_alert_sent": False,
+    "minute_b_alert_sent": False,
     "closing_alert_sent": False,
 }
 
@@ -39,6 +40,7 @@ def _reset_daily_state(now_ksa):
         v18_state["sent_actions"] = set()
         v18_state["minute_alert_sent"] = False
         v18_state["trend_alert_sent"] = False
+        v18_state["minute_b_alert_sent"] = False
         v18_state["closing_alert_sent"] = False
 
 
@@ -182,6 +184,59 @@ def _format_trend_context(data, action):
     )
 
 
+def _format_minute_b_map(data):
+    price = _format_price(data.get("price"))
+    width = _as_float(data.get("zone_half_width"), 0.08)
+    resistance = _format_zone(data.get("resistance"), width)
+    support = _format_zone(data.get("support"), width)
+    return (
+        "🧪 <b>خريطة الدقيقة B — متابعة صباحية مستقلة</b> | TSLA\n"
+        "━━━━━━━━━━━━━━\n"
+        f"💰 السعر: <code>{price}</code>\n"
+        f"🔴 منطقة مراقبة علوية B: <code>{resistance}</code>\n"
+        f"🟢 منطقة مراقبة سفلية B: <code>{support}</code>\n"
+        "━━━━━━━━━━━━━━\n"
+        "⛔ <b>لا دخول عند الخريطة.</b>\n"
+        "هذه خريطة مستقلة عن نافذة 10:05–10:35، وليست تمديداً لها.\n"
+        "نراقب فقط 10:35–11:05 نيويورك: المكان + إغلاق الدقيقة + موافقة 5د.\n"
+        "هدفها البحثي: هل امتد الاتجاه أم تحول إلى تخشيب أو انعكاس؟"
+        f"{V18_OBSERVATION_GUARD}"
+    )
+
+
+def _format_minute_b_confirmation(data, action):
+    price = _format_price(data.get("price"))
+    width = _as_float(data.get("zone_half_width"), 0.08)
+    resistance = _format_zone(data.get("resistance"), width)
+    support = _format_zone(data.get("support"), width)
+    flow = _money_flow_text(data)
+    five = _five_minute_text(data)
+
+    if action == "MINUTE_B_CALL_CONFIRM":
+        header = "🟢 <b>متابعة B — ارتداد صاعد مشروط</b>"
+        reading = "عاد السعر إلى دعم خريطة B وأغلق فوقه مع توافق السياق."
+        invalidation = "أي إغلاق دقيقة تحت دعم B يلغي ملاحظة الاستمرار."
+    else:
+        header = "🔴 <b>متابعة B — رفض هابط مشروط</b>"
+        reading = "عاد السعر إلى مقاومة خريطة B وأغلق تحتها مع توافق السياق."
+        invalidation = "أي إغلاق دقيقة فوق مقاومة B يلغي ملاحظة الاستمرار."
+
+    return (
+        "🧪 <b>فريم الدقيقة B | 10:35–11:05 نيويورك</b>\n"
+        "━━━━━━━━━━━━━━\n"
+        f"💰 السعر: <code>{price}</code>\n"
+        f"🔴 مقاومة B: <code>{resistance}</code>\n"
+        f"🟢 دعم B: <code>{support}</code>\n"
+        "━━━━━━━━━━━━━━\n"
+        f"{header}\n"
+        f"📊 {reading}\n"
+        f"🌊 {flow}.\n"
+        f"🧭 {five}.\n"
+        f"⚠️ الإلغاء: {invalidation}"
+        f"{V18_OBSERVATION_GUARD}"
+    )
+
+
 def _format_closing_observation(data, action):
     price = _format_price(data.get("price"))
     range_high = _format_price(data.get("range_high"))
@@ -219,13 +274,17 @@ def format_v18_message(data):
         return _format_minute_confirmation(data, action)
     if action in {"MINUTE_TREND_BULL", "MINUTE_TREND_BEAR"}:
         return _format_trend_context(data, action)
+    if action == "MINUTE_B_MAP":
+        return _format_minute_b_map(data)
+    if action in {"MINUTE_B_CALL_CONFIRM", "MINUTE_B_PUT_CONFIRM"}:
+        return _format_minute_b_confirmation(data, action)
     if action in {"CLOSE_BREAKOUT_CALL", "CLOSE_BREAKDOWN_PUT"}:
         return _format_closing_observation(data, action)
     raise ValueError(f"Unsupported V18 action: {action}")
 
 
 def process_v18_webhook(data, send_telegram_func):
-    """Accept only four bounded experimental event types and deduplicate them."""
+    """Process bounded A, B, and closing research events with independent limits."""
     now_ksa = get_ksa_now()
     _reset_daily_state(now_ksa)
     action = str(data.get("action", "")).upper()
@@ -235,6 +294,9 @@ def process_v18_webhook(data, send_telegram_func):
         "MINUTE_PUT_CONFIRM",
         "MINUTE_TREND_BULL",
         "MINUTE_TREND_BEAR",
+        "MINUTE_B_MAP",
+        "MINUTE_B_CALL_CONFIRM",
+        "MINUTE_B_PUT_CONFIRM",
         "CLOSE_BREAKOUT_CALL",
         "CLOSE_BREAKDOWN_PUT",
     }
@@ -252,6 +314,10 @@ def process_v18_webhook(data, send_telegram_func):
         if v18_state["minute_alert_sent"]:
             return {"status": "ignored", "reason": "minute_alert_already_sent", "action": action}
         v18_state["minute_alert_sent"] = True
+    if action in {"MINUTE_B_CALL_CONFIRM", "MINUTE_B_PUT_CONFIRM"}:
+        if v18_state["minute_b_alert_sent"]:
+            return {"status": "ignored", "reason": "minute_b_alert_already_sent", "action": action}
+        v18_state["minute_b_alert_sent"] = True
     if action.startswith("CLOSE_"):
         if v18_state["closing_alert_sent"]:
             return {"status": "ignored", "reason": "closing_alert_already_sent", "action": action}

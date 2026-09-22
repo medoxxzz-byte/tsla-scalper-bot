@@ -61,6 +61,14 @@ class EventStoreIdentityTests(unittest.TestCase):
         self.assertIsNone(identity)
         self.assertIn("source_timeframe_mismatch", errors)
 
+    def test_v18_b_actions_have_a_distinct_official_identity_family(self):
+        b_payload = dict(self.payload, action="MINUTE_B_CALL_CONFIRM")
+        identity, errors = validate_official_identity("v18", b_payload)
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(identity)
+        self.assertEqual(identity["signal_family"], "minute_b_confirmation")
+        self.assertEqual(classify_direction(identity["action"]), "CALL")
+
     def test_acceptance_action_requires_explicit_test_marker(self):
         test_payload = dict(
             self.payload,

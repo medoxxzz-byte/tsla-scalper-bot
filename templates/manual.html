@@ -712,6 +712,8 @@ body {
 // State
 // ══════════════════════════════════════════════════════
 let hasPos = false;
+let manualBuyReady = false;
+let manualBuyMessage = '';
 let vib1 = false, vib2 = false;
 let lastCheddar = null;
 let pendingTradeType = null;  // 'call' أو 'put'
@@ -946,12 +948,14 @@ async function refreshManual() {
 
     const dot = document.getElementById('statusDot');
     const txt = document.getElementById('statusTxt');
-    if (d.is_trading_hours) {
+    manualBuyReady = Boolean(d.manual_ready);
+    manualBuyMessage = d.manual_message || '';
+    if (manualBuyReady) {
       dot.className = 'dot g';
-      txt.textContent = 'السوق مفتوح — جاهز';
+      txt.textContent = 'اللعبة الورقية جاهزة';
     } else {
-      dot.className = 'dot gr';
-      txt.textContent = 'خارج نافذة التداول';
+      dot.className = d.manual_reason_code === 'no_options_buying_power' ? 'dot r' : 'dot gr';
+      txt.textContent = manualBuyMessage || 'اللعبة غير جاهزة حالياً';
     }
 
     if (d.has_position && d.position) {
@@ -1016,6 +1020,8 @@ async function refreshManual() {
       document.getElementById('alert2').classList.remove('show');
       document.getElementById('suggestDiv').style.display = 'grid';
       document.getElementById('buyDiv').style.display = 'grid';
+      document.getElementById('btnCall').disabled = !manualBuyReady;
+      document.getElementById('btnPut').disabled  = !manualBuyReady;
 
       if (d.suggested_call) {
         const sc = d.suggested_call;
@@ -1050,6 +1056,10 @@ async function refresh() {
 // ══════════════════════════════════════════════════════
 function startPreTrade(type) {
   if (hasPos) return;
+  if (!manualBuyReady) {
+    alert('⚠️ اللعبة غير جاهزة:\n' + (manualBuyMessage || 'تحقق من حالة الحساب والنافذة الزمنية.'));
+    return;
+  }
   pendingTradeType = type;
   ptAnswers = { vwap: '', reasons: [] };
 
@@ -1201,8 +1211,8 @@ async function executeTrade(type, preTradeData) {
   } catch(e) { alert('❌ خطأ في الاتصال'); }
   finally {
     document.getElementById('loadingDiv').classList.remove('show');
-    document.getElementById('btnCall').disabled = false;
-    document.getElementById('btnPut').disabled  = false;
+    document.getElementById('btnCall').disabled = !manualBuyReady;
+    document.getElementById('btnPut').disabled  = !manualBuyReady;
   }
 }
 

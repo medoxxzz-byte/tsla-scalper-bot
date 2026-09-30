@@ -76,6 +76,14 @@ ITM_TP_PCT         = 0.40   # احتياطي
 ITM_SL_PCT         = 0.16   # احتياطي
 ITM_MIN_VOLUME     = 100
 
+# ── Manual ITM paper-game window ────────────────────────────────────────────
+# Kept separate from the old automated-scalper window.  The manual interface
+# deliberately starts after the first 40 minutes and stops before midday chop.
+MANUAL_START_HOUR   = 10
+MANUAL_START_MINUTE = 10
+MANUAL_END_HOUR     = 12
+MANUAL_END_MINUTE   = 40
+
 # ── Risk Management ──────────────────────────────────────────────────────────
 PORTFOLIO_START    = 99408.71
 MAX_PORTFOLIO_LOSS = 7000.0
@@ -471,6 +479,74 @@ def _is_scalp_window():
     start = SCALP_START_HOUR * 60 + SCALP_START_MINUTE
     end = SCALP_END_HOUR * 60 + SCALP_END_MINUTE
     return start <= mins < end
+
+
+def _manual_window_status(now=None):
+    """Return a user-facing readiness result for the manual ITM paper game."""
+    now = now or _et_now()
+    if now.weekday() >= 5:
+        return False, "خارج أيام السوق الأمريكي. اللعبة اليدوية تعمل من الاثنين إلى الجمعة فقط."
+
+    minutes = now.hour * 60 + now.minute
+    start = MANUAL_START_HOUR * 60 + MANUAL_START_MINUTE
+    end = MANUAL_END_HOUR * 60 + MANUAL_END_MINUTE
+    if minutes < start:
+        return False, "نافذة اللعبة لم تبدأ بعد — انتظر حتى 10:10 AM بتوقيت نيويورك."
+    if minutes >= end:
+        return False, "انتهت نافذة اللعبة اليدوية لليوم عند 12:40 PM بتوقيت نيويورك."
+    return True, "نافذة اللعبة اليدوية مفتوحة."
+
+
+def _as_nonnegative_float(value):
+    try:
+        return max(0.0, float(value or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def get_manual_readiness(now=None, account=None):
+    """Validate time and paper-account buying capacity without placing an order."""
+    in_window, message = _manual_window_status(now)
+    if not in_window:
+        return {
+            "can_buy": False,
+            "reason_code": "outside_manual_window",
+            "message": message,
+            "options_buying_power": None,
+        }
+
+    account = account if account is not None else get_account()
+    if not account:
+        return {
+            "can_buy": False,
+            "reason_code": "account_unavailable",
+            "message": "تعذر التحقق من حساب Alpaca Paper الآن. أعد المحاولة بعد دقيقة.",
+            "options_buying_power": None,
+        }
+
+    if account.get("account_blocked") or account.get("trading_blocked"):
+        return {
+            "can_buy": False,
+            "reason_code": "account_blocked",
+            "message": "حساب Alpaca Paper محظور من التداول حالياً. يلزم فحص حالة الحساب في Alpaca.",
+            "options_buying_power": _as_nonnegative_float(account.get("options_buying_power")),
+        }
+
+    options_buying_power = _as_nonnegative_float(account.get("options_buying_power"))
+    if options_buying_power <= 0:
+        return {
+            "can_buy": False,
+            "reason_code": "no_options_buying_power",
+            "message": "لا توجد قدرة شراء أوبشن في حساب Alpaca Paper حالياً ($0). لا يمكن إرسال أمر شراء حتى تُحرر أو تعيد ضبط الرصيد الورقي.",
+            "options_buying_power": options_buying_power,
+        }
+
+    return {
+        "can_buy": True,
+        "reason_code": "ready",
+        "message": "الحساب الورقي ونافذة اللعبة جاهزان للشراء.",
+        "options_buying_power": options_buying_power,
+    }
 
 def _is_force_close_time():
     now = _et_now()
@@ -2010,6 +2086,15 @@ def execute_manual_itm(option_type):
     # لا تفتح صفقة جديدة لو في صفقة مفتوحة
     if _manual_state["position"]:
         return False, {"error": "يوجد صفقة مفتوحة — أغلقها أولاً"}
+
+    # تحقق خادمي قبل جلب العقد أو إرسال أي أمر إلى الوسيط. لا تعتمد على
+    # رسالة الواجهة فقط، لأن الزر قد يُستدعى مباشرة من جهاز آخر.
+    readiness = get_manual_readiness()
+    if not readiness["can_buy"]:
+        return False, {
+            "error": readiness["message"],
+            "reason_code": readiness["reason_code"],
+        }
     
     # جلب سعر TSLA
     snap = get_tsla_snapshot()
@@ -2472,6 +2557,8 @@ def get_manual_status():
         except:
             pass
     
+    readiness = get_manual_readiness()
+
     return {
         "tsla_price": tsla_price,
         "has_position": bool(pos),
@@ -2481,7 +2568,11 @@ def get_manual_status():
         "pnl_dollar": _manual_state["pnl_dollar"],
         "suggested_call": suggested_call,
         "suggested_put": suggested_put,
-        "is_trading_hours": _is_scalp_window(),
+        "is_trading_hours": readiness["can_buy"],
+        "manual_ready": readiness["can_buy"],
+        "manual_reason_code": readiness["reason_code"],
+        "manual_message": readiness["message"],
+        "options_buying_power": readiness["options_buying_power"],
         "et_time": _et_now().strftime("%I:%M:%S %p"),
         "last_reason": _manual_state.get("last_reason", ""),
         "last_pnl": _manual_state.get("last_pnl", 0)
@@ -6724,4 +6815,3 @@ def generate_market_briefing():
     except Exception as e:
         logger.error(f"[Briefing V13] Error: {e}")
         return None
-

@@ -42,6 +42,16 @@ from event_store import ResearchEventStore
 from outcome_store import ResearchOutcomeStore
 
 try:
+    from extended_paper_engine import (
+        get_extended_paper_status,
+        start_extended_paper_engine,
+        stop_extended_paper_engine,
+    )
+    _EXTENDED_PAPER_AVAILABLE = True
+except ImportError as _extended_paper_import_error:
+    _EXTENDED_PAPER_AVAILABLE = False
+
+try:
     from flask import Flask, request, jsonify, render_template
 except ImportError:
     os.system("pip install flask")
@@ -3064,6 +3074,14 @@ def dashboard():
     """لوحة مراقبة حية لجميع الـ endpoints."""
     return render_template('dashboard.html')
 
+
+@app.route('/extended-paper/status', methods=['GET'])
+def extended_paper_status():
+    """Public Dashboard status for the isolated extended Paper experiment."""
+    if not _EXTENDED_PAPER_AVAILABLE:
+        return jsonify({"ok": False, "error": "extended Paper engine unavailable"}), 503
+    return jsonify(get_extended_paper_status())
+
 @app.route('/pyramid/status', methods=['GET'])
 def pyramid_status():
     """حالة نظام Pyramid Auto Simulation V11.0."""
@@ -3280,6 +3298,14 @@ def _start_background_threads():
             logger.error(f"Strategy C FAILED to start: {_stc_err}", exc_info=True)
     else:
         logger.warning("[Safety] Autonomous Alpaca order engines are disabled (AUTO_ORDER_EXECUTION_ENABLED=false).")
+    # Dashboard-only extended Paper experiment: deliberately isolated from the
+    # disabled legacy automatic engines and guarded inside its own module.
+    if _EXTENDED_PAPER_AVAILABLE:
+        try:
+            result = start_extended_paper_engine()
+            logger.info(f"[ExtendedPaper] Dashboard engine startup: {result}")
+        except Exception as _extended_paper_error:
+            logger.error(f"[ExtendedPaper] Dashboard engine did not start: {_extended_paper_error}", exc_info=True)
     # V10.3: Market Briefing — رسالة تلقرام كل 15 دقيقة
     threading.Thread(target=_market_briefing_worker, daemon=True).start()
     logger.info("Market Briefing worker started ✅ 📊")

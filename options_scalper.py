@@ -362,7 +362,7 @@ def get_option_quote(symbol):
 
 def place_option_order(symbol, qty, side, order_type="market",
                        limit_price=None, time_in_force="day",
-                       position_intent=None):
+                       position_intent=None, client_order_id=None):
     payload = {
         "symbol": symbol,
         "qty": str(qty),
@@ -374,6 +374,8 @@ def place_option_order(symbol, qty, side, order_type="market",
         payload["limit_price"] = str(round(limit_price, 2))
     if position_intent:
         payload["position_intent"] = position_intent
+    if client_order_id:
+        payload["client_order_id"] = str(client_order_id)
     
     try:
         r = _session.post(

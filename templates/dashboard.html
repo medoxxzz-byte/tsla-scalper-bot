@@ -664,6 +664,54 @@
 
 
   <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- 4. الصفقة الممتدة الورقية — قرار وتنفيذ ونتيجة مستقلان        -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div class="section-title">🧭 الصفقة الممتدة الورقية — Dashboard فقط</div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <div class="card-icon" style="background:#4fc3f720; color:var(--blue)">🧭</div>
+        قرار اتجاه ممتد + نتيجة مستقلة
+      </div>
+      <div id="extendedBadge" class="badge badge-gray">جاري التحقق...</div>
+    </div>
+    <div class="card-body">
+      <div class="pnl-display" style="padding:4px 0 12px;">
+        <div class="pnl-number neutral" id="extendedDecision">لا قرار</div>
+        <div class="pnl-label" id="extendedReason">المحرك يراجع شروط الاتجاه النادرة.</div>
+      </div>
+      <div class="data-row">
+        <span class="data-key">🧪 البيئة</span>
+        <span class="data-val blue" id="extendedEnvironment">Alpaca Paper فقط — عقد واحد</span>
+      </div>
+      <div class="data-row">
+        <span class="data-key">📋 الحالة / العقد</span>
+        <span class="data-val" id="extendedPosition">لا صفقة ممتدة اليوم</span>
+      </div>
+      <div class="data-row">
+        <span class="data-key">⚖️ الإلغاء (إغلاق 5د)</span>
+        <span class="data-val yellow" id="extendedInvalidation">—</span>
+      </div>
+      <div class="data-row">
+        <span class="data-key">🎯 قياس TSLA</span>
+        <span class="data-val" id="extendedTargets">+$0.30 | +$0.60 | +$1.20</span>
+      </div>
+      <div class="data-row">
+        <span class="data-key">📈 الامتداد / 📉 العكس</span>
+        <span class="data-val" id="extendedExcursions">—</span>
+      </div>
+      <div class="data-row">
+        <span class="data-key">🕐 آخر فحص</span>
+        <span class="data-val" id="extendedLastCheck">—</span>
+      </div>
+      <div style="margin-top:12px; padding:10px 12px; background:#4fc3f710; border:1px solid #4fc3f730; border-radius:8px; color:#94a3b8; font-size:11px; line-height:1.6;">
+        تنبيه Telegram عند فتح فرصة ورقية، +$0.30، +$0.60، والخروج فقط. لا يتصل باللعبة اليدوية ولا بـV17/V18.
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
   <!-- 💧 Cheddar Flow Vision Analyzer                               -->
   <!-- ══════════════════════════════════════════════════════════════ -->
   <div class="section-title">💧 محلل سيولة Cheddar Flow</div>
@@ -1162,6 +1210,61 @@
     setText('tradingHours', data.is_trading_hours ? '🟢 نشط' : '🔴 مغلق');
   }
 
+  // ── Extended Paper Trade — isolated from /manual ──────────────────
+  function renderExtended(data) {
+    const badge = el('extendedBadge');
+    if (!data || !data.ok) {
+      if (badge) { badge.textContent = 'غير جاهز'; badge.className = 'badge badge-red'; }
+      setText('extendedReason', 'تعذر قراءة محرك الصفقة الممتدة؛ لا يوجد تنفيذ جديد.');
+      return;
+    }
+    const trade = data.active_or_latest_trade;
+    const decision = data.last_decision || 'NO_TRADE';
+    const decisionEl = el('extendedDecision');
+    const isCall = decision === 'CALL' || (trade && trade.direction === 'CALL');
+    const isPut = decision === 'PUT' || (trade && trade.direction === 'PUT');
+    const isOpen = trade && trade.status === 'open';
+    const stateLabels = {
+      reserved: 'قرار محجوز — انتظار تنفيذ Paper', open: 'صفقة ورقية مفتوحة', closed: 'نتيجة مسجلة',
+      entry_failed: 'فشل دخول موثق', exit_failed: 'خروج يحتاج مراجعة'
+    };
+
+    if (decisionEl) {
+      if (isOpen) decisionEl.textContent = (trade.direction === 'CALL' ? '🟢 CALL ممتد' : '🔴 PUT ممتد');
+      else if (decision === 'CALL') decisionEl.textContent = '🟢 CALL ممتد';
+      else if (decision === 'PUT') decisionEl.textContent = '🔴 PUT ممتد';
+      else decisionEl.textContent = '⚪ لا صفقة ممتدة';
+      decisionEl.className = 'pnl-number ' + (isCall ? 'positive' : isPut ? 'negative' : 'neutral');
+    }
+    setText('extendedReason', data.last_error || data.last_reason || '—');
+
+    if (badge) {
+      if (!data.paper_only) { badge.textContent = 'حماية Paper'; badge.className = 'badge badge-red'; }
+      else if (isOpen) { badge.textContent = '🟡 متابعة مفتوحة'; badge.className = 'badge badge-yellow'; }
+      else if (data.running) { badge.textContent = '🟢 فحص مستقل'; badge.className = 'badge badge-green'; }
+      else { badge.textContent = '⏸️ متوقف'; badge.className = 'badge badge-gray'; }
+    }
+    setText('extendedEnvironment', data.paper_only ? 'Alpaca Paper فقط — عقد ITM واحد' : 'حماية: لا تنفيذ خارج Paper');
+
+    if (trade) {
+      const status = stateLabels[trade.status] || trade.status || '—';
+      const symbol = trade.option_symbol ? ' | ' + trade.option_symbol + ' ×1' : '';
+      setText('extendedPosition', status + symbol);
+      setText('extendedInvalidation', trade.invalidation_price ? fmtPrice(trade.invalidation_price) : '—');
+      const hit = (value, amount) => value ? '✅ +$' + amount : '○ +$' + amount;
+      setText('extendedTargets', [hit(trade.hit_030_at, '0.30'), hit(trade.hit_060_at, '0.60'), hit(trade.hit_120_at, '1.20')].join(' | '));
+      const favorable = trade.max_favorable_extension !== undefined ? Number(trade.max_favorable_extension || 0).toFixed(2) : '—';
+      const adverse = trade.max_adverse_extension !== undefined ? Number(trade.max_adverse_extension || 0).toFixed(2) : '—';
+      setText('extendedExcursions', '+' + favorable + ' / -' + adverse + ' دولار على TSLA');
+    } else {
+      setText('extendedPosition', 'لا صفقة ممتدة اليوم');
+      setText('extendedInvalidation', '—');
+      setText('extendedTargets', '+$0.30 | +$0.60 | +$1.20');
+      setText('extendedExcursions', '—');
+    }
+    setText('extendedLastCheck', data.last_check_at ? new Date(data.last_check_at).toLocaleTimeString('ar-SA') : '—');
+  }
+
   // ── Strategy Status ──────────────────────────────────────────────
   function renderStrategy(prefix, data) {
     if (!data) return;
@@ -1224,10 +1327,11 @@
     setText('globalLastUpdate', now);
 
     // جلب كل البيانات بالتوازي
-    const [volData, gaugeData, zonesData, manualData, pyrData, stbData, stcData, stdData, orbData] = await Promise.all([
+    const [volData, gaugeData, zonesData, extendedData, manualData, pyrData, stbData, stcData, stdData, orbData] = await Promise.all([
       fetchJSON('/api/volume-levels'),
       fetchJSON('/api/reversal-gauges'),
       fetchJSON('/api/reversal-zones'),
+      fetchJSON('/extended-paper/status'),
       fetchJSON('/manual/status'),
       fetchJSON('/pyramid/status'),
       fetchJSON('/strategy-b/status'),
@@ -1239,6 +1343,7 @@
     renderVolTable(volData);
     renderGauges(gaugeData);
     renderZones(zonesData);
+    renderExtended(extendedData);
     renderManual(manualData);
     renderStrategy('pyr', pyrData);
     renderStrategy('stb', stbData);

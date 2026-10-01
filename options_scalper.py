@@ -25,6 +25,7 @@ import math
 import logging
 import threading
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 import requests as http_requests
 from requests.adapters import HTTPAdapter
@@ -77,12 +78,15 @@ ITM_SL_PCT         = 0.16   # احتياطي
 ITM_MIN_VOLUME     = 100
 
 # ── Manual ITM paper-game window ────────────────────────────────────────────
-# Kept separate from the old automated-scalper window.  The manual interface
-# deliberately starts after the first 40 minutes and stops before midday chop.
-MANUAL_START_HOUR   = 10
-MANUAL_START_MINUTE = 10
-MANUAL_END_HOUR     = 12
-MANUAL_END_MINUTE   = 40
+# The user-directed Paper game is open for the regular session. New entries
+# stop five minutes before the bell; an open manual position is force-closed
+# at 15:58 ET so it cannot become an untracked overnight exposure.
+MANUAL_START_HOUR       = 9
+MANUAL_START_MINUTE     = 30
+MANUAL_END_HOUR         = 15
+MANUAL_END_MINUTE       = 55
+MANUAL_FORCE_CLOSE_HOUR = 15
+MANUAL_FORCE_CLOSE_MINUTE = 58
 
 # ── Risk Management ──────────────────────────────────────────────────────────
 PORTFOLIO_START    = 99408.71
@@ -465,7 +469,8 @@ def send_telegram(message):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _et_now():
-    return datetime.now(timezone.utc) - timedelta(hours=4)
+    """Return New York local time with automatic daylight-saving handling."""
+    return datetime.now(ZoneInfo("America/New_York"))
 
 def _today_str():
     return _et_now().strftime("%Y-%m-%d")
@@ -491,10 +496,20 @@ def _manual_window_status(now=None):
     start = MANUAL_START_HOUR * 60 + MANUAL_START_MINUTE
     end = MANUAL_END_HOUR * 60 + MANUAL_END_MINUTE
     if minutes < start:
-        return False, "نافذة اللعبة لم تبدأ بعد — انتظر حتى 10:10 AM بتوقيت نيويورك."
+        return False, "نافذة اللعبة لم تبدأ بعد — انتظر حتى 09:30 AM بتوقيت نيويورك."
     if minutes >= end:
-        return False, "انتهت نافذة اللعبة اليدوية لليوم عند 12:40 PM بتوقيت نيويورك."
+        return False, "توقف فتح صفقات جديدة عند 03:55 PM بتوقيت نيويورك لحماية الإغلاق."
     return True, "نافذة اللعبة اليدوية مفتوحة."
+
+
+def _manual_force_close_time(now=None):
+    """Return whether an open user-directed Paper position must exit before close."""
+    now = now or _et_now()
+    if now.weekday() >= 5:
+        return False
+    minutes = now.hour * 60 + now.minute
+    force_close = MANUAL_FORCE_CLOSE_HOUR * 60 + MANUAL_FORCE_CLOSE_MINUTE
+    return minutes >= force_close
 
 
 def _as_nonnegative_float(value):
@@ -2000,8 +2015,7 @@ def find_itm_contract_for_manual(price, option_type):
     option_type: "call" أو "put"
     """
     # جرب اليوم أولاً ثم الأيام القادمة (fallback)
-    from datetime import datetime, timedelta, timezone
-    et_now = datetime.now(timezone.utc) - timedelta(hours=4)
+    et_now = _et_now()
     expiry_candidates = []
     for i in range(0, 8):  # جرب 8 أيام قادمة
         d = et_now + timedelta(days=i)
@@ -2248,7 +2262,7 @@ def close_manual_itm(reason="manual"):
     # ── تحديث تلقائي للسجل عند الإغلاق ──
     journal_id = _manual_state.get("journal_id")
     if journal_id:
-        reason_ar = {"TP": "جني أرباح تلقائي", "SL": "ستوب لوس تلقائي", "MANUAL": "إغلاق يدوي", "ERROR": "خطأ تقني"}.get(reason, reason)
+        reason_ar = {"TP": "جني أرباح تلقائي", "SL": "ستوب لوس تلقائي", "MANUAL": "إغلاق يدوي", "SESSION_CLOSE": "إغلاق نهاية الجلسة", "ERROR": "خطأ تقني"}.get(reason, reason)
         update_journal_entry(journal_id, {
             "status": "closed",
             "exit_price": current_price,
@@ -2262,7 +2276,7 @@ def close_manual_itm(reason="manual"):
     # إرسال تنبيه Telegram بسبب الإغلاق
     direction = "CALL 📈" if pos.get("type") == "call" else "PUT 📉"
     emoji = "✅" if pnl >= 0 else "🔴"
-    reason_ar = {"TP": "جني أرباح تلقائي ✅", "SL": "ستوب لوس تلقائي 🛑", "MANUAL": "إغلاق يدوي 👆", "ERROR": "خطأ تقني ⚠️"}.get(reason, reason)
+    reason_ar = {"TP": "جني أرباح تلقائي ✅", "SL": "ستوب لوس تلقائي 🛑", "MANUAL": "إغلاق يدوي 👆", "SESSION_CLOSE": "إغلاق نهاية الجلسة ⏰", "ERROR": "خطأ تقني ⚠️"}.get(reason, reason)
     msg = (
         f"{emoji} <b>V9 إغلاق — {direction}</b>\n"
         f"━━━━━━━━━━━━━━━\n"
@@ -2331,7 +2345,7 @@ def close_manual_itm_all(reason="manual"):
     # تحديث السجل
     journal_id = _manual_state.get("journal_id")
     if journal_id:
-        reason_ar = {"TP": "جني أرباح تلقائي", "SL": "ستوب لوس تلقائي", "MANUAL": "إغلاق يدوي"}.get(reason, reason)
+        reason_ar = {"TP": "جني أرباح تلقائي", "SL": "ستوب لوس تلقائي", "MANUAL": "إغلاق يدوي", "SESSION_CLOSE": "إغلاق نهاية الجلسة"}.get(reason, reason)
         update_journal_entry(journal_id, {
             "status": "closed",
             "exit_price": current_price,
@@ -2343,7 +2357,7 @@ def close_manual_itm_all(reason="manual"):
     
     direction = "CALL 📈" if pos.get("type") == "call" else "PUT 📉"
     emoji = "✅" if pnl_total >= 0 else "🔴"
-    reason_ar = {"TP": "جني أرباح تلقائي ✅", "SL": "ستوب لوس تلقائي 🛑", "MANUAL": "إغلاق يدوي 👆"}.get(reason, reason)
+    reason_ar = {"TP": "جني أرباح تلقائي ✅", "SL": "ستوب لوس تلقائي 🛑", "MANUAL": "إغلاق يدوي 👆", "SESSION_CLOSE": "إغلاق نهاية الجلسة ⏰"}.get(reason, reason)
     msg = (
         f"{emoji} <b>V9 إغلاق بعد التعزيز — {direction}</b>\n"
         f"━━━━━━━━━━━━━━━\n"
@@ -2380,6 +2394,14 @@ def _manual_monitor_loop():
             pos = _manual_state["position"]
             if not pos or pos.get("status") != "open":
                 _manual_state["monitor_active"] = False
+                break
+
+            if _manual_force_close_time():
+                logger.info("[V9 Manual] Session-close safety exit triggered")
+                if _manual_state["reinforce_done"]:
+                    close_manual_itm_all(reason="SESSION_CLOSE")
+                else:
+                    close_manual_itm(reason="SESSION_CLOSE")
                 break
             
             symbol = pos["symbol"]

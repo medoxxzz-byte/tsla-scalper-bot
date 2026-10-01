@@ -766,19 +766,22 @@ function updateWindowWarning(now) {
   const totalMin = h * 60 + m;
 
   const warn = document.getElementById('windowWarn');
-  // 10:10 = 610 دقيقة | 11:30 = 690 | 12:40 = 760
+  // 09:30 = 570 دقيقة | 10:10 = 610 | 11:30 = 690 | 15:30 = 930 | 15:55 = 955
   if (totalMin >= 610 && totalMin <= 690) {
     warn.className = 'window-warn show ideal';
     warn.textContent = '✅ أنت في النافذة المثالية (10:10 - 11:30 AM ET)';
-  } else if (totalMin > 690 && totalMin <= 760) {
-    warn.className = 'window-warn show caution';
-    warn.textContent = '⚠️ خارج النافذة المثالية — تداول بحذر (11:30 - 12:40 AM ET)';
   } else if (totalMin >= 570 && totalMin < 610) {
     warn.className = 'window-warn show caution';
-    warn.textContent = '⏳ قبل النافذة المثالية — انتظر 10:10 AM ET';
+    warn.textContent = '⚠️ افتتاح السوق — اللعبة مفتوحة، لكن الحركة سريعة (09:30 - 10:10 AM ET)';
+  } else if (totalMin > 690 && totalMin < 930) {
+    warn.className = 'window-warn show caution';
+    warn.textContent = '⚠️ اللعبة مفتوحة خارج النافذة المثالية — تداول بحذر';
+  } else if (totalMin >= 930 && totalMin < 955) {
+    warn.className = 'window-warn show caution';
+    warn.textContent = '⏳ آخر 25 دقيقة — افتح صفقة فقط إذا كنت مستعداً لإغلاقها قبل الجرس';
   } else {
     warn.className = 'window-warn show outside';
-    warn.textContent = '⚠️ خارج نافذة التداول (10:10 AM - 12:40 PM ET)';
+    warn.textContent = '⚠️ خارج نافذة فتح الصفقات (09:30 AM - 03:55 PM ET)';
   }
 }
 

@@ -8,21 +8,33 @@ import options_scalper as scalper
 class ManualTradeReadinessTests(unittest.TestCase):
     def test_before_manual_window_is_blocked(self):
         ready = scalper.get_manual_readiness(
-            now=datetime(2026, 9, 30, 10, 9),
+            now=datetime(2026, 9, 30, 9, 29),
             account={"options_buying_power": "1000", "trading_blocked": False, "account_blocked": False},
         )
         self.assertFalse(ready["can_buy"])
         self.assertEqual(ready["reason_code"], "outside_manual_window")
-        self.assertIn("10:10", ready["message"])
+        self.assertIn("09:30", ready["message"])
 
     def test_open_manual_window_and_funded_account_are_ready(self):
         ready = scalper.get_manual_readiness(
-            now=datetime(2026, 9, 30, 10, 10),
+            now=datetime(2026, 9, 30, 9, 30),
             account={"options_buying_power": "1000", "trading_blocked": False, "account_blocked": False},
         )
         self.assertTrue(ready["can_buy"])
         self.assertEqual(ready["reason_code"], "ready")
         self.assertEqual(ready["options_buying_power"], 1000.0)
+
+    def test_last_entry_minute_is_allowed_and_then_blocks_new_entries(self):
+        account = {"options_buying_power": "1000", "trading_blocked": False, "account_blocked": False}
+        self.assertTrue(scalper.get_manual_readiness(now=datetime(2026, 9, 30, 15, 54), account=account)["can_buy"])
+        blocked = scalper.get_manual_readiness(now=datetime(2026, 9, 30, 15, 55), account=account)
+        self.assertFalse(blocked["can_buy"])
+        self.assertEqual(blocked["reason_code"], "outside_manual_window")
+        self.assertIn("03:55", blocked["message"])
+
+    def test_manual_position_force_close_starts_at_1558(self):
+        self.assertFalse(scalper._manual_force_close_time(now=datetime(2026, 9, 30, 15, 57)))
+        self.assertTrue(scalper._manual_force_close_time(now=datetime(2026, 9, 30, 15, 58)))
 
     def test_zero_options_buying_power_is_explicitly_blocked(self):
         ready = scalper.get_manual_readiness(

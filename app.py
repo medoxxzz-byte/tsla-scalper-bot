@@ -300,6 +300,10 @@ MAX_CONTRACTS_PER_TRADE = 10
 STOCK_STRATEGY_ENABLED = False
 # V10 FIX: إيقاف Pyramid Auto (WR=33%, P&L=-$831)
 PYRAMID_AUTO_ENABLED = False
+# Safety default: the current project is a research system plus a user-driven
+# Paper-game interface.  No autonomous strategy may submit Alpaca orders unless
+# an operator deliberately enables this environment flag.
+AUTO_ORDER_EXECUTION_ENABLED = os.environ.get("AUTO_ORDER_EXECUTION_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
 MAX_OPTION_PRICE        = 5.00
 MIN_OPTION_PRICE        = 0.10
 MIN_STARS_TO_EXECUTE    = 3      # V7.1: أقل عدد نجوم لتنفيذ الصفقة تلقائياً
@@ -3235,46 +3239,47 @@ def _start_background_threads():
         logger.info("Pair Trade state loaded ✅")
     except Exception as _pair_load_err:
         logger.warning(f"Pair Trade state load failed: {_pair_load_err}")
-    # V13.0: Strategy D — Mosquito Trend (ATM + Reinforcement)
-    try:
-        from options_scalper import start_mosquito
-        result = start_mosquito()
-        logger.info(f"V13.0 Strategy D (Mosquito Trend) started ✅ 🦟 result={result}")
-    except Exception as _mq_err:
-        logger.error(f"Strategy D (Mosquito) FAILED to start: {_mq_err}", exc_info=True)
-    # V8: Options Scalper — autonomous trading engine
-    if _V8_AVAILABLE:
-        if reversal_map.get("built"):
-            set_reversal_map_ref(reversal_map)
-        start_scalper()
-        logger.info("V8 Options Scalper Engine started ✅ 🚀")
-        # V9.4: ITM Precision Entry Engine
-        start_pe_engine()
-        logger.info("V9.4 ITM Precision Entry Engine started ✅ 🎯")
-    # V12.0: Strategy A — True Pyramid (DISABLED — WR=33%, P&L=-$831)
-    if PYRAMID_AUTO_ENABLED:
+    if AUTO_ORDER_EXECUTION_ENABLED:
+        # V13.0: Strategy D — Mosquito Trend (ATM + Reinforcement)
         try:
-            from options_scalper import start_pyramid_auto
-            result = start_pyramid_auto()
-            logger.info(f"V12.0 Pyramid Auto started ✅ 🦋 result={result}")
-        except Exception as _pyr_err:
-            logger.error(f"Pyramid Auto FAILED to start: {_pyr_err}", exc_info=True)
+            from options_scalper import start_mosquito
+            result = start_mosquito()
+            logger.info(f"V13.0 Strategy D (Mosquito Trend) started ✅ 🦟 result={result}")
+        except Exception as _mq_err:
+            logger.error(f"Strategy D (Mosquito) FAILED to start: {_mq_err}", exc_info=True)
+        # V8: Options Scalper — autonomous trading engine
+        if _V8_AVAILABLE:
+            if reversal_map.get("built"):
+                set_reversal_map_ref(reversal_map)
+            start_scalper()
+            logger.info("V8 Options Scalper Engine started ✅ 🚀")
+            # V9.4: ITM Precision Entry Engine
+            start_pe_engine()
+            logger.info("V9.4 ITM Precision Entry Engine started ✅ 🎯")
+        # V12.0: Strategy A — True Pyramid (DISABLED — WR=33%, P&L=-$831)
+        if PYRAMID_AUTO_ENABLED:
+            try:
+                from options_scalper import start_pyramid_auto
+                result = start_pyramid_auto()
+                logger.info(f"V12.0 Pyramid Auto started ✅ 🦋 result={result}")
+            except Exception as _pyr_err:
+                logger.error(f"Pyramid Auto FAILED to start: {_pyr_err}", exc_info=True)
+        # V11.1: Strategy B — VWAP Bounce 15M
+        try:
+            from options_scalper import start_strategy_b
+            result = start_strategy_b()
+            logger.info(f"V11.1 Strategy B (VWAP Bounce 15M) started ✅ 🎯 result={result}")
+        except Exception as _stb_err:
+            logger.error(f"Strategy B FAILED to start: {_stb_err}", exc_info=True)
+        # V11.2: Strategy C — Opening Range Breakout
+        try:
+            from options_scalper import start_strategy_c
+            result = start_strategy_c()
+            logger.info(f"V11.2 Strategy C (ORB) started ✅ 📈 result={result}")
+        except Exception as _stc_err:
+            logger.error(f"Strategy C FAILED to start: {_stc_err}", exc_info=True)
     else:
-        logger.info("[V12.0 Pyramid Auto] DISABLED — PYRAMID_AUTO_ENABLED=False ⛔")
-    # V11.1: Strategy B — VWAP Bounce 15M
-    try:
-        from options_scalper import start_strategy_b
-        result = start_strategy_b()
-        logger.info(f"V11.1 Strategy B (VWAP Bounce 15M) started ✅ 🎯 result={result}")
-    except Exception as _stb_err:
-        logger.error(f"Strategy B FAILED to start: {_stb_err}", exc_info=True)
-    # V11.2: Strategy C — Opening Range Breakout
-    try:
-        from options_scalper import start_strategy_c
-        result = start_strategy_c()
-        logger.info(f"V11.2 Strategy C (ORB) started ✅ 📈 result={result}")
-    except Exception as _stc_err:
-        logger.error(f"Strategy C FAILED to start: {_stc_err}", exc_info=True)
+        logger.warning("[Safety] Autonomous Alpaca order engines are disabled (AUTO_ORDER_EXECUTION_ENABLED=false).")
     # V10.3: Market Briefing — رسالة تلقرام كل 15 دقيقة
     threading.Thread(target=_market_briefing_worker, daemon=True).start()
     logger.info("Market Briefing worker started ✅ 📊")
@@ -3289,6 +3294,8 @@ def _start_background_threads():
 @app.before_request
 def _ensure_strategies_alive():
     """يتحقق من حالة الاستراتيجيات ويُعيد تشغيلها إذا ماتت (بعد نوم Render)"""
+    if not AUTO_ORDER_EXECUTION_ENABLED:
+        return
     try:
         from options_scalper import (
             get_pyramid_status, start_pyramid_auto,

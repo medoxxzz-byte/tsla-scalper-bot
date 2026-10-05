@@ -463,14 +463,27 @@ def stop_extended_paper_engine() -> Dict[str, Any]:
     return {"ok": True, "status": "stopping"}
 
 
+def extended_paper_engine_alive() -> bool:
+    """Return worker-thread liveness, not merely a copied state flag.
+
+    Gunicorn's preload mode can fork a worker after a parent has set
+    ``_engine_state['running']``. Threads do not survive that fork, so the
+    state flag alone must never be presented as proof that monitoring runs.
+    """
+    return bool(_engine_thread and _engine_thread.is_alive())
+
+
 def get_extended_paper_status() -> Dict[str, Any]:
     latest = _store.latest_trade() if _store.configured else None
+    thread_alive = extended_paper_engine_alive()
     status = {
         "ok": True,
         "decision_version": DECISION_VERSION,
         "paper_only": _paper_endpoint_ok(),
         "enabled": EXTENDED_PAPER_TRADE_ENABLED,
-        "running": bool(_engine_state["running"]),
+        "running": thread_alive,
+        "state_running": bool(_engine_state["running"]),
+        "thread_alive": thread_alive,
         "last_check_at": _engine_state["last_check_at"],
         "last_decision": _engine_state["last_decision"],
         "last_reason": _engine_state["last_reason"],

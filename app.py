@@ -3320,6 +3320,19 @@ def _start_background_threads():
 @app.before_request
 def _ensure_strategies_alive():
     """يتحقق من حالة الاستراتيجيات ويُعيد تشغيلها إذا ماتت (بعد نوم Render)"""
+    # The extended Paper experiment is independent from legacy automatic
+    # engines.  Its worker must be alive even when those legacy engines remain
+    # deliberately disabled.  ``start_extended_paper_engine`` is idempotent,
+    # so this also repairs a worker that was forked after a Gunicorn preload or
+    # lost during a Render sleep/wake cycle.
+    if _EXTENDED_PAPER_AVAILABLE:
+        try:
+            start_extended_paper_engine()
+        except Exception as _extended_restart_error:
+            logger.error(
+                f"[ExtendedPaper] Request-time worker restart failed: {_extended_restart_error}",
+                exc_info=True,
+            )
     if not AUTO_ORDER_EXECUTION_ENABLED:
         return
     try:

@@ -1236,10 +1236,14 @@
       else decisionEl.textContent = '⚪ لا صفقة ممتدة';
       decisionEl.className = 'pnl-number ' + (isCall ? 'positive' : isPut ? 'negative' : 'neutral');
     }
-    setText('extendedReason', data.last_error || data.last_reason || '—');
+    const workerStale = data.thread_alive === false && data.state_running === true;
+    setText('extendedReason', workerStale
+      ? 'المحرك يحمل حالة قديمة بلا خيط فحص حي؛ لن يفتح صفقة حتى يعود الفحص فعلياً.'
+      : (data.last_error || data.last_reason || '—'));
 
     if (badge) {
       if (!data.paper_only) { badge.textContent = 'حماية Paper'; badge.className = 'badge badge-red'; }
+      else if (workerStale) { badge.textContent = '⚠️ فحص متوقف'; badge.className = 'badge badge-red'; }
       else if (isOpen) { badge.textContent = '🟡 متابعة مفتوحة'; badge.className = 'badge badge-yellow'; }
       else if (data.running) { badge.textContent = '🟢 فحص مستقل'; badge.className = 'badge badge-green'; }
       else { badge.textContent = '⏸️ متوقف'; badge.className = 'badge badge-gray'; }

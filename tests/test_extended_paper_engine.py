@@ -79,5 +79,31 @@ class ExtendedPaperExecutionTests(unittest.TestCase):
         self.assertEqual(engine._client_order_id(datetime(2026, 9, 30).date()), "tm-extended-20260930")
 
 
+class ExtendedPaperLivenessTests(unittest.TestCase):
+    def test_status_does_not_claim_running_from_state_flag_alone(self):
+        old_thread = engine._engine_thread
+        old_running = engine._engine_state["running"]
+        old_store = engine._store
+        class StatusStore:
+            configured = True
+
+            @staticmethod
+            def latest_trade():
+                return None
+        try:
+            engine._engine_thread = None
+            engine._engine_state["running"] = True
+            engine._store = StatusStore()
+            with patch.object(engine, "_paper_endpoint_ok", return_value=True):
+                status = engine.get_extended_paper_status()
+            self.assertFalse(status["running"])
+            self.assertTrue(status["state_running"])
+            self.assertFalse(status["thread_alive"])
+        finally:
+            engine._engine_thread = old_thread
+            engine._engine_state["running"] = old_running
+            engine._store = old_store
+
+
 if __name__ == "__main__":
     unittest.main()

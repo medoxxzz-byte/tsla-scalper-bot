@@ -61,6 +61,16 @@ class PhaseBPineTrackingContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, V17)
 
+    def test_v17_never_reads_a_tracker_after_session_close_removal(self):
+        tracking = V17[V17.index("// ── Phase B:"):V17.index("// ── Visuals")]
+        close_remove = tracking.index('f_removeTracking(index)', tracking.index('if atRegularSessionClose'))
+        post10 = tracking.index('else if elapsedMs == 10 * 60 * 1000')
+        post15 = tracking.index('else if elapsedMs == 15 * 60 * 1000')
+        self.assertGreater(post10, close_remove)
+        self.assertGreater(post15, post10)
+        self.assertNotIn('\n        if elapsedMs == 10 * 60 * 1000', tracking)
+        self.assertNotIn('\n        if elapsedMs == 15 * 60 * 1000', tracking)
+
     def test_tracking_payloads_include_full_parent_identity_and_ohlcv(self):
         required_fields = (
             '"parent_schema_version":"event-v2"',

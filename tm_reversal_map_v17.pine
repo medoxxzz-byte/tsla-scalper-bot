@@ -272,10 +272,12 @@ if barstate.isconfirmed and array.size(trackActions) > 0
         else if elapsedMs == 5 * 60 * 1000 and not array.get(trackPost5Sent, index)
             array.set(trackPost5Sent, index, true)
             alert(f_trackingPayload(index, "post_5m"), alert.freq_all)
-        if elapsedMs == 10 * 60 * 1000 and not array.get(trackPost10Sent, index)
+        // Keep all following checks in one chain.  A close_1600 event removes
+        // this index, so no array access may follow that removal on this bar.
+        else if elapsedMs == 10 * 60 * 1000 and not array.get(trackPost10Sent, index)
             array.set(trackPost10Sent, index, true)
             alert(f_trackingPayload(index, "post_10m"), alert.freq_all)
-        if elapsedMs == 15 * 60 * 1000 and not array.get(trackPost15Sent, index)
+        else if elapsedMs == 15 * 60 * 1000 and not array.get(trackPost15Sent, index)
             array.set(trackPost15Sent, index, true)
             alert(f_trackingPayload(index, "post_15m"), alert.freq_all)
             f_removeTracking(index)

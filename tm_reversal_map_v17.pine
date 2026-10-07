@@ -224,6 +224,11 @@ f_emitEvent(_action) =>
     alert(f_mapPayload(_action), alert.freq_once_per_bar_close)
     f_startTracking(_action)
 
+// Compatibility-only placeholder: it makes V17 appear consistently in the
+// TradingView Condition list.  It is permanently false and must not be
+// selected as the alert trigger; choose "Any alert() function call" instead.
+alertcondition(false, title="TM V17 Phase B — اختر Any alert() function call", message="Placeholder only. Select Any alert() function call.")
+
 // ── Scheduled maps: only four per day ─────────────────────────────────────────
 if barstate.isconfirmed and mapPreopenBar
     f_emitEvent("MAP_PREOPEN")

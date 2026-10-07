@@ -21,6 +21,12 @@ class PhaseBPineTrackingContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, V17)
 
+    def test_v17_exposes_a_tradingview_alert_menu_entry(self):
+        self.assertIn(
+            'alertcondition(false, title="TM V17 Phase B — اختر Any alert() function call"',
+            V17,
+        )
+
     def test_v18_has_exact_3_6_12_minute_tracking_points(self):
         for marker in (
             '"tracking_version":"tracking-v1"',

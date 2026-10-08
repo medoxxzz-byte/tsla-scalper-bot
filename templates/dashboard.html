@@ -277,6 +277,24 @@
     }
     .gauge-meta-item strong { color: var(--text); }
 
+    /* ── M5 Context Decision ────────────────────────────────────────── */
+    .m5-context {
+      margin-top: 14px;
+      padding: 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .m5-context.call { border-color: var(--green); background: var(--green-dim); }
+    .m5-context.put { border-color: var(--red); background: var(--red-dim); }
+    .m5-context.neutral { border-color: var(--yellow); background: var(--yellow-dim); }
+    .m5-context-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .m5-context-title { font-size:13px; font-weight:800; }
+    .m5-context-score { font-size:12px; font-weight:800; color:var(--blue); }
+    .m5-context-summary { margin-top:5px; color:var(--text-muted); font-size:11px; line-height:1.55; }
+    .m5-context-missing { margin-top:6px; color:var(--text-muted); font-size:10px; }
+    .m5-context-missing b { color:var(--text); }
+
     /* ── Reversal Zones Table ───────────────────────────────────────── */
     .zones-table {
       width: 100%;
@@ -593,7 +611,7 @@
             <div class="gauge-label">زخم MOM(12)<span>[Speed vs ATR]</span></div>
           </div>
 
-          <!-- Per Trade Gauge -->
+          <!-- M5 Context Gauge: transparent agreement score, not an expected return -->
           <div class="gauge-small-wrap">
             <svg class="gauge-svg" width="110" height="65" viewBox="0 0 110 65">
               <path d="M 10 58 A 45 45 0 0 1 100 58" fill="none" stroke="#1c2230" stroke-width="12" stroke-linecap="round"/>
@@ -604,7 +622,7 @@
               <circle cx="55" cy="58" r="4" fill="#e2e8f0"/>
             </svg>
             <div class="gauge-value" id="ptGaugeVal" style="color:var(--text-muted)">—</div>
-            <div class="gauge-label">عداد لكل صفقة<span>[Per Trade Gauge]</span></div>
+            <div class="gauge-label">اتساق الاتجاه M5<span>[M5 Context]</span></div>
           </div>
         </div>
       </div>
@@ -617,6 +635,14 @@
         <div class="gauge-meta-item">Vol Ratio: <strong id="metaVol">—</strong></div>
         <div class="gauge-meta-item">EMA9: <strong id="metaEma">—</strong></div>
         <div class="gauge-meta-item">Price: <strong id="metaPrice">—</strong></div>
+      </div>
+      <div class="m5-context neutral" id="m5Context">
+        <div class="m5-context-head">
+          <span class="m5-context-title" id="m5ContextTitle">سياق M5 — جاري التحميل</span>
+          <span class="m5-context-score" id="m5ContextScore">— / 7</span>
+        </div>
+        <div class="m5-context-summary" id="m5ContextSummary">نراجع الاتجاه والسرعة والسيولة قبل عرض القراءة.</div>
+        <div class="m5-context-missing" id="m5ContextMissing"></div>
       </div>
     </div>
   </div>
@@ -1042,12 +1068,15 @@
       return;
     }
 
-    const call = data.call_potential || 50;
-    const put  = data.put_potential  || 50;
-    const obv  = data.obv_gauge      || 50;
-    const vol  = data.vol_reversal   || 50;
-    const mom  = data.mom_gauge      || 50;
-    const pt   = data.per_trade      || 50;
+    // A valid 0 is meaningful for a gauge. Do not turn it into a false 50.
+    const numberOr = (value, fallback) => Number.isFinite(value) ? value : fallback;
+    const call = numberOr(data.call_potential, 50);
+    const put  = numberOr(data.put_potential, 50);
+    const obv  = numberOr(data.obv_gauge, 50);
+    const vol  = numberOr(data.vol_reversal, 50);
+    const mom  = numberOr(data.mom_gauge, 50);
+    const context = data.m5_context || {};
+    const pt = numberOr(context.gauge, 0);
     const dir  = data.direction      || 'NEUTRAL';
 
     // عداد كبير
@@ -1082,7 +1111,7 @@
     el('volGaugeVal').style.color = vol >= 60 ? 'var(--green)' : vol <= 40 ? 'var(--red)' : 'var(--yellow)';
     el('momGaugeVal').textContent = mom + '%';
     el('momGaugeVal').style.color = mom >= 60 ? 'var(--green)' : mom <= 40 ? 'var(--red)' : 'var(--yellow)';
-    el('ptGaugeVal').textContent = pt + '%';
+    el('ptGaugeVal').textContent = Number.isFinite(context.score) ? context.score + '/' + (context.max_score || 7) : '—';
     el('ptGaugeVal').style.color = pt >= 60 ? 'var(--green)' : pt <= 40 ? 'var(--red)' : 'var(--yellow)';
 
     // Meta info
@@ -1092,6 +1121,22 @@
     setText('metaVol',   data.vol_ratio !== undefined ? data.vol_ratio + '×' : '—');
     setText('metaEma',   data.ema9  !== null ? fmtPrice(data.ema9) : '—');
     setText('metaPrice', data.price !== null ? fmtPrice(data.price) : '—');
+
+    // Transparent M5 dashboard classification. It is explanatory only: the
+    // price location and the closing 5-minute candle remain separate checks.
+    const contextBox = el('m5Context');
+    const contextDir = context.direction || 'NEUTRAL';
+    if (contextBox) {
+      contextBox.className = 'm5-context ' + (contextDir === 'CALL' ? 'call' : contextDir === 'PUT' ? 'put' : 'neutral');
+    }
+    setText('m5ContextTitle', context.status || 'لا قرار');
+    setText('m5ContextScore', Number.isFinite(context.score) ? context.score + '/' + (context.max_score || 7) : '— / 7');
+    setText('m5ContextSummary', context.summary || 'لا توجد قراءة سياق مكتملة بعد.');
+    const missingEl = el('m5ContextMissing');
+    if (missingEl) {
+      const missing = Array.isArray(context.missing) ? context.missing : [];
+      missingEl.textContent = missing.length ? 'ينقصه: ' + missing.join(' • ') : 'العناصر السبعة متوافقة؛ تحقق من المكان وإغلاق 5د.';
+    }
   }
 
   // ── Zones Table Rendering ────────────────────────────────────────

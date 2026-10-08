@@ -40,6 +40,7 @@ import app_v17_update
 import app_v18_experiments  # تجارب الدقيقة وإغلاق السوق؛ منفصلة عن V17
 from event_store import ResearchEventStore
 from outcome_store import ResearchOutcomeStore
+from m5_context import build_m5_context
 
 try:
     from extended_paper_engine import (
@@ -3472,7 +3473,8 @@ def api_volume_levels():
 def api_reversal_gauges():
     """
     V15.0: عدادات الانعكاس على فريم 5M.
-    يُرجع: CALL/PUT Potential (0-100)، OBV Slope، Volume Reversal، Per Trade Gauge
+    يُرجع: CALL/PUT Potential (0-100)، OBV Slope، Volume Reversal،
+    MOM(12)، وسياق M5 تفسيري للـDashboard فقط.
     """
     try:
         from options_scalper import get_tsla_bars as _get_bars, _rw_rsi, _rw_ema, _rw_obv, _rw_macd_hist
@@ -3486,7 +3488,13 @@ def api_reversal_gauges():
                 "ok": True,
                 "call_potential": 50, "put_potential": 50,
                 "obv_gauge": 50, "vol_reversal": 50, "mom_gauge": 50, "per_trade": 50,
-                "direction": "NEUTRAL", "rsi": None, "macd_hist": None
+                "direction": "NEUTRAL", "rsi": None, "macd_hist": None,
+                "m5_context": build_m5_context(
+                    call_potential=50, put_potential=50,
+                    price=None, ema9=None, momentum_atr=None,
+                    obv_slope=None, vol_ratio=None, vol_reversal=None, rsi=None,
+                    macd_curr=None, macd_prev=None,
+                ),
             })
 
         closes  = [float(b["c"]) for b in bars]
@@ -3566,7 +3574,8 @@ def api_reversal_gauges():
         momentum_atr = momentum / atr14 if atr14 > 0 else 0.0
         mom_gauge = min(100, max(0, int(round(50 + momentum_atr * 20))))
 
-        # ── Per Trade Gauge (0-100) — نسبة الربح المتوقع ──────────────
+        # Legacy compatibility only. The Dashboard displays the transparent
+        # m5_context score instead, so a high number is never mistaken for CALL.
         per_trade = int(call_score) if call_score >= 50 else int(put_score)
 
         # ── الاتجاه العام ─────────────────────────────────────────────
@@ -3577,6 +3586,20 @@ def api_reversal_gauges():
         else:
             direction = "NEUTRAL"
 
+        m5_context = build_m5_context(
+            call_potential=call_score,
+            put_potential=put_score,
+            price=price,
+            ema9=ema9,
+            momentum_atr=momentum_atr,
+            obv_slope=obv_slope,
+            vol_ratio=vol_ratio,
+            vol_reversal=vol_gauge,
+            rsi=rsi,
+            macd_curr=macd_curr,
+            macd_prev=macd_prev,
+        )
+
         return jsonify({
             "ok": True,
             "call_potential": round(call_score),
@@ -3585,6 +3608,7 @@ def api_reversal_gauges():
             "vol_reversal":   vol_gauge,
             "mom_gauge":      mom_gauge,
             "per_trade":      per_trade,
+            "m5_context":     m5_context,
             "direction":      direction,
             "rsi":            round(rsi, 1) if rsi else None,
             "macd_hist":      round(macd_curr, 4) if macd_curr else None,

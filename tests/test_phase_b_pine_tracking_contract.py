@@ -40,11 +40,17 @@ class PhaseBPineTrackingContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, V18)
 
+    def test_v18_exposes_a_tradingview_alert_menu_entry(self):
+        self.assertIn(
+            'alertcondition(false, title="TM V18 Phase B — اختر Any alert() function call"',
+            V18,
+        )
+
     def test_v18_closing_experiment_censors_at_regular_session_close(self):
         for marker in (
             'closingParent = str.startswith(array.get(trackActions, index), "CLOSE_")',
             "atRegularSessionClose = nyHour == 15 and nyMin == 59",
-            "finalDueAt = array.get(trackCloseTimes, index) + 12 * 60 * 1000",
+            "finalDueAt = parentClose + 12 * 60 * 1000",
             "needsSessionCensor = time_close <= finalDueAt",
             'alert(f_trackingPayload(index, "close_1600")',
             "if closingParent and atRegularSessionClose and needsSessionCensor",
@@ -54,7 +60,7 @@ class PhaseBPineTrackingContractTests(unittest.TestCase):
     def test_v17_late_zone_tracking_censors_at_regular_session_close(self):
         for marker in (
             "atRegularSessionClose = nyHour == 15 and nyMin == 55",
-            "finalDueAt = array.get(trackCloseTimes, index) + 15 * 60 * 1000",
+            "finalDueAt = parentClose + 15 * 60 * 1000",
             "needsSessionCensor = time_close <= finalDueAt",
             'alert(f_trackingPayload(index, "close_1600")',
             "if atRegularSessionClose and needsSessionCensor",
@@ -70,6 +76,16 @@ class PhaseBPineTrackingContractTests(unittest.TestCase):
         self.assertGreater(post15, post10)
         self.assertNotIn('\n        if elapsedMs == 10 * 60 * 1000', tracking)
         self.assertNotIn('\n        if elapsedMs == 15 * 60 * 1000', tracking)
+
+    def test_post_event_ranges_exclude_each_parent_signal_candle(self):
+        for source in (V17, V18):
+            tracking = source[source.index("// ── Phase B:"):source.index("// ── Visuals")]
+            self.assertIn("parentClose = array.get(trackCloseTimes, index)", tracking)
+            self.assertIn("time_close > parentClose", tracking)
+            self.assertLess(
+                tracking.index("time_close > parentClose"),
+                tracking.index("cumulativeHigh = math.max")
+            )
 
     def test_tracking_payloads_include_full_parent_identity_and_ohlcv(self):
         required_fields = (

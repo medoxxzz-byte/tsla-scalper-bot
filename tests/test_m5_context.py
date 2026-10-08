@@ -1,6 +1,6 @@
 import unittest
 
-from m5_context import build_m5_context
+from m5_context import build_m5_context, build_m5_context_v2, normalized_obv_gauge
 
 
 class M5ContextTests(unittest.TestCase):
@@ -80,6 +80,31 @@ class M5ContextTests(unittest.TestCase):
         self.assertEqual(context["score"], 1)
         self.assertIn("EMA9", context["missing"])
         self.assertIn("MACD", context["missing"])
+
+    def test_v2_obv_normalization_avoids_false_all_or_nothing_extremes(self):
+        # Constant five-bar positive slopes are normal, not a 100% extreme.
+        up_obv = [100 * index for index in range(30)]
+        down_obv = [-100 * index for index in range(30)]
+        self.assertEqual(normalized_obv_gauge(up_obv), 74)
+        self.assertEqual(normalized_obv_gauge(down_obv), 26)
+
+    def test_v2_uses_normalized_obv_thresholds_for_directional_context(self):
+        context = build_m5_context_v2(
+            call_potential=20,
+            put_potential=80,
+            price=376.27,
+            ema9=376.58,
+            momentum_atr=-1.0,
+            obv_gauge_v2=35,
+            vol_ratio=1.0,
+            vol_reversal=55,
+            rsi=45.0,
+            macd_curr=-0.15,
+            macd_prev=-0.05,
+        )
+        self.assertEqual(context["direction"], "PUT")
+        self.assertEqual(context["score"], 7)
+        self.assertEqual(context["status"], "سياق PUT متوافق")
 
 
 if __name__ == "__main__":

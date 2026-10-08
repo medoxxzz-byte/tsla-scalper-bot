@@ -40,7 +40,7 @@ import app_v17_update
 import app_v18_experiments  # تجارب الدقيقة وإغلاق السوق؛ منفصلة عن V17
 from event_store import ResearchEventStore
 from outcome_store import ResearchOutcomeStore
-from m5_context import build_m5_context
+from m5_context import build_m5_context, build_m5_context_v2, normalized_obv_gauge
 
 try:
     from extended_paper_engine import (
@@ -3495,6 +3495,13 @@ def api_reversal_gauges():
                     obv_slope=None, vol_ratio=None, vol_reversal=None, rsi=None,
                     macd_curr=None, macd_prev=None,
                 ),
+                "obv_gauge_v2": 50,
+                "m5_context_v2": build_m5_context_v2(
+                    call_potential=50, put_potential=50,
+                    price=None, ema9=None, momentum_atr=None,
+                    obv_gauge_v2=50, vol_ratio=None, vol_reversal=None, rsi=None,
+                    macd_curr=None, macd_prev=None,
+                ),
             })
 
         closes  = [float(b["c"]) for b in bars]
@@ -3556,6 +3563,9 @@ def api_reversal_gauges():
         # ── OBV Gauge (0-100) ─────────────────────────────────────────
         obv_max = max(abs(obv_slope), 1)
         obv_gauge = min(100, max(0, int(50 + (obv_slope / obv_max) * 50)))
+        # V2 experimental reading: normalize the current OBV slope against
+        # recent slopes so the gauge does not jump straight to 0/100.
+        obv_gauge_v2 = normalized_obv_gauge(obv_list, lookback=20, slope_span=5)
 
         # ── Volume Reversal Gauge (0-100) ─────────────────────────────
         vol_gauge = min(100, max(0, int(min(vol_ratio, 3.0) / 3.0 * 100)))
@@ -3599,16 +3609,31 @@ def api_reversal_gauges():
             macd_curr=macd_curr,
             macd_prev=macd_prev,
         )
+        m5_context_v2 = build_m5_context_v2(
+            call_potential=call_score,
+            put_potential=put_score,
+            price=price,
+            ema9=ema9,
+            momentum_atr=momentum_atr,
+            obv_gauge_v2=obv_gauge_v2,
+            vol_ratio=vol_ratio,
+            vol_reversal=vol_gauge,
+            rsi=rsi,
+            macd_curr=macd_curr,
+            macd_prev=macd_prev,
+        )
 
         return jsonify({
             "ok": True,
             "call_potential": round(call_score),
             "put_potential":  round(put_score),
             "obv_gauge":      obv_gauge,
+            "obv_gauge_v2":   obv_gauge_v2,
             "vol_reversal":   vol_gauge,
             "mom_gauge":      mom_gauge,
             "per_trade":      per_trade,
             "m5_context":     m5_context,
+            "m5_context_v2":  m5_context_v2,
             "direction":      direction,
             "rsi":            round(rsi, 1) if rsi else None,
             "macd_hist":      round(macd_curr, 4) if macd_curr else None,

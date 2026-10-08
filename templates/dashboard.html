@@ -579,18 +579,18 @@
             <div class="gauge-label">حجم انعكاس<span>[Volume Reversal]</span></div>
           </div>
 
-          <!-- Volume Reversal 2 (per trade) -->
+          <!-- MOM(12) normalised by ATR: speed + direction, not volume again -->
           <div class="gauge-small-wrap">
             <svg class="gauge-svg" width="110" height="65" viewBox="0 0 110 65">
               <path d="M 10 58 A 45 45 0 0 1 100 58" fill="none" stroke="#1c2230" stroke-width="12" stroke-linecap="round"/>
               <path d="M 10 58 A 45 45 0 0 1 55 13"  fill="none" stroke="#ff4444" stroke-width="12" stroke-linecap="round" opacity="0.4"/>
               <path d="M 55 13 A 45 45 0 0 1 100 58" fill="none" stroke="#00e676" stroke-width="12" stroke-linecap="round" opacity="0.4"/>
-              <line id="vol2_needle" x1="55" y1="58" x2="55" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"
+              <line id="mom_needle" x1="55" y1="58" x2="55" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"
                     transform="rotate(0 55 58)" style="transition: transform 0.8s ease;"/>
               <circle cx="55" cy="58" r="4" fill="#e2e8f0"/>
             </svg>
-            <div class="gauge-value" id="vol2GaugeVal" style="color:var(--text-muted)">—</div>
-            <div class="gauge-label">حجم انعكاس<span>[Volume Reversal]</span></div>
+            <div class="gauge-value" id="momGaugeVal" style="color:var(--text-muted)">—</div>
+            <div class="gauge-label">زخم MOM(12)<span>[Speed vs ATR]</span></div>
           </div>
 
           <!-- Per Trade Gauge -->
@@ -1046,6 +1046,7 @@
     const put  = data.put_potential  || 50;
     const obv  = data.obv_gauge      || 50;
     const vol  = data.vol_reversal   || 50;
+    const mom  = data.mom_gauge      || 50;
     const pt   = data.per_trade      || 50;
     const dir  = data.direction      || 'NEUTRAL';
 
@@ -1071,7 +1072,7 @@
     // عدادات صغيرة
     setSmallNeedle('obv_needle', obv);
     setSmallNeedle('vol_needle', vol);
-    setSmallNeedle('vol2_needle', vol);
+    setSmallNeedle('mom_needle', mom);
     setSmallNeedle('pt_needle', pt);
 
     // قيم العدادات الصغيرة
@@ -1079,8 +1080,8 @@
     el('obvGaugeVal').style.color = obv >= 60 ? 'var(--green)' : obv <= 40 ? 'var(--red)' : 'var(--yellow)';
     el('volGaugeVal').textContent = vol + '%';
     el('volGaugeVal').style.color = vol >= 60 ? 'var(--green)' : vol <= 40 ? 'var(--red)' : 'var(--yellow)';
-    el('vol2GaugeVal').textContent = vol + '%';
-    el('vol2GaugeVal').style.color = vol >= 60 ? 'var(--green)' : vol <= 40 ? 'var(--red)' : 'var(--yellow)';
+    el('momGaugeVal').textContent = mom + '%';
+    el('momGaugeVal').style.color = mom >= 60 ? 'var(--green)' : mom <= 40 ? 'var(--red)' : 'var(--yellow)';
     el('ptGaugeVal').textContent = pt + '%';
     el('ptGaugeVal').style.color = pt >= 60 ? 'var(--green)' : pt <= 40 ? 'var(--red)' : 'var(--yellow)';
 

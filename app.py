@@ -3485,12 +3485,14 @@ def api_reversal_gauges():
             return jsonify({
                 "ok": True,
                 "call_potential": 50, "put_potential": 50,
-                "obv_gauge": 50, "vol_reversal": 50, "per_trade": 50,
+                "obv_gauge": 50, "vol_reversal": 50, "mom_gauge": 50, "per_trade": 50,
                 "direction": "NEUTRAL", "rsi": None, "macd_hist": None
             })
 
         closes  = [float(b["c"]) for b in bars]
         volumes = [int(b["v"]) for b in bars]
+        highs   = [float(b.get("h", b["c"])) for b in bars]
+        lows    = [float(b.get("l", b["c"])) for b in bars]
 
         # RSI
         rsi = _rw_rsi(closes, 14)
@@ -3550,6 +3552,20 @@ def api_reversal_gauges():
         # ── Volume Reversal Gauge (0-100) ─────────────────────────────
         vol_gauge = min(100, max(0, int(min(vol_ratio, 3.0) / 3.0 * 100)))
 
+        # ── MOM(12) Gauge (0-100), normalised by recent ATR ───────────
+        # This deliberately measures speed and direction rather than repeating
+        # the volume-ratio gauge.  50 is neutral; ±2.5 ATR maps to 0/100.
+        mom_period = 12
+        momentum = price - closes[-1 - mom_period]
+        true_ranges = [
+            max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+            for i in range(1, len(closes))
+        ]
+        atr_window = true_ranges[-14:]
+        atr14 = sum(atr_window) / len(atr_window) if atr_window else 0.0
+        momentum_atr = momentum / atr14 if atr14 > 0 else 0.0
+        mom_gauge = min(100, max(0, int(round(50 + momentum_atr * 20))))
+
         # ── Per Trade Gauge (0-100) — نسبة الربح المتوقع ──────────────
         per_trade = int(call_score) if call_score >= 50 else int(put_score)
 
@@ -3567,12 +3583,15 @@ def api_reversal_gauges():
             "put_potential":  round(put_score),
             "obv_gauge":      obv_gauge,
             "vol_reversal":   vol_gauge,
+            "mom_gauge":      mom_gauge,
             "per_trade":      per_trade,
             "direction":      direction,
             "rsi":            round(rsi, 1) if rsi else None,
             "macd_hist":      round(macd_curr, 4) if macd_curr else None,
             "obv_slope":      round(obv_slope),
             "vol_ratio":      round(vol_ratio, 2),
+            "momentum":       round(momentum, 4),
+            "momentum_atr":   round(momentum_atr, 3),
             "ema9":           round(ema9, 2) if ema9 else None,
             "price":          round(price, 2)
         })

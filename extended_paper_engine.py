@@ -33,10 +33,11 @@ from options_scalper import (
 
 LOGGER = logging.getLogger(__name__)
 
-# The dedicated Paper-only engine is an approved research feature.  A deployment
-# can still disable it without a code change, but the default preserves the user
-# approved Paper experiment after a normal Render restart.
-EXTENDED_PAPER_TRADE_ENABLED = os.environ.get("EXTENDED_PAPER_TRADE_ENABLED", "true").strip().lower() in {"1", "true", "yes"}
+# The extended Paper experiment is deliberately opt-in.  Keeping it disabled by
+# default prevents a non-core experiment from competing with Dashboard requests
+# on a single-worker Render service. Re-enable only through an explicit Render
+# environment variable when this experiment is resumed.
+EXTENDED_PAPER_TRADE_ENABLED = os.environ.get("EXTENDED_PAPER_TRADE_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
 CHECK_INTERVAL_SECONDS = 30
 ENTRY_START_MINUTES = 9 * 60 + 50
 ENTRY_END_MINUTES = 14 * 60 + 30
@@ -474,6 +475,25 @@ def extended_paper_engine_alive() -> bool:
 
 
 def get_extended_paper_status() -> Dict[str, Any]:
+    # Do not access Neon or market data at all when this non-core experiment is
+    # paused. The status endpoint is called by the Dashboard every refresh, so
+    # it must return immediately rather than delaying core research telemetry.
+    if not EXTENDED_PAPER_TRADE_ENABLED:
+        return {
+            "ok": True,
+            "decision_version": DECISION_VERSION,
+            "paper_only": _paper_endpoint_ok(),
+            "enabled": False,
+            "running": False,
+            "state_running": False,
+            "thread_alive": False,
+            "last_check_at": None,
+            "last_decision": "DISABLED",
+            "last_reason": "الصفقة الممتدة الورقية موقوفة مؤقتاً لحماية سرعة الـDashboard.",
+            "last_error": None,
+            "active_or_latest_trade": None,
+        }
+
     latest = _store.latest_trade() if _store.configured else None
     thread_alive = extended_paper_engine_alive()
     status = {

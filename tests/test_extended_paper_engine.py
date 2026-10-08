@@ -94,7 +94,7 @@ class ExtendedPaperLivenessTests(unittest.TestCase):
             engine._engine_thread = None
             engine._engine_state["running"] = True
             engine._store = StatusStore()
-            with patch.object(engine, "_paper_endpoint_ok", return_value=True):
+            with patch.object(engine, "_paper_endpoint_ok", return_value=True), patch.object(engine, "EXTENDED_PAPER_TRADE_ENABLED", True):
                 status = engine.get_extended_paper_status()
             self.assertFalse(status["running"])
             self.assertTrue(status["state_running"])

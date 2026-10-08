@@ -959,12 +959,17 @@
   function fmt$(n)        { if (n===null||n===undefined||isNaN(n)) return '—'; const v=parseFloat(n); return (v>=0?'+':'')+' $'+Math.abs(v).toFixed(2); }
   function fmtK(n)        { if (!n || isNaN(n)) return '—'; if (n >= 1000000) return (n/1000000).toFixed(1)+'M'; if (n >= 1000) return (n/1000).toFixed(1)+'K'; return n.toString(); }
 
-  async function fetchJSON(path) {
+  const CORE_FETCH_TIMEOUT_MS = 7000;
+
+  async function fetchJSON(path, timeoutMs = CORE_FETCH_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const r = await fetch(BASE + path, { cache: 'no-store' });
+      const r = await fetch(BASE + path, { cache: 'no-store', signal: controller.signal });
       if (!r.ok) return null;
       return await r.json();
     } catch(e) { return null; }
+    finally { window.clearTimeout(timeout); }
   }
 
   // ── Gauge Needle Rotation ────────────────────────────────────────
@@ -1380,30 +1385,36 @@
     const now = new Date().toLocaleTimeString('ar-SA');
     setText('globalLastUpdate', now);
 
-    // جلب كل البيانات بالتوازي
-    const [volData, gaugeData, zonesData, extendedData, manualData, pyrData, stbData, stcData, stdData, orbData] = await Promise.all([
+    // The core research view must not wait for optional legacy experiments.
+    const [volData, gaugeData, zonesData, manualData, orbData] = await Promise.all([
       fetchJSON('/api/volume-levels'),
       fetchJSON('/api/reversal-gauges'),
       fetchJSON('/api/reversal-zones'),
-      fetchJSON('/extended-paper/status'),
       fetchJSON('/manual/status'),
-      fetchJSON('/pyramid/status'),
-      fetchJSON('/strategy-b/status'),
-      fetchJSON('/strategy-c/status'),
-      fetchJSON('/mosquito/status'),
       fetchJSON('/orb/status'),
     ]);
 
     renderVolTable(volData);
     renderGauges(gaugeData);
     renderZones(zonesData);
-    renderExtended(extendedData);
     renderManual(manualData);
+    renderORB(orbData);
+
+    // Optional cards update afterwards. A slow or paused experiment can no
+    // longer make the complete Dashboard appear frozen.
+    const [extendedData, pyrData, stbData, stcData, stdData] = await Promise.all([
+      fetchJSON('/extended-paper/status', 2500),
+      fetchJSON('/pyramid/status'),
+      fetchJSON('/strategy-b/status'),
+      fetchJSON('/strategy-c/status'),
+      fetchJSON('/mosquito/status'),
+    ]);
+
+    renderExtended(extendedData);
     renderStrategy('pyr', pyrData);
     renderStrategy('stb', stbData);
     renderStrategy('stc', stcData);
     renderStrategy('std', stdData);
-    renderORB(orbData);
 
     // تحديث المحفظة من V8 status
     try {

@@ -64,16 +64,16 @@ invalidationText = bullPressure ? "إغلاق 1m تحت VWAP أو فقدان س�
 payload = "{\"radar\":\"pressure_v1\",\"state\":\"" + radarState +
      "\",\"symbol\":\"" + syminfo.ticker +
      "\",\"price\":" + str.tostring(close, format.mintick) +
-     "\",\"bar_time\":" + str.tostring(time) +
-     "\",\"score\":" + str.tostring(math.max(bullScore, bearScore)) +
-     "\",\"bull_score\":" + str.tostring(bullScore) +
-     "\",\"bear_score\":" + str.tostring(bearScore) +
-     "\",\"m5\":\"" + (m5Bull ? "صاعد" : m5Bear ? "هابط" : "مختلط") +
+     ",\"bar_time\":" + str.tostring(time) +
+     ",\"score\":" + str.tostring(math.max(bullScore, bearScore)) +
+     ",\"bull_score\":" + str.tostring(bullScore) +
+     ",\"bear_score\":" + str.tostring(bearScore) +
+     ",\"m5\":\"" + (m5Bull ? "صاعد" : m5Bear ? "هابط" : "مختلط") +
      "\",\"m3\":\"" + (m3BullPressure ? "ضغط صاعد" : m3BearPressure ? "ضغط هابط" : m3Compressed ? "انضغاط" : "غير مؤكد") +
      "\",\"m1\":\"" + (m1Bull ? "دفع صاعد" : m1Bear ? "دفع هابط" : "مختلط") +
      "\",\"rv3\":" + str.tostring(m3RelativeVolume, "#.##") +
-     "\",\"watch_level\":" + (na(watchLevel) ? "null" : str.tostring(watchLevel, format.mintick)) +
-     "\",\"invalidation\":\"" + invalidationText +
+     ",\"watch_level\":" + (na(watchLevel) ? "null" : str.tostring(watchLevel, format.mintick)) +
+     ",\"invalidation\":\"" + invalidationText +
      "\",\"reasons\":\"" + reasons + "\"}"
 
 // Send only meaningful state transitions. Initial WAIT is muted to avoid noise.

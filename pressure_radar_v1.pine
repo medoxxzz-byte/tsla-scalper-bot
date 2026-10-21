@@ -1,0 +1,117 @@
+//@version=6
+indicator("Pressure Radar V1 - TSLA", overlay=true, max_labels_count=50)
+
+// Pressure Radar V1: visual research/monitoring only.
+// The optional alert() below sends state transitions only; it never places orders.
+
+relVolLength = input.int(20, "Relative volume length", minval=5)
+compressionFactor = input.float(0.80, "3m compression factor", minval=0.10, maxval=1.50, step=0.05)
+minimumRelativeVolume = input.float(0.80, "Minimum relative volume", minval=0.10, step=0.05)
+showLevels = input.bool(true, "Show watch and invalidation levels")
+
+// ── 5-minute context ────────────────────────────────────────────────────────
+[m5Close, m5Vwap, m5Ema9, m5ClosePrev] = request.security(
+     syminfo.tickerid, "5",
+     [close, ta.vwap(hlc3), ta.ema(close, 9), close[1]],
+     gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+m5Bull = m5Close > m5Vwap and m5Close > m5Ema9 and m5Close > m5ClosePrev
+m5Bear = m5Close < m5Vwap and m5Close < m5Ema9 and m5Close < m5ClosePrev
+
+// ── 3-minute pressure/compression ───────────────────────────────────────────
+[m3Close, m3Vwap, m3Range, m3RangeAvg, m3Volume, m3VolumeAvg] = request.security(
+     syminfo.tickerid, "3",
+     [close, ta.vwap(hlc3), high - low, ta.sma(high - low, 20), volume, ta.sma(volume, relVolLength)],
+     gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+m3RelativeVolume = m3VolumeAvg > 0 ? m3Volume / m3VolumeAvg : na
+m3Compressed = not na(m3RangeAvg) and m3Range <= m3RangeAvg * compressionFactor
+m3Active = not na(m3RelativeVolume) and m3RelativeVolume >= minimumRelativeVolume
+m3BullPressure = m3Compressed and m3Active and m3Close > m3Vwap
+m3BearPressure = m3Compressed and m3Active and m3Close < m3Vwap
+
+// ── 1-minute aggregation ────────────────────────────────────────────────────
+[m1Close, m1Open, m1Vwap, m1Volume, m1VolumeAvg] = request.security(
+     syminfo.tickerid, "1",
+     [close, open, ta.vwap(hlc3), volume, ta.sma(volume, relVolLength)],
+     gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+m1RelativeVolume = m1VolumeAvg > 0 ? m1Volume / m1VolumeAvg : na
+m1Bull = m1Close > m1Vwap and m1Close > m1Open and m1RelativeVolume >= minimumRelativeVolume
+m1Bear = m1Close < m1Vwap and m1Close < m1Open and m1RelativeVolume >= minimumRelativeVolume
+
+// ── Radar state ──────────────────────────────────────────────────────────────
+bullScore = (m5Bull ? 1 : 0) + (m3BullPressure ? 1 : 0) + (m1Bull ? 1 : 0)
+bearScore = (m5Bear ? 1 : 0) + (m3BearPressure ? 1 : 0) + (m1Bear ? 1 : 0)
+
+bullPressure = bullScore >= 2 and bullScore > bearScore
+bearPressure = bearScore >= 2 and bearScore > bullScore
+radarState = bullPressure ? "BULL_PRESSURE" : bearPressure ? "BEAR_PRESSURE" : "WAIT"
+stateArabic = bullPressure ? "ضغط صاعد محتمل" : bearPressure ? "ضغط هابط محتمل" : "انتظار"
+
+watchLevel = bullPressure ? m1Vwap : bearPressure ? m1Vwap : na
+invalidationLevel = bullPressure ? m1Vwap : bearPressure ? m1Vwap : na
+
+reasons = bullPressure ?
+     str.format("5m={0}/3m={1}/1m={2}/RV3={3}", m5Bull ? "bull" : "mixed", m3BullPressure ? "pressure" : "mixed", m1Bull ? "bull" : "mixed", str.tostring(m3RelativeVolume, "#.##")) :
+     bearPressure ?
+     str.format("5m={0}/3m={1}/1m={2}/RV3={3}", m5Bear ? "bear" : "mixed", m3BearPressure ? "pressure" : "mixed", m1Bear ? "bear" : "mixed", str.tostring(m3RelativeVolume, "#.##")) :
+     str.format("5m={0}/3m={1}/1m={2}", m5Bull ? "bull" : m5Bear ? "bear" : "mixed", m3Compressed ? "compressed" : "not_compressed", m1Bull ? "bull" : m1Bear ? "bear" : "mixed")
+
+invalidationText = bullPressure ? "إغلاق 1m تحت VWAP أو فقدان سياق 5m" : bearPressure ? "إغلاق 1m فوق VWAP أو فقدان سياق 5m" : "ظهور توافق واضح؛ لا دخول داخل التذبذب"
+
+// Dynamic payload for the isolated Pressure Radar webhook.
+payload = "{\"radar\":\"pressure_v1\",\"state\":\"" + radarState +
+     "\",\"symbol\":\"" + syminfo.ticker +
+     "\",\"price\":" + str.tostring(close, format.mintick) +
+     "\",\"bar_time\":" + str.tostring(time) +
+     "\",\"score\":" + str.tostring(math.max(bullScore, bearScore)) +
+     "\",\"bull_score\":" + str.tostring(bullScore) +
+     "\",\"bear_score\":" + str.tostring(bearScore) +
+     "\",\"m5\":\"" + (m5Bull ? "صاعد" : m5Bear ? "هابط" : "مختلط") +
+     "\",\"m3\":\"" + (m3BullPressure ? "ضغط صاعد" : m3BearPressure ? "ضغط هابط" : m3Compressed ? "انضغاط" : "غير مؤكد") +
+     "\",\"m1\":\"" + (m1Bull ? "دفع صاعد" : m1Bear ? "دفع هابط" : "مختلط") +
+     "\",\"rv3\":" + str.tostring(m3RelativeVolume, "#.##") +
+     "\",\"watch_level\":" + (na(watchLevel) ? "null" : str.tostring(watchLevel, format.mintick)) +
+     "\",\"invalidation\":\"" + invalidationText +
+     "\",\"reasons\":\"" + reasons + "\"}"
+
+// Send only meaningful state transitions. Initial WAIT is muted to avoid noise.
+stateChanged = radarState != radarState[1]
+meaningfulTransition = barstate.isconfirmed and stateChanged and (radarState != "WAIT" or radarState[1] != "WAIT")
+if meaningfulTransition
+    alert(payload, alert.freq_once_per_bar_close)
+
+// ── Visual review ────────────────────────────────────────────────────────────
+plot(m5Vwap, "5m VWAP", color=color.new(color.orange, 0), linewidth=2)
+plot(m1Vwap, "1m VWAP", color=color.new(color.blue, 15), linewidth=1)
+
+bgcolor(bullPressure ? color.new(color.green, 88) : bearPressure ? color.new(color.red, 88) : color.new(color.gray, 94), title="Radar state")
+
+plotshape(bullPressure and not bullPressure[1], title="Bull pressure", style=shape.labelup, location=location.belowbar, color=color.green, text="ضغط صاعد", textcolor=color.white, size=size.tiny)
+plotshape(bearPressure and not bearPressure[1], title="Bear pressure", style=shape.labeldown, location=location.abovebar, color=color.red, text="ضغط هابط", textcolor=color.white, size=size.tiny)
+
+var table radarTable = table.new(position.top_right, 2, 9, border_width=1)
+if barstate.islast
+    stateColor = bullPressure ? color.green : bearPressure ? color.red : color.gray
+    table.cell(radarTable, 0, 0, "Pressure Radar V1", text_color=color.white, bgcolor=color.blue)
+    table.cell(radarTable, 1, 0, "TSLA / live", text_color=color.white, bgcolor=color.blue)
+    table.cell(radarTable, 0, 1, "الحالة")
+    table.cell(radarTable, 1, 1, stateArabic, text_color=color.white, bgcolor=stateColor)
+    table.cell(radarTable, 0, 2, "الدرجات")
+    table.cell(radarTable, 1, 2, str.format("Bull {0}/3 | Bear {1}/3", bullScore, bearScore))
+    table.cell(radarTable, 0, 3, "الأسباب")
+    table.cell(radarTable, 1, 3, reasons)
+    table.cell(radarTable, 0, 4, "5m")
+    table.cell(radarTable, 1, 4, m5Bull ? "صاعد" : m5Bear ? "هابط" : "مختلط")
+    table.cell(radarTable, 0, 5, "3m ضغط")
+    table.cell(radarTable, 1, 5, m3BullPressure ? "صاعد" : m3BearPressure ? "هابط" : m3Compressed ? "انضغاط" : "غير مؤكد")
+    table.cell(radarTable, 0, 6, "1m")
+    table.cell(radarTable, 1, 6, m1Bull ? "دفع صاعد" : m1Bear ? "دفع هابط" : "مختلط")
+    table.cell(radarTable, 0, 7, "الإلغاء")
+    table.cell(radarTable, 1, 7, invalidationText)
+    table.cell(radarTable, 0, 8, "Payload")
+    table.cell(radarTable, 1, 8, payload)
+
+plot(showLevels and bullPressure ? m1Vwap : na, "Bull watch/invalidation", color=color.new(color.green, 0), style=plot.style_linebr)
+plot(showLevels and bearPressure ? m1Vwap : na, "Bear watch/invalidation", color=color.new(color.red, 0), style=plot.style_linebr)

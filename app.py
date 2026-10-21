@@ -38,6 +38,7 @@ from datetime import datetime, timezone, timedelta
 import app_v16_update  # محفوظ للرجوع فقط؛ لا يُشغّل في V17
 import app_v17_update
 import app_v18_experiments  # تجارب الدقيقة وإغلاق السوق؛ منفصلة عن V17
+import pressure_radar_alerts
 from event_store import ResearchEventStore
 from outcome_store import ResearchOutcomeStore
 from m5_context import build_m5_context, build_m5_context_v2, normalized_obv_gauge
@@ -4828,6 +4829,14 @@ def reversal_experiments_webhook():
         research_outcome_store.reconcile_orphans(storage["event_key"])
     result = app_v18_experiments.process_v18_webhook(data, send_telegram)
     result["event_store"] = storage
+    return jsonify(result)
+
+
+@app.route('/pressure-radar/webhook', methods=['POST'])
+def pressure_radar_webhook():
+    """Independent Pressure Radar V1 webhook; does not touch V17/V18 state."""
+    data = request.get_json(silent=True) or {}
+    result = pressure_radar_alerts.process_pressure_webhook(data, send_telegram)
     return jsonify(result)
 
 @app.route('/research/events/storage_status', methods=['GET'])

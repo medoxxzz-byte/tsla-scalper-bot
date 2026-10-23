@@ -41,3 +41,25 @@ def test_failed_send_is_reported():
     result = process_pressure_webhook(payload("BEAR_PRESSURE", 2000), lambda _message: False)
     assert result["status"] == "failed"
     assert result["telegram"] == "failed"
+
+
+def test_alert_id_is_independent_from_radar_state_and_deduplicated_by_event_key():
+    reset_state_for_test()
+    sent = []
+    sender = lambda message: sent.append(message) or True
+    first_payload = payload("BULL_PRESSURE", 3000)
+    first_payload.update({
+        "alert_id": "SUPPORT_MONITOR",
+        "support_id": "support-386",
+        "event_key": "TSLA:SUPPORT_MONITOR:support-386:3000",
+    })
+    duplicate_payload = dict(first_payload, bar_time=3001)
+    duplicate_payload["event_key"] = first_payload["event_key"]
+
+    first = process_pressure_webhook(first_payload, sender)
+    duplicate = process_pressure_webhook(duplicate_payload, sender)
+
+    assert first["status"] == "processed"
+    assert duplicate["reason"] == "duplicate_alert"
+    assert len(sent) == 1
+    assert "مراقبة الدعم" in sent[0]

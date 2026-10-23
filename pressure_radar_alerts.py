@@ -75,7 +75,7 @@ def _alert_arabic(alert_id: str) -> str:
 
 
 def format_pressure_message(data: dict[str, Any]) -> str:
-    state = str(data.get("state", "WAIT")).upper()
+    state = str(data.get("state") or data.get("radar_state", "WAIT")).upper()
     symbol = str(data.get("symbol", "TSLA"))
     alert_id = str(data.get("alert_id", "")).upper()
     price = _price(data.get("price"))
@@ -124,7 +124,7 @@ def process_pressure_webhook(
 ) -> dict[str, Any]:
     """Forward one meaningful state transition and mute duplicates."""
     global _last_state, _last_event_key, _last_alert_keys
-    state = str(data.get("state", "")).upper()
+    state = str(data.get("state") or data.get("radar_state", "")).upper()
     if state not in _VALID_STATES:
         return {"status": "ignored", "reason": "unknown_state", "state": state}
 

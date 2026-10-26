@@ -39,6 +39,7 @@ import app_v16_update  # محفوظ للرجوع فقط؛ لا يُشغّل في
 import app_v17_update
 import app_v18_experiments  # تجارب الدقيقة وإغلاق السوق؛ منفصلة عن V17
 import pressure_radar_alerts
+import pressure_radar_state_machine_adapter
 from event_store import ResearchEventStore
 from outcome_store import ResearchOutcomeStore
 from m5_context import build_m5_context, build_m5_context_v2, normalized_obv_gauge
@@ -4837,6 +4838,22 @@ def pressure_radar_webhook():
     """Independent Pressure Radar V1 webhook; does not touch V17/V18 state."""
     data = request.get_json(silent=True) or {}
     result = pressure_radar_alerts.process_pressure_webhook(data, send_telegram)
+    return jsonify(result)
+
+
+@app.route('/pressure-radar-state-machine/webhook', methods=['POST'])
+def pressure_radar_state_machine_webhook():
+    """State Machine MVP webhook; adapts only its pressure events."""
+    data = request.get_json(silent=True) or {}
+    try:
+        result = pressure_radar_state_machine_adapter.process_state_machine_webhook(
+            data,
+            lambda adapted: pressure_radar_alerts.process_pressure_webhook(
+                adapted, send_telegram
+            ),
+        )
+    except ValueError as exc:
+        return jsonify({"status": "ignored", "reason": str(exc)}), 400
     return jsonify(result)
 
 @app.route('/research/events/storage_status', methods=['GET'])

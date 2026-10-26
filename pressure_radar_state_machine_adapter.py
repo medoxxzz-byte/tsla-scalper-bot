@@ -46,6 +46,8 @@ def adapt_state_machine_payload(data: dict[str, Any]) -> dict[str, Any]:
         adapted["support_level"] = adapted["active_support"]
     if adapted.get("watch_level") in (None, "") and adapted.get("support_level") not in (None, ""):
         adapted["watch_level"] = adapted["support_level"]
+    if adapted.get("price") in (None, "") and adapted.get("close") not in (None, ""):
+        adapted["price"] = adapted["close"]
 
     source_reason = {
         "PRESSURE_WAIT": "حدث ضغط: انتظار — " + str(data.get("wait_reason") or "سبب غير متاح"),

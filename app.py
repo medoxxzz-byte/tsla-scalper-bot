@@ -35,6 +35,7 @@ import time
 import logging
 import threading
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 import app_v16_update  # محفوظ للرجوع فقط؛ لا يُشغّل في V17
 import app_v17_update
 import app_v18_experiments  # تجارب الدقيقة وإغلاق السوق؛ منفصلة عن V17
@@ -97,6 +98,135 @@ _gex_cache = {
     "fetch_date": ""
 }
 _GEX_MAX_DAILY_FETCHES = 3  # حد الطلبات اليومية (من 5 المجانية)
+_NEW_YORK_TZ = ZoneInfo("America/New_York")
+_RIYADH_TZ = ZoneInfo("Asia/Riyadh")
+
+# Dashboard data-quality helpers. These annotate existing reads only; they do
+# not alter indicator calculations or trading decisions.
+_DATA_TIMEFRAME_SECONDS = {
+    "1Min": 60,
+    "3Min": 180,
+    "5Min": 300,
+    "15Min": 900,
+    "1Hour": 3600,
+}
+
+
+def _parse_data_timestamp(value):
+    """Parse an Alpaca timestamp without guessing when it is ambiguous."""
+    if not value:
+        return None
+    try:
+        text = str(value).strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            return None
+        return parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _market_session_state(now_utc):
+    """Classify regular-session availability using New York local time."""
+    now_et = now_utc.astimezone(_NEW_YORK_TZ)
+    if now_et.weekday() >= 5:
+        return "WEEKEND"
+    minutes = now_et.hour * 60 + now_et.minute
+    if 9 * 60 + 30 <= minutes < 16 * 60:
+        return "REGULAR_OPEN"
+    return "REGULAR_CLOSED"
+
+
+def _data_quality_metadata(*, source, fetched_at_utc, bar_time=None,
+                           timeframe=None, required_bars=True,
+                           session_state=None, warning=None, error=False,
+                           now_utc=None):
+    """Return explicit fetch age, bar age, closure and session metadata."""
+    fetched_at_utc = fetched_at_utc or datetime.now(timezone.utc)
+    now_utc = now_utc or datetime.now(timezone.utc)
+    bar_dt = _parse_data_timestamp(bar_time)
+    fetch_age = max(0, int((now_utc - fetched_at_utc).total_seconds()))
+    timeframe_seconds = _DATA_TIMEFRAME_SECONDS.get(timeframe)
+    bar_age = None
+    bar_closed = "unknown"
+    if bar_dt is not None:
+        bar_age = max(0, int((now_utc - bar_dt).total_seconds()))
+        if timeframe_seconds is not None:
+            bar_closed = now_utc >= bar_dt + timedelta(seconds=timeframe_seconds)
+
+    session_state = session_state or _market_session_state(now_utc)
+    if error:
+        status = "ERROR"
+    elif warning:
+        status = "INCOMPLETE"
+    elif bar_dt is None:
+        status = "UNKNOWN_TIMESTAMP"
+    elif bar_closed is False:
+        status = "INCOMPLETE"
+    elif session_state in {"REGULAR_CLOSED", "WEEKEND"}:
+        status = "SESSION_CLOSED"
+    else:
+        freshness_limit = max((timeframe_seconds or 60) * 2, 120)
+        status = "FRESH" if bar_age is not None and bar_age <= freshness_limit else "AGED"
+
+    return {
+        "source": source,
+        "fetched_at": fetched_at_utc.isoformat().replace("+00:00", "Z"),
+        "fetch_age_seconds": fetch_age,
+        "bar_time": bar_dt.isoformat().replace("+00:00", "Z") if bar_dt else None,
+        "bar_age_seconds": bar_age,
+        "bar_closed": bar_closed,
+        "market_session": session_state,
+        # No exchange-holiday calendar is currently wired into this endpoint.
+        # Regular clock/weekend rules remain explicit; holiday exceptions stay unknown.
+        "market_calendar": "UNKNOWN",
+        "market_time_et": now_utc.astimezone(_NEW_YORK_TZ).isoformat(),
+        "market_time_riyadh": now_utc.astimezone(_RIYADH_TZ).isoformat(),
+        "status": status,
+        "warning": warning,
+        "required_bars": required_bars,
+    }
+
+
+def _fetch_with_completion(fetch_fn):
+    """Run a data fetch and timestamp completion, not request start."""
+    try:
+        value = fetch_fn()
+        return value, datetime.now(timezone.utc), None
+    except Exception as exc:
+        return None, datetime.now(timezone.utc), f"{type(exc).__name__}: {exc}"
+
+
+def _fetch_primary_then_fallback(primary_fn, fallback_fn,
+                                 primary_source, fallback_source):
+    """Try the primary fetch, then fallback, preserving source and completion time."""
+    errors = []
+    if primary_fn is not None:
+        value, completed_at, error = _fetch_with_completion(primary_fn)
+        if value:
+            return value, completed_at, None, primary_source
+        if error:
+            errors.append(f"{primary_source}: {error}")
+    else:
+        errors.append(f"{primary_source}: unavailable")
+
+    if fallback_fn is not None:
+        value, completed_at, error = _fetch_with_completion(fallback_fn)
+        if value:
+            return value, completed_at, None, fallback_source
+        if error:
+            errors.append(f"{fallback_source}: {error}")
+    else:
+        errors.append(f"{fallback_source}: unavailable")
+    return [], completed_at if 'completed_at' in locals() else datetime.now(timezone.utc), \
+        "; ".join(errors), None
+
+
+def get_gex_et_now():
+    """Return the current New York time with DST handled automatically."""
+    return datetime.now(timezone.utc).astimezone(_NEW_YORK_TZ)
 
 
 def fetch_flashalpha_gex():
@@ -105,7 +235,7 @@ def fetch_flashalpha_gex():
     try:
         today = get_today()
     except:
-        today = (datetime.now(timezone.utc) - timedelta(hours=4)).strftime("%Y-%m-%d")
+        today = get_gex_et_now().strftime("%Y-%m-%d")
     
     # Reset counter for new day
     if _gex_cache["fetch_date"] != today:
@@ -219,7 +349,7 @@ def format_gex_telegram():
         regime = "غير محدد"
         regime_icon = "⚪"
     
-    now_et_str = (datetime.now(timezone.utc) - timedelta(hours=4)).strftime("%I:%M %p")
+    now_et_str = get_gex_et_now().strftime("%I:%M %p")
     
     msg = (
         f"{regime_icon} <b>خريطة GEX — TSLA</b>\n"
@@ -579,7 +709,7 @@ def check_map_alignment(price, signal_direction=None):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def get_et_now():
-    return datetime.now(timezone.utc) - timedelta(hours=4)
+    return get_gex_et_now()
 
 def get_today():
     return get_et_now().strftime("%Y-%m-%d")
@@ -2370,7 +2500,7 @@ def gex_morning_worker():
     
     while True:
         try:
-            now = get_et_now()
+            now = get_gex_et_now()
             today = now.strftime("%Y-%m-%d")
             
             # Reset flags for new day
@@ -3191,7 +3321,7 @@ def _market_briefing_worker():
     # انتظر حتى الساعة 10:00 AM ET أول رسالة
     while True:
         try:
-            now_et = datetime.now(timezone.utc) - timedelta(hours=4)
+            now_et = get_et_now()
             h, m = now_et.hour, now_et.minute
 
             # نافذة التشغيل: 10:00 AM — 3:30 PM ET
@@ -3409,23 +3539,27 @@ def api_volume_levels():
 
     def _fetch_bars(timeframe, limit):
         """جلب شمعات TSLA من Alpaca."""
-        try:
-            if _get_bars:
-                return _get_bars(timeframe, limit)
-        except Exception:
-            pass
-        try:
-            r = _retry_session.get(
+        def fetch_http_bars():
+            response = _retry_session.get(
                 "https://data.alpaca.markets/v2/stocks/TSLA/bars",
                 headers=alpaca_headers(),
                 params={"timeframe": timeframe, "limit": limit, "feed": "iex", "sort": "asc"},
                 timeout=10
             )
-            if r.status_code == 200:
-                return r.json().get("bars", [])
-        except Exception as e:
-            logger.error(f"[VolAPI] Bars error ({timeframe}): {e}")
-        return []
+            if response.status_code != 200:
+                raise RuntimeError(f"Alpaca HTTP {response.status_code}")
+            bars = response.json().get("bars", [])
+            if not bars:
+                raise RuntimeError("Alpaca returned no bars")
+            return bars
+
+        primary = (lambda: _get_bars(timeframe, limit)) if _get_bars else None
+        bars, completed_at, fetch_error, source = _fetch_primary_then_fallback(
+            primary, fetch_http_bars, "Alpaca primary", "Alpaca IEX HTTP"
+        )
+        if fetch_error:
+            logger.error(f"[VolAPI] Bars error ({timeframe}): {fetch_error}")
+        return bars, fetch_error, completed_at, source
 
     def _classify_volume(ratio):
         """تصنيف السيولة بناءً على النسبة مقارنة بالمتوسط."""
@@ -3444,20 +3578,48 @@ def api_volume_levels():
 
     def _calc_frame(timeframe, limit, lookback):
         """حساب بيانات السيولة لفريم زمني معين."""
-        bars = _fetch_bars(timeframe, limit)
+        bars, fetch_error, fetched_at, source = _fetch_bars(timeframe, limit)
+        source = source or "Alpaca IEX HTTP"
+        if fetch_error and not bars:
+            return {
+                "level": None, "label": "غير متاحة", "available": False,
+                "ratio": None, "current_vol": 0, "avg_vol": 0,
+                "data_quality": _data_quality_metadata(
+                    source=source or "Alpaca IEX HTTP", fetched_at_utc=fetched_at,
+                    timeframe=timeframe, required_bars=False,
+                    warning=fetch_error, error=True
+                )
+            }
         if not bars or len(bars) < lookback + 1:
-            return {"level": 3, "label": "متوسطة", "ratio": None, "current_vol": 0, "avg_vol": 0}
+            return {
+                "level": None, "label": "غير متاحة", "available": False, "ratio": None,
+                "current_vol": 0, "avg_vol": 0,
+                "data_quality": _data_quality_metadata(
+                    source=source, fetched_at_utc=fetched_at,
+                    timeframe=timeframe, required_bars=False,
+                    warning=f"بيانات {timeframe} غير كافية",
+                )
+            }
         volumes = [int(b["v"]) for b in bars]
         current_vol = volumes[-1]
         avg_vol = sum(volumes[-lookback-1:-1]) / lookback if lookback > 0 else current_vol
         ratio = round(current_vol / avg_vol, 2) if avg_vol > 0 else None
         level, label = _classify_volume(ratio)
+        quality_warning = None if ratio is not None else f"متوسط حجم {timeframe} يساوي صفراً"
+        if quality_warning:
+            level, label = None, "غير متاحة"
         return {
             "level": level,
             "label": label,
+            "available": ratio is not None,
             "ratio": ratio,
             "current_vol": current_vol,
-            "avg_vol": round(avg_vol)
+            "avg_vol": round(avg_vol),
+            "data_quality": _data_quality_metadata(
+                source=source, fetched_at_utc=fetched_at,
+                bar_time=bars[-1].get("t"), timeframe=timeframe,
+                required_bars=True, warning=quality_warning
+            )
         }
 
     result = {
@@ -3480,14 +3642,46 @@ def api_reversal_gauges():
     """
     try:
         from options_scalper import get_tsla_bars as _get_bars, _rw_rsi, _rw_ema, _rw_obv, _rw_macd_hist
-    except ImportError:
-        return jsonify({"ok": False, "error": "options_scalper not available"})
+    except Exception as exc:
+        fetched_at = datetime.now(timezone.utc)
+        return jsonify({
+            "ok": True,
+            "available": False,
+            "call_potential": 50, "put_potential": 50,
+            "obv_gauge": 50, "vol_reversal": 50, "mom_gauge": 50,
+            "data_quality": _data_quality_metadata(
+                source="Alpaca IEX", fetched_at_utc=fetched_at,
+                timeframe="5Min", required_bars=False,
+                warning=f"options_scalper source unavailable: {exc}", error=True
+            )
+        })
 
     try:
-        bars = _get_bars("5Min", 60)
-        if not bars or len(bars) < 30:
+        fetch_error = None
+        try:
+            bars = _get_bars("5Min", 60)
+        except Exception as exc:
+            bars = []
+            fetch_error = f"{type(exc).__name__}"
+        fetched_at = datetime.now(timezone.utc)
+        if fetch_error or not bars:
+            reason = fetch_error or "مصدر Alpaca لم يُرجع شموع 5M"
             return jsonify({
                 "ok": True,
+                "available": False,
+                "call_potential": 50, "put_potential": 50,
+                "obv_gauge": 50, "vol_reversal": 50, "mom_gauge": 50, "per_trade": 50,
+                "direction": "NEUTRAL", "rsi": None, "macd_hist": None,
+                "data_quality": _data_quality_metadata(
+                    source="Alpaca IEX", fetched_at_utc=fetched_at,
+                    timeframe="5Min", required_bars=False,
+                    warning=reason, error=True
+                ),
+            })
+        if len(bars) < 30:
+            return jsonify({
+                "ok": True,
+                "available": False,
                 "call_potential": 50, "put_potential": 50,
                 "obv_gauge": 50, "vol_reversal": 50, "mom_gauge": 50, "per_trade": 50,
                 "direction": "NEUTRAL", "rsi": None, "macd_hist": None,
@@ -3503,6 +3697,11 @@ def api_reversal_gauges():
                     price=None, ema9=None, momentum_atr=None,
                     obv_gauge_v2=50, vol_ratio=None, vol_reversal=None, rsi=None,
                     macd_curr=None, macd_prev=None,
+                ),
+                "data_quality": _data_quality_metadata(
+                    source="Alpaca IEX", fetched_at_utc=fetched_at,
+                    timeframe="5Min", required_bars=False,
+                    warning="بيانات 5M غير كافية لحساب العدادات"
                 ),
             })
 
@@ -3627,6 +3826,7 @@ def api_reversal_gauges():
 
         return jsonify({
             "ok": True,
+            "available": True,
             "call_potential": round(call_score),
             "put_potential":  round(put_score),
             "obv_gauge":      obv_gauge,
@@ -3644,7 +3844,12 @@ def api_reversal_gauges():
             "momentum":       round(momentum, 4),
             "momentum_atr":   round(momentum_atr, 3),
             "ema9":           round(ema9, 2) if ema9 else None,
-            "price":          round(price, 2)
+            "price":          round(price, 2),
+            "data_quality": _data_quality_metadata(
+                source="Alpaca IEX", fetched_at_utc=fetched_at,
+                bar_time=bars[-1].get("t"), timeframe="5Min",
+                required_bars=True
+            )
         })
 
     except Exception as e:
@@ -3691,6 +3896,7 @@ def api_reversal_zones():
             except Exception as _e:
                 logger.error(f"[ZonesAPI] Snapshot error: {_e}")
 
+        fetched_at = datetime.now(timezone.utc)
         # تحويل المستويات إلى مناطق سعرية ($2 لكل منطقة)
         zones = []
         import pytz
@@ -3742,7 +3948,15 @@ def api_reversal_zones():
             "date":       rmap.get("date", get_today()),
             "today":      today_name,
             "next_day":   next_day_name,
-            "zone_count": len(zones)
+            "zone_count": len(zones),
+            # Snapshot helper currently returns only a float, so a bar/trade
+            # timestamp cannot be claimed here. Keep it explicit for callers.
+            "data_quality": _data_quality_metadata(
+                source="Alpaca Snapshot + reversal map",
+                fetched_at_utc=fetched_at,
+                required_bars=True,
+                warning="وقت Snapshot/آخر صفقة غير متاح من الدالة الحالية"
+            )
         })
 
     except Exception as e:

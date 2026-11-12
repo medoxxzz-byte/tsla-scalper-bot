@@ -510,6 +510,7 @@
       </div>
       <div id="volBadge" class="badge badge-gray">جاري التحميل...</div>
     </div>
+    <div id="volQuality" style="padding:6px 18px 0; font-size:10px; color:var(--text-muted)">مصدر البيانات: —</div>
     <div class="card-body" style="overflow-x:auto; padding:12px 10px;">
       <table class="vol-table">
         <thead>
@@ -541,6 +542,7 @@
       </div>
       <div id="gaugeBadge" class="badge badge-gray">جاري التحميل...</div>
     </div>
+    <div id="gaugeQuality" style="padding:6px 18px 0; font-size:10px; color:var(--text-muted)">مصدر البيانات: —</div>
     <div class="card-body">
       <div class="gauges-wrapper">
         <!-- عداد كبير: CALL/PUT Potential -->
@@ -659,6 +661,7 @@
       </div>
       <div id="zonesBadge" class="badge badge-gray">جاري التحميل...</div>
     </div>
+    <div id="zonesQuality" style="padding:6px 18px 0; font-size:10px; color:var(--text-muted)">مصدر البيانات: —</div>
     <div class="card-body" style="padding:10px 0 0;">
       <div style="overflow-x:auto;">
         <table class="zones-table">
@@ -958,6 +961,21 @@
   function fmtPrice(n)    { if (!n || isNaN(n)) return '—'; return '$' + parseFloat(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}); }
   function fmt$(n)        { if (n===null||n===undefined||isNaN(n)) return '—'; const v=parseFloat(n); return (v>=0?'+':'')+' $'+Math.abs(v).toFixed(2); }
   function fmtK(n)        { if (!n || isNaN(n)) return '—'; if (n >= 1000000) return (n/1000000).toFixed(1)+'M'; if (n >= 1000) return (n/1000).toFixed(1)+'K'; return n.toString(); }
+  function qualityText(q) {
+    if (!q) return 'مصدر البيانات: غير متاح';
+    const age = q.bar_age_seconds === null || q.bar_age_seconds === undefined ? 'غير متاح' : q.bar_age_seconds + 'ث';
+    const fetchAge = q.fetch_age_seconds === null || q.fetch_age_seconds === undefined ? 'غير متاح' : q.fetch_age_seconds + 'ث';
+    const closed = q.bar_closed === true ? 'مكتملة' : q.bar_closed === false ? 'غير مكتملة' : 'غير معلوم';
+    const et = q.market_time_et ? ' | ET: ' + q.market_time_et : '';
+    const riyadh = q.market_time_riyadh ? ' | الرياض: ' + q.market_time_riyadh : '';
+    return `المصدر: ${q.source || 'غير محدد'} | الحالة: ${q.status || 'غير معلومة'} | عمر الشمعة: ${age} | عمر الجلب: ${fetchAge} | الإغلاق: ${closed}${et}${riyadh}${q.warning ? ' | ' + q.warning : ''}`;
+  }
+  function setQuality(id, q) {
+    const target = el(id);
+    if (!target) return;
+    target.textContent = qualityText(q);
+    target.style.color = q && ['FRESH','SESSION_CLOSED'].includes(q.status) ? 'var(--text-muted)' : q && q.status === 'ERROR' ? 'var(--red)' : 'var(--yellow)';
+  }
 
   const CORE_FETCH_TIMEOUT_MS = 7000;
 
@@ -988,6 +1006,12 @@
     const angle = (value / 100) * 180 - 90;
     el(needleId).setAttribute('transform', `rotate(${angle} 55 58)`);
   }
+  function setGaugeNeedlesVisible(visible) {
+    ['bigNeedle', 'obv_needle', 'vol_needle', 'mom_needle', 'pt_needle'].forEach(id => {
+      const needle = el(id);
+      if (needle) needle.style.display = visible ? '' : 'none';
+    });
+  }
 
   // ── Volume Table Rendering ───────────────────────────────────────
   const VOL_FRAMES = [
@@ -1006,12 +1030,13 @@
 
     // تحديد الـ badge بناءً على الفريم 5M
     const f5 = data['5M'] || {};
+    setQuality('volQuality', f5.data_quality);
     const badge = el('volBadge');
     if (badge && f5.label) {
-      const lvl = f5.level || 3;
+      const lvl = f5.available ? f5.level : null;
       const colors = ['','badge-red','badge-yellow','badge-yellow','badge-green','badge-green'];
       badge.textContent = 'M5: ' + f5.label;
-      badge.className = 'badge ' + (colors[lvl] || 'badge-gray');
+      badge.className = 'badge ' + (lvl ? (colors[lvl] || 'badge-gray') : 'badge-gray');
     }
 
     // الحدود الفاصلة لكل مستوى (بناءً على ratio)
@@ -1026,7 +1051,7 @@
     let html = '';
     VOL_FRAMES.forEach(frame => {
       const fd = data[frame.key] || {};
-      const currentLevel = fd.level || 3;
+      const currentLevel = fd.available ? fd.level : null;
       const ratio = fd.ratio;
       const avgVol = fd.avg_vol || 0;
       const curVol = fd.current_vol || 0;
@@ -1041,19 +1066,19 @@
         const threshold = THRESHOLDS[lvl - 1];
         // عرض المعدل الطبيعي بـ K
         const avgK = fmtK(avgVol);
-        const ratioStr = ratio !== null && ratio !== undefined ? ratio.toFixed(1) + '×' : '—';
+        const ratioStr = fd.available && ratio !== null && ratio !== undefined ? ratio.toFixed(1) + '×' : 'غير متاحة';
 
         if (isActive) {
           html += `<td class="vol-active">
             <div class="vol-cell vol-${lvl}">
-              تحت المعدل الطبيعي
+              ${fd.available ? 'تحت المعدل الطبيعي' : 'غير متاحة'}
               <span class="ratio">${avgK} | ${ratioStr}</span>
             </div>
           </td>`;
         } else {
           html += `<td>
             <div class="vol-cell vol-loading" style="opacity:0.3">
-              تحت المعدل الطبيعي
+              ${fd.available ? 'تحت المعدل الطبيعي' : 'غير متاحة'}
               <span class="ratio">${avgK}</span>
             </div>
           </td>`;
@@ -1073,6 +1098,28 @@
       return;
     }
 
+    setQuality('gaugeQuality', data.data_quality);
+    if (data.available === false) {
+      const unavailableBadge = el('gaugeBadge');
+      if (unavailableBadge) {
+        unavailableBadge.textContent = 'M5 — غير متاح';
+        unavailableBadge.className = 'badge badge-gray';
+      }
+      setGaugeNeedlesVisible(false);
+      setText('bigGaugeVal', 'غير متاح');
+      setText('bigGaugeDir', 'البيانات غير متاحة');
+      setText('obvGaugeVal', '—');
+      setText('volGaugeVal', '—');
+      setText('momGaugeVal', '—');
+      setText('ptGaugeVal', '—');
+      ['metaRsi','metaMacd','metaObv','metaVol','metaEma','metaPrice'].forEach(id => setText(id, '—'));
+      setText('m5ContextTitle', 'لا توجد قراءة M5 موثوقة');
+      setText('m5ContextScore', '— / 7');
+      setText('m5ContextSummary', 'البيانات غير كافية؛ لا تُفسر القيم الحيادية كقراءة سوق.');
+      setText('m5ContextMissing', 'بيانات 5M غير كافية');
+      return;
+    }
+    setGaugeNeedlesVisible(true);
     // A valid 0 is meaningful for a gauge. Do not turn it into a false 50.
     const numberOr = (value, fallback) => Number.isFinite(value) ? value : fallback;
     const call = numberOr(data.call_potential, 50);
@@ -1155,6 +1202,7 @@
       return;
     }
 
+    setQuality('zonesQuality', data.data_quality);
     const zones = data.zones || [];
     const price = data.price;
     const today = data.today || '—';

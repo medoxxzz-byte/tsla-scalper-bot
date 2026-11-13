@@ -279,8 +279,8 @@ def build_opening_range():
 
 def check_breakout():
     """
-    فحص كسر ORB مع جميع الشروط:
-    1. شمعة 5M أغلقت فوق/تحت ORB
+    فحص كسر ORB مع الشروط الأساسية:
+    1. شمعة 5M أغلقت فوق/تحت ORB بمسافة الحد الأدنى
     2. Volume أعلى من المتوسط
     3. VWAP alignment (CALL فوق VWAP, PUT تحت VWAP)
     """
@@ -321,9 +321,8 @@ def check_breakout():
     
     # ═══ فحص كسر صاعد (CALL) ═══
     if last_bar_close > or_high + MIN_BREAKOUT_AMOUNT:
-        # شرط 1: شمعة 5M أغلقت بالكامل فوق ORB High
-        if last_bar_low <= or_high:
-            return None, {"reason": f"شمعة لم تغلق بالكامل فوق ORB (Low={last_bar_low:.2f} ≤ {or_high:.2f})"}
+        # تم حذف شرط خروج ظل/جسم الشمعة بالكامل خارج النطاق؛
+        # يسمح ذلك باختراق يتبعه إعادة اختبار داخل نفس شمعة 5M.
         
         # شرط 2: السعر فوق VWAP
         if price < vwap:
@@ -352,9 +351,8 @@ def check_breakout():
     
     # ═══ فحص كسر هابط (PUT) ═══
     if last_bar_close < or_low - MIN_BREAKOUT_AMOUNT:
-        # شرط 1: شمعة 5M أغلقت بالكامل تحت ORB Low
-        if last_bar_high >= or_low:
-            return None, {"reason": f"شمعة لم تغلق بالكامل تحت ORB (High={last_bar_high:.2f} ≥ {or_low:.2f})"}
+        # تم حذف شرط خروج ظل/جسم الشمعة بالكامل خارج النطاق؛
+        # يسمح ذلك باختراق يتبعه إعادة اختبار داخل نفس شمعة 5M.
         
         # شرط 2: السعر تحت VWAP
         if price > vwap:

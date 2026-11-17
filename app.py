@@ -44,6 +44,7 @@ import pressure_radar_state_machine_adapter
 from event_store import ResearchEventStore
 from outcome_store import ResearchOutcomeStore
 from m5_context import build_m5_context, build_m5_context_v2, normalized_obv_gauge
+from early_pressure_shadow import get_default_engine
 
 try:
     from extended_paper_engine import (
@@ -3524,6 +3525,126 @@ def _ensure_strategies_alive():
 # ──────────────────────────────────────────────────────────────────────────────
 # V15.0: Dashboard APIs — Volume Levels, Reversal Gauges, Reversal Zones
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+def _fetch_with_completion(fetch_fn):
+    """Run a data fetch and timestamp completion, not request start."""
+    try:
+        value = fetch_fn()
+        return value, datetime.now(timezone.utc), None
+    except Exception as exc:
+        return None, datetime.now(timezone.utc), f"{type(exc).__name__}: {exc}"
+
+
+def _fetch_primary_then_fallback(primary_fn, fallback_fn,
+                                 primary_source, fallback_source):
+    """Try the primary fetch, then the HTTP fallback."""
+    errors = []
+    completed_at = datetime.now(timezone.utc)
+    if primary_fn is not None:
+        value, completed_at, error = _fetch_with_completion(primary_fn)
+        if value:
+            return value, completed_at, None, primary_source
+        if error:
+            errors.append(f"{primary_source}: {error}")
+    else:
+        errors.append(f"{primary_source}: unavailable")
+    if fallback_fn is not None:
+        value, completed_at, error = _fetch_with_completion(fallback_fn)
+        if value:
+            return value, completed_at, None, fallback_source
+        if error:
+            errors.append(f"{fallback_source}: {error}")
+    else:
+        errors.append(f"{fallback_source}: unavailable")
+    return [], completed_at, "; ".join(errors), None
+
+
+def _fetch_dashboard_bars_with_fallback(timeframe, limit):
+    """Fetch dashboard bars through primary Alpaca access, then HTTP fallback."""
+    try:
+        from options_scalper import get_tsla_bars as primary_get_bars
+    except Exception:
+        primary_get_bars = None
+
+    def fetch_primary():
+        return primary_get_bars(timeframe, limit)
+
+    def fetch_http():
+        response = _retry_session.get(
+            "https://data.alpaca.markets/v2/stocks/TSLA/bars",
+            headers=alpaca_headers(),
+            params={"timeframe": timeframe, "limit": limit, "feed": "iex", "sort": "asc"},
+            timeout=10,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"Alpaca HTTP {response.status_code}")
+        bars = response.json().get("bars", [])
+        if not bars:
+            raise RuntimeError("Alpaca returned no bars")
+        return bars
+
+    return _fetch_primary_then_fallback(
+        fetch_primary if primary_get_bars is not None else None,
+        fetch_http,
+        "Alpaca primary",
+        "Alpaca IEX HTTP",
+    )
+
+
+@app.route('/api/early-pressure', methods=['GET'])
+def api_early_pressure():
+    """Visible Shadow v1 only; no Telegram, orders, or strategy side effects."""
+    now_utc = datetime.now(timezone.utc)
+    try:
+        bars_1m, fetched_1m, error_1m, source_1m = _fetch_dashboard_bars_with_fallback("1Min", 80)
+        bars_3m, fetched_3m, error_3m, source_3m = _fetch_dashboard_bars_with_fallback("3Min", 40)
+        bars_5m, fetched_5m, error_5m, source_5m = _fetch_dashboard_bars_with_fallback("5Min", 40)
+        bar_time = bars_1m[-1].get("t") if bars_1m else None
+        quality = _data_quality_metadata(
+            source=source_1m or "Alpaca primary/HTTP",
+            fetched_at_utc=fetched_1m,
+            bar_time=bar_time,
+            timeframe="1Min",
+            required_bars=True,
+            warning=error_1m or ("بيانات 1M غير كافية" if len(bars_1m) < 26 else None),
+            error=bool(error_1m and not bars_1m),
+            now_utc=now_utc,
+        )
+        levels = []
+        try:
+            rmap = build_reversal_map()
+            levels = list(rmap.get("levels") or [])
+        except Exception as map_error:
+            logger.warning("[EarlyPressure] reference map unavailable: %s", map_error)
+        snapshot = get_default_engine().update(
+            bars_1m=bars_1m,
+            bars_3m=bars_3m,
+            bars_5m=bars_5m,
+            levels=levels,
+            now=now_utc,
+            quality={
+                **quality,
+                "timeframes": {
+                    "1M": {"source": source_1m, "fetched_at": fetched_1m.isoformat() if fetched_1m else None, "error": error_1m},
+                    "3M": {"source": source_3m, "fetched_at": fetched_3m.isoformat() if fetched_3m else None, "error": error_3m},
+                    "5M": {"source": source_5m, "fetched_at": fetched_5m.isoformat() if fetched_5m else None, "error": error_5m},
+                },
+            },
+        )
+        snapshot.update({"ok": True, "shadow": True, "trading_action": False})
+        return jsonify(snapshot)
+    except Exception as exc:
+        logger.error("[EarlyPressure] error: %s", exc, exc_info=True)
+        return jsonify({
+            "ok": True,
+            "shadow": True,
+            "trading_action": False,
+            "state": "Monitoring",
+            "direction": "NEUTRAL",
+            "error": str(exc),
+            "data_quality": {"status": "ERROR", "warning": str(exc)},
+        })
 
 @app.route('/api/volume-levels', methods=['GET'])
 def api_volume_levels():

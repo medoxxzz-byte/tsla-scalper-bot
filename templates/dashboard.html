@@ -387,6 +387,28 @@
     .data-val.yellow { color:var(--yellow); }
     .data-val.blue   { color:var(--blue); }
 
+    /* ── Early Pressure Shadow ─────────────────────────────────────── */
+    .ep-card { border:1px solid var(--border); background:var(--surface); }
+    .ep-state { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+    .ep-state-name { font-size:22px; font-weight:900; letter-spacing:.4px; }
+    .ep-direction { font-size:12px; font-weight:800; padding:5px 10px; border-radius:999px; background:var(--surface2); }
+    .ep-direction.call { color:var(--green); border:1px solid var(--green); }
+    .ep-direction.put { color:var(--red); border:1px solid var(--red); }
+    .ep-direction.neutral { color:var(--text-muted); border:1px solid var(--border); }
+    .ep-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .ep-panel { background:var(--surface2); border-radius:8px; padding:9px; min-height:55px; }
+    .ep-panel-title { font-size:10px; color:var(--text-muted); margin-bottom:5px; font-weight:700; }
+    .ep-list { margin:0; padding:0 16px 0 0; font-size:11px; line-height:1.65; }
+    .ep-list.support { color:var(--green); }
+    .ep-list.opposing { color:var(--yellow); }
+    .ep-list.missing { color:var(--text-muted); }
+    .ep-meta { font-size:10px; color:var(--text-muted); margin-top:8px; line-height:1.6; }
+    .ep-timeline { display:flex; gap:5px; flex-wrap:wrap; margin:8px 0; }
+    .ep-step { font-size:9px; padding:3px 6px; border-radius:5px; background:var(--surface2); color:var(--text-muted); }
+    .ep-step.active { color:var(--blue); border:1px solid var(--blue); }
+    .ep-event { font-size:10px; color:var(--text-muted); padding:3px 0; border-bottom:1px solid var(--border); }
+    @media (max-width: 600px) { .ep-grid { grid-template-columns:1fr; } }
+
     .pnl-display { text-align:center; padding:14px 0; }
     .pnl-number  { font-size:32px; font-weight:900; letter-spacing:-1px; line-height:1; }
     .pnl-number.positive { color:var(--green); }
@@ -495,6 +517,33 @@
       <div class="stat-label">صفقات اليوم</div>
       <div class="stat-value" id="tradesTodayTop">0</div>
       <div class="stat-sub" id="tradesTodaySub">W: 0 | L: 0</div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- Early Pressure Shadow — visible only, no Telegram or trading   -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div class="section-title">🎯 Early Pressure Live <small style="font-size:10px;color:var(--text-muted)">[SHADOW]</small></div>
+  <div class="card ep-card" id="earlyPressureCard">
+    <div class="card-header">
+      <div class="card-title"><div class="card-icon" style="background:#ffc10720;color:var(--yellow)">📡</div>رادار الضغط المبكر</div>
+      <div id="epBadge" class="badge badge-gray">Monitoring</div>
+    </div>
+    <div class="card-body">
+      <div class="ep-state">
+        <div id="epState" class="ep-state-name">Monitoring</div>
+        <div id="epDirection" class="ep-direction neutral">NEUTRAL</div>
+      </div>
+      <div style="font-size:10px;color:var(--text-muted)">قراءة تحليلية Shadow — ليست إشارة دخول أو أمر تداول</div>
+      <div id="epTimeline" class="ep-timeline"></div>
+      <div class="ep-panel" style="margin-bottom:10px"><div class="ep-panel-title">المنطقة المرجعية المجمدة</div><div id="epReference">لا توجد منطقة قابلة للاختبار</div></div>
+      <div class="ep-grid">
+        <div class="ep-panel"><div class="ep-panel-title">الأدلة المؤيدة</div><ul id="epSupporting" class="ep-list support"><li>بانتظار قراءة مكتملة</li></ul></div>
+        <div class="ep-panel"><div class="ep-panel-title">الأدلة المعارضة</div><ul id="epOpposing" class="ep-list opposing"><li>—</li></ul></div>
+        <div class="ep-panel"><div class="ep-panel-title">ما لم يتأكد بعد</div><ul id="epMissing" class="ep-list missing"><li>لا يوجد تأكيد اختراق</li></ul></div>
+        <div class="ep-panel"><div class="ep-panel-title">جودة البيانات</div><div id="epQuality" class="ep-meta">جاري التحميل...</div></div>
+      </div>
+      <div class="ep-panel" style="margin-top:10px"><div class="ep-panel-title">سجل الانتقالات</div><div id="epEvents"><div class="ep-event">لا توجد انتقالات بعد</div></div></div>
     </div>
   </div>
 
@@ -1414,6 +1463,42 @@
     setText('orbLastCheck', data.last_check || '—');
   }
 
+  function renderEarlyPressure(data) {
+    const state = data && data.state ? data.state : 'Monitoring';
+    const direction = data && data.direction ? data.direction : 'NEUTRAL';
+    const stateEl = el('epState');
+    const dirEl = el('epDirection');
+    const badge = el('epBadge');
+    if (stateEl) stateEl.textContent = state;
+    if (dirEl) {
+      dirEl.textContent = direction;
+      dirEl.className = 'ep-direction ' + (direction === 'CALL' ? 'call' : direction === 'PUT' ? 'put' : 'neutral');
+    }
+    if (badge) {
+      badge.textContent = data && data.shadow ? state + ' — SHADOW' : state;
+      badge.className = 'badge ' + (state === 'Confirmed' ? 'badge-green' : state === 'Failed' ? 'badge-red' : state === 'Strengthening' ? 'badge-yellow' : 'badge-gray');
+    }
+    const steps = ['Monitoring', 'Building', 'Strengthening', 'Failed', 'Confirmed'];
+    const timeline = el('epTimeline');
+    if (timeline) timeline.innerHTML = steps.map(s => `<span class="ep-step ${s === state ? 'active' : ''}">${s}</span>`).join('');
+    const ref = data && data.reference;
+    setText('epReference', ref ? `${ref.type || 'مستوى'}: ${fmtPrice(ref.price)} | المصدر: ${ref.source || '—'} | ثُبتت: ${ref.frozen_at || '—'}` : 'لا توجد منطقة قابلة للاختبار');
+    const list = (id, values, empty) => {
+      const node = el(id);
+      if (!node) return;
+      const items = Array.isArray(values) && values.length ? values : [empty];
+      node.innerHTML = items.map(v => `<li>${String(v)}</li>`).join('');
+    };
+    list('epSupporting', data && data.supporting_evidence, 'لا توجد أدلة مؤيدة كافية');
+    list('epOpposing', data && data.opposing_evidence, 'لا توجد أدلة معارضة واضحة');
+    list('epMissing', data && data.not_confirmed, 'لم يتأكد الاختراق بعد');
+    const q = data && data.data_quality ? data.data_quality : {};
+    setText('epQuality', `${q.status || 'UNKNOWN'} | ${q.source || '—'} | الشمعة: ${q.bar_time || '—'} | العمر: ${q.bar_age_seconds ?? '—'}s | الجلب: ${q.fetch_age_seconds ?? '—'}s`);
+    const events = el('epEvents');
+    const history = data && Array.isArray(data.events) ? data.events.filter(e => e.event_type === 'state_transition') : [];
+    if (events) events.innerHTML = history.length ? history.slice(-6).reverse().map(e => `<div class="ep-event">${e.state_at || '—'} — ${e.from_state} → ${e.to_state} — ${e.direction}</div>`).join('') : '<div class="ep-event">لا توجد انتقالات بعد</div>';
+  }
+
   async function orbControl(action) {
     try {
       const r = await fetch('/orb/' + action, { method: 'POST' });
@@ -1434,12 +1519,13 @@
     setText('globalLastUpdate', now);
 
     // The core research view must not wait for optional legacy experiments.
-    const [volData, gaugeData, zonesData, manualData, orbData] = await Promise.all([
+    const [volData, gaugeData, zonesData, manualData, orbData, earlyPressureData] = await Promise.all([
       fetchJSON('/api/volume-levels'),
       fetchJSON('/api/reversal-gauges'),
       fetchJSON('/api/reversal-zones'),
       fetchJSON('/manual/status'),
       fetchJSON('/orb/status'),
+      fetchJSON('/api/early-pressure', 9000),
     ]);
 
     renderVolTable(volData);
@@ -1447,6 +1533,7 @@
     renderZones(zonesData);
     renderManual(manualData);
     renderORB(orbData);
+    renderEarlyPressure(earlyPressureData);
 
     // Optional cards update afterwards. A slow or paused experiment can no
     // longer make the complete Dashboard appear frozen.
